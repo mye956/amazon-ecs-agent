@@ -56,7 +56,27 @@ phases:
           }
         }
         EOF
+      
+      # Prepare agentVersionV2.json file
+      - |
+        cat << EOF > agentVersionV2.json
+        [
+          {
+            "githubTrackingBranch": "dev",
+            "agentCurrentVersion": "",
+            "agentReleaseVersion": "$AGENT_VERSION",
+            "releaseTag": "latest"
+          },
+          {
+            "githubTrackingBranch": "al1-patch",
+            "agentCurrentVersion": "",
+            "agentReleaseVersion": "",
+            "releaseTag": "al-patch"
+          }
+        ]
+        EOF
 
 artifacts:
   files:
     - agent.json
+    - agentVersionV2.json
