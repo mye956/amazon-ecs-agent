@@ -57,24 +57,21 @@ phases:
         }
         EOF
       
-      # Prepare agentVersionV2.json file
-      - |
-        cat << EOF > agentVersionV2.json
-        [
-          {
-            "githubTrackingBranch": "dev",
-            "agentCurrentVersion": "",
-            "agentReleaseVersion": "$AGENT_VERSION",
-            "releaseTag": "latest"
-          },
-          {
-            "githubTrackingBranch": "al1-patch",
-            "agentCurrentVersion": "",
-            "agentReleaseVersion": "",
-            "releaseTag": "al-patch"
-          }
-        ]
-        EOF
+      # Downloading agentVersionV2.json file from the All Dogs S3 Bucket
+      - aws s3 cp "$RESULTS_BUCKET_URI/agentVersionV2.json" ./agentVersionV2.json
+      # Grabbing the new current agent version
+      - CURR_VER=$(jq -r '.[] | select(.githubTrackingBranch=='\"$GITHUB_BRANCH_NAME\"') .releaseAgentVersion' agentVersionV2.json)
+      # Upating the versions 
+      - cat <<< $(jq '.[] | select (.githubTrackingBranch == '\"$GITHUB_BRANCH_NAME\"') .releaseAgentVersion = '\"$AGENT_VERSION\"' | select (.githubTrackingBranch == '\"$GITHUB_BRANCH_NAME\"') .currentAgentVersion = '\"$CURR_VER\"'' agentVersionV2.json | jq -s '.') > agentVersionV2.json
+      # Outputing updated agentVersionV2.json file
+      - cat agentVersionV2.json
+
+      # Downloading agentVersion-<branch>.json
+      - aws s3 cp "$RESULTS_BUCKET_URI/agentVersionV2.json" ./agentVersion-${GITHUB_BRANCH_NAME}.json
+      # Grabbing the new current agent version
+      - CURR_VER=$(jq -r '.releaseAgentVersion' agentVersion-${GITHUB_BRANCH_NAME}.json)
+      # Outputting updated agentVersion-<branch>.json file
+      - cat agentVersion-${}
 
 artifacts:
   files:

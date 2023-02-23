@@ -692,6 +692,13 @@ Resources:
         ComputeType: BUILD_GENERAL1_SMALL
         ImagePullCredentialsType: CODEBUILD
         Image: aws/codebuild/amazonlinux2-x86_64-standard:3.0
+        EnvironmentVariables:
+          - Name: RESULTS_BUCKET_URI
+            Type: PLAINTEXT
+            Value: !Ref ReleaseArtifactsBucketS3Uri
+          - Name: GITHUB_BRANCH_NAME
+            Type: PLAINTEXT
+            Value: !Ref GithubBranchName
       Source:
         BuildSpec: buildspecs/release-config.yml
         Type: CODEPIPELINE
@@ -773,6 +780,9 @@ Resources:
           - Name: RESULTS_BUCKET_URI
             Type: PLAINTEXT
             Value: !Ref ReleaseArtifactsBucketS3Uri
+          - Name: GITHUB_BRANCH_NAME
+            Type: PLAINTEXT
+            Value: !Ref GithubBranchName
       Source:
         BuildSpec: buildspecs/copy.yml
         Type: CODEPIPELINE
