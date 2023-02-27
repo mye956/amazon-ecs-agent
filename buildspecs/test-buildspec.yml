@@ -21,5 +21,6 @@ phases:
       - echo $CURR_VER
       - echo $RELEASE_VER
       # Outputting updated agentVersion-<branch>.json file
-      # - cat <<< $(jq '.releaseAgentVersion = '\"$RELEASE_VER\"' | .currentAgentVersion = '\"$CURR_VER\"'' agentVersion-$branch.json) > agentVersion-${branch}.json
+      - cat <<< $(jq '.releaseAgentVersion = '\"$RELEASE_VER\"' | .currentAgentVersion = '\"$CURR_VER\"'' agentVersionV2-${GITHUB_BRANCH}.json) > agentVersionV2-${GITHUB_BRANCH}.json
+      - cat agentVersionV2-${GITHUB_BRANCH}.json
       
