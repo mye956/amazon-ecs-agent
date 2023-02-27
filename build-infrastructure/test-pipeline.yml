@@ -75,7 +75,7 @@ Resources:
       Source:
         Type: GITHUB
         Location: 'https://github.com/mye956/amazon-ecs-agent.git'
-        BuildSpec: test-buildspec.yml
+        BuildSpec: buildspecs/test-buildspec.yml
         Auth:
           Type: OAUTH
           Resource: !Ref CodeBuildSourceCredential
