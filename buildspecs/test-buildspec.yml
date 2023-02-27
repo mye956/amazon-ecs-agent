@@ -9,4 +9,5 @@ phases:
       - printenv
       - GITHUB_BRANCH=$(echo ${CODEBUILD_WEBHOOK_HEAD_REF} | cut -d "/" -f3-)
       - echo $GITHUB_BRANCH
+      - echo $BRANCH
       - git branch
