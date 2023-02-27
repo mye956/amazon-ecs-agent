@@ -14,4 +14,12 @@ phases:
       - git branch
       - aws s3 cp s3://yemike-testbucket/agentVersionV2-${GITHUB_BRANCH}.json ./agentVersionV2-${GITHUB_BRANCH}.json
       - cat agentVersionV2-${GITHUB_BRANCH}.json
+
+      # Grabbing the new current agent version
+      - CURR_VER=$(jq -r '.releaseAgentVersion' agentVersionV2-${GITHUB_BRANCH}.json)
+      - RELEASE_VER=$(cat VERSION)
+      - echo $CURR_VER
+      - echo $RELEASE_VER
+      # Outputting updated agentVersion-<branch>.json file
+      # - cat <<< $(jq '.releaseAgentVersion = '\"$RELEASE_VER\"' | .currentAgentVersion = '\"$CURR_VER\"'' agentVersion-$branch.json) > agentVersion-${branch}.json
       
