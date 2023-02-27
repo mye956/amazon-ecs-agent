@@ -3,12 +3,15 @@ Description: A template that brings up a simple code pipeline for testing
 
 Parameters:
     GithubFullRepoName:
-        Type: String
-        Description: The name of the repository that we want to use (e.g. aws/amazon-ecs-agent)
+      Type: String
+      Description: The name of the repository that we want to use (e.g. aws/amazon-ecs-agent)
     GithubBranchName:
-        Type: String
-        Description: The name of the branch to use to build (e.g. mainline, dev)
-
+      Type: String
+      Description: The name of the branch to use to build (e.g. mainline, dev)
+    GithubRepositoryName:
+      Type: String
+      Description: The name of the repository
+    
 Resources:
   CodeBuildServiceRole:
     Type: 'AWS::IAM::Role'
@@ -74,7 +77,7 @@ Resources:
       ServiceRole: !GetAtt CodeBuildServiceRole.Arn
       Source:
         Type: GITHUB
-        Location: 'https://github.com/mye956/amazon-ecs-agent.git'
+        Location: !Sub 'https://github.com/mye956/${GithubRepositoryName}.git'
         BuildSpec: buildspecs/test-buildspec.yml
         Auth:
           Type: OAUTH
@@ -87,7 +90,7 @@ Resources:
           - - Type: EVENT
               Pattern: 'PULL_REQUEST_CREATED, PULL_REQUEST_UPDATED'
             - Type: BASE_REF
-              Pattern: !Sub ^refs/heads/AmazonLinuxLegacyTest$
+              Pattern: !Sub ^refs/heads/${GithubBranchName}$
       Environment:
           Type: LINUX_CONTAINER
           ComputeType: BUILD_GENERAL1_SMALL
