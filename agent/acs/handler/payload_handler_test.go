@@ -1,3 +1,4 @@
+//go:build unit
 // +build unit
 
 // Copyright Amazon.com Inc. or its affiliates. All Rights Reserved.
@@ -18,8 +19,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io/ioutil"
-	"os"
 	"reflect"
 	"sync"
 	"testing"
@@ -149,8 +148,7 @@ func TestHandlePayloadMessageSaveData(t *testing.T) {
 			}).Times(1)
 			tester.mockTaskEngine.EXPECT().AddTask(gomock.Any()).Times(1)
 
-			dataClient, cleanup := newTestDataClient(t)
-			defer cleanup()
+			dataClient := newTestDataClient(t)
 			tester.payloadHandler.dataClient = dataClient
 
 			go tester.payloadHandler.start()
@@ -189,8 +187,7 @@ func TestHandlePayloadMessageSaveDataError(t *testing.T) {
 	tester := setup(t)
 	defer tester.ctrl.Finish()
 
-	dataClient, cleanup := newTestDataClient(t)
-	defer cleanup()
+	dataClient := newTestDataClient(t)
 
 	// Save added task in the addedTask variable
 	var addedTask *apitask.Task
@@ -217,22 +214,24 @@ func TestHandlePayloadMessageSaveDataError(t *testing.T) {
 		Arn:                 "t1",
 		DesiredStatusUnsafe: apitaskstatus.TaskRunning,
 		ResourcesMapUnsafe:  make(map[string][]taskresource.TaskResource),
+		NetworkMode:         apitask.BridgeNetworkMode,
 	}
+	expectedTask.GetID() // to set the task setIdOnce (sync.Once) property
 
-	assert.Equal(t, addedTask, expectedTask, "added task is not expected")
+	assert.Equal(t, expectedTask, addedTask, "added task is not expected")
 }
 
-func newTestDataClient(t *testing.T) (data.Client, func()) {
-	testDir, err := ioutil.TempDir("", "agent_acs_handler_unit_test")
-	require.NoError(t, err)
+func newTestDataClient(t *testing.T) data.Client {
+	testDir := t.TempDir()
 
 	testClient, err := data.NewWithSetup(testDir)
+	require.NoError(t, err)
 
-	cleanup := func() {
+	t.Cleanup(func() {
 		require.NoError(t, testClient.Close())
-		require.NoError(t, os.RemoveAll(testDir))
-	}
-	return testClient, cleanup
+	})
+
+	return testClient
 }
 
 // TestHandlePayloadMessageAckedWhenTaskAdded tests if the handler generates an ack
@@ -277,8 +276,10 @@ func TestHandlePayloadMessageAckedWhenTaskAdded(t *testing.T) {
 	expectedTask := &apitask.Task{
 		Arn:                "t1",
 		ResourcesMapUnsafe: make(map[string][]taskresource.TaskResource),
+		NetworkMode:        apitask.BridgeNetworkMode,
 	}
-	assert.Equal(t, addedTask, expectedTask, "received task is not expected")
+	expectedTask.GetID() // to set the task setIdOnce (sync.Once) property
+	assert.Equal(t, expectedTask, addedTask, "received task is not expected")
 }
 
 // TestHandlePayloadMessageCredentialsAckedWhenTaskAdded tests if the handler generates
@@ -454,8 +455,10 @@ func TestPayloadBufferHandler(t *testing.T) {
 	expectedTask := &apitask.Task{
 		Arn:                taskArn,
 		ResourcesMapUnsafe: make(map[string][]taskresource.TaskResource),
+		NetworkMode:        apitask.BridgeNetworkMode,
 	}
-	assert.Equal(t, addedTask, expectedTask, "received task is not expected")
+	expectedTask.GetID() // to set the task setIdOnce (sync.Once) property
+	assert.Equal(t, expectedTask, addedTask, "received task is not expected")
 }
 
 // TestPayloadBufferHandlerWithCredentials tests if the async payloadBufferHandler routine
@@ -686,8 +689,10 @@ func validateTaskAndCredentials(taskCredentialsAck, expectedCredentialsAckForTas
 	expectedTask := &apitask.Task{
 		Arn:                expectedTaskArn,
 		ResourcesMapUnsafe: make(map[string][]taskresource.TaskResource),
+		NetworkMode:        apitask.BridgeNetworkMode,
 	}
 	expectedTask.SetCredentialsID(expectedTaskCredentials.CredentialsID)
+	expectedTask.GetID() // to set the task setIdOnce (sync.Once) property
 
 	if !reflect.DeepEqual(addedTask, expectedTask) {
 		return fmt.Errorf("Mismatch between expected and added tasks, expected: %v, added: %v", expectedTask, addedTask)

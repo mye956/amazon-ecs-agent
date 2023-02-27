@@ -1,3 +1,4 @@
+//go:build windows && unit
 // +build windows,unit
 
 // Copyright Amazon.com Inc. or its affiliates. All Rights Reserved.
@@ -35,7 +36,7 @@ func TestLoadsDataForGMSATask(t *testing.T) {
 	defer cleanup()
 
 	cfg := &config.Config{DataDir: filepath.Join(".", "testdata", "v26", "gmsa")}
-	taskEngine := engine.NewTaskEngine(&config.Config{}, nil, nil, nil, nil, dockerstate.NewTaskEngineState(), nil, nil, nil)
+	taskEngine := engine.NewTaskEngine(&config.Config{}, nil, nil, nil, nil, dockerstate.NewTaskEngineState(), nil, nil, nil, nil)
 	var containerInstanceArn, cluster, savedInstanceID string
 	var sequenceNumber int64
 

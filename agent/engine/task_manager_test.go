@@ -1,3 +1,4 @@
+//go:build unit
 // +build unit
 
 // Copyright Amazon.com Inc. or its affiliates. All Rights Reserved.
@@ -23,6 +24,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/aws/aws-sdk-go/aws"
+
 	"github.com/aws/amazon-ecs-agent/agent/dockerclient/dockerapi"
 	"github.com/aws/amazon-ecs-agent/agent/taskresource"
 	mock_taskresource "github.com/aws/amazon-ecs-agent/agent/taskresource/mocks"
@@ -38,6 +41,7 @@ import (
 	apitaskstatus "github.com/aws/amazon-ecs-agent/agent/api/task/status"
 	"github.com/aws/amazon-ecs-agent/agent/config"
 	"github.com/aws/amazon-ecs-agent/agent/credentials"
+	mock_credentials "github.com/aws/amazon-ecs-agent/agent/credentials/mocks"
 	"github.com/aws/amazon-ecs-agent/agent/data"
 	mock_dockerapi "github.com/aws/amazon-ecs-agent/agent/dockerclient/dockerapi/mocks"
 	"github.com/aws/amazon-ecs-agent/agent/engine/dependencygraph"
@@ -73,8 +77,8 @@ func TestHandleEventError(t *testing.T) {
 			CurrentContainerKnownStatus:     apicontainerstatus.ContainerRunning,
 			Error:                           &dockerapi.DockerTimeoutError{},
 			ExpectedContainerKnownStatusSet: true,
-			ExpectedContainerKnownStatus:    apicontainerstatus.ContainerRunning,
-			ExpectedOK:                      false,
+			ExpectedContainerKnownStatus:    apicontainerstatus.ContainerStopped,
+			ExpectedOK:                      true,
 		},
 		{
 			Name:                        "Retriable error with stop",
@@ -84,8 +88,8 @@ func TestHandleEventError(t *testing.T) {
 				FromError: errors.New(""),
 			},
 			ExpectedContainerKnownStatusSet: true,
-			ExpectedContainerKnownStatus:    apicontainerstatus.ContainerRunning,
-			ExpectedOK:                      false,
+			ExpectedContainerKnownStatus:    apicontainerstatus.ContainerStopped,
+			ExpectedOK:                      true,
 		},
 		{
 			Name:                        "Unretriable error with Stop",
@@ -187,6 +191,15 @@ func TestHandleEventError(t *testing.T) {
 
 	for _, tc := range testCases {
 		t.Run(tc.Name, func(t *testing.T) {
+			ctrl := gomock.NewController(t)
+			defer ctrl.Finish()
+			client := mock_dockerapi.NewMockDockerClient(ctrl)
+
+			if tc.EventStatus == apicontainerstatus.ContainerStopped {
+				client.EXPECT().SystemPing(gomock.Any(), gomock.Any()).Return(dockerapi.PingResponse{}).
+					Times(1)
+			}
+
 			container := &apicontainer.Container{
 				KnownStatusUnsafe: tc.CurrentContainerKnownStatus,
 			}
@@ -203,8 +216,9 @@ func TestHandleEventError(t *testing.T) {
 				Task: &apitask.Task{
 					Arn: "task1",
 				},
-				engine: &DockerTaskEngine{},
-				cfg:    &config.Config{ImagePullBehavior: tc.ImagePullBehavior},
+				engine:       &DockerTaskEngine{},
+				cfg:          &config.Config{ImagePullBehavior: tc.ImagePullBehavior},
+				dockerClient: client,
 			}
 			ok := mtask.handleEventError(containerChange, tc.CurrentContainerKnownStatus)
 			assert.Equal(t, tc.ExpectedOK, ok, "to proceed")
@@ -229,7 +243,7 @@ func TestContainerNextState(t *testing.T) {
 		containerDesiredStatus       apicontainerstatus.ContainerStatus
 		expectedContainerStatus      apicontainerstatus.ContainerStatus
 		expectedTransitionActionable bool
-		reason                       error
+		reason                       dependencygraph.DependencyError
 	}{
 		// NONE -> RUNNING transition is allowed and actionable, when desired is Running
 		// The expected next status is Pulled
@@ -717,6 +731,86 @@ func TestStartContainerTransitionsWhenForwardTransitionIsNotPossible(t *testing.
 	assert.Empty(t, transitions)
 }
 
+func TestStartContainerTransitionsWithTerminalError(t *testing.T) {
+	firstContainerName := "container1"
+	firstContainer := &apicontainer.Container{
+		KnownStatusUnsafe:   apicontainerstatus.ContainerStopped,
+		DesiredStatusUnsafe: apicontainerstatus.ContainerStopped,
+		KnownExitCodeUnsafe: aws.Int(1), // This simulated the container has stopped unsuccessfully
+		Name:                firstContainerName,
+	}
+	secondContainerName := "container2"
+	secondContainer := &apicontainer.Container{
+		KnownStatusUnsafe:   apicontainerstatus.ContainerCreated,
+		DesiredStatusUnsafe: apicontainerstatus.ContainerRunning,
+		Name:                secondContainerName,
+		DependsOnUnsafe: []apicontainer.DependsOn{
+			{
+				ContainerName: firstContainerName,
+				Condition:     "SUCCESS", // This means this condition can never be fulfilled since container1 has exited with non-zero code
+			},
+		},
+	}
+	thirdContainerName := "container3"
+	thirdContainer := &apicontainer.Container{
+		KnownStatusUnsafe:   apicontainerstatus.ContainerCreated,
+		DesiredStatusUnsafe: apicontainerstatus.ContainerRunning,
+		Name:                thirdContainerName,
+		DependsOnUnsafe: []apicontainer.DependsOn{
+			{
+				ContainerName: secondContainerName,
+				Condition:     "SUCCESS", // This means this condition can never be fulfilled since container2 has exited with non-zero code
+			},
+		},
+	}
+	dockerMessagesChan := make(chan dockerContainerChange)
+	task := &managedTask{
+		Task: &apitask.Task{
+			Containers: []*apicontainer.Container{
+				firstContainer,
+				secondContainer,
+				thirdContainer,
+			},
+			DesiredStatusUnsafe: apitaskstatus.TaskRunning,
+		},
+		engine:         &DockerTaskEngine{},
+		dockerMessages: dockerMessagesChan,
+	}
+
+	canTransition, _, transitions, errors := task.startContainerTransitions(
+		func(cont *apicontainer.Container, nextStatus apicontainerstatus.ContainerStatus) {
+			t.Error("Transition function should not be called when no transitions are possible")
+		})
+	assert.False(t, canTransition)
+	assert.Empty(t, transitions)
+	assert.Equal(t, 3, len(errors)) // first error is just indicating container1 is at desired status, following errors should be terminal
+	assert.False(t, errors[0].(dependencygraph.DependencyError).IsTerminal(), "Error should NOT  be terminal")
+	assert.True(t, errors[1].(dependencygraph.DependencyError).IsTerminal(), "Error should be terminal")
+	assert.True(t, errors[2].(dependencygraph.DependencyError).IsTerminal(), "Error should be terminal")
+
+	stoppedMessages := make(map[string]dockerContainerChange)
+	// verify we are sending STOPPED message
+	for i := 0; i < 2; i++ {
+		select {
+		case msg := <-dockerMessagesChan:
+			stoppedMessages[msg.container.Name] = msg
+		case <-time.After(time.Second):
+			t.Fatal("Timed out waiting for docker messages")
+			break
+		}
+	}
+
+	assert.Equal(t, secondContainer, stoppedMessages[secondContainerName].container)
+	assert.Equal(t, apicontainerstatus.ContainerStopped, stoppedMessages[secondContainerName].event.Status)
+	assert.Error(t, stoppedMessages[secondContainerName].event.DockerContainerMetadata.Error)
+	assert.Equal(t, 143, *stoppedMessages[secondContainerName].event.DockerContainerMetadata.ExitCode)
+
+	assert.Equal(t, thirdContainer, stoppedMessages[thirdContainerName].container)
+	assert.Equal(t, apicontainerstatus.ContainerStopped, stoppedMessages[thirdContainerName].event.Status)
+	assert.Error(t, stoppedMessages[thirdContainerName].event.DockerContainerMetadata.Error)
+	assert.Equal(t, 143, *stoppedMessages[thirdContainerName].event.DockerContainerMetadata.ExitCode)
+}
+
 func TestStartContainerTransitionsInvokesHandleContainerChange(t *testing.T) {
 	eventStreamName := "TESTTASKENGINE"
 
@@ -897,28 +991,48 @@ func TestOnContainersUnableToTransitionStateForDesiredStoppedTask(t *testing.T) 
 }
 
 func TestOnContainersUnableToTransitionStateForDesiredRunningTask(t *testing.T) {
-	firstContainerName := "container1"
-	firstContainer := &apicontainer.Container{
-		KnownStatusUnsafe:   apicontainerstatus.ContainerCreated,
-		DesiredStatusUnsafe: apicontainerstatus.ContainerRunning,
-		Name:                firstContainerName,
-	}
-	task := &managedTask{
-		Task: &apitask.Task{
-			Containers: []*apicontainer.Container{
-				firstContainer,
-			},
-			DesiredStatusUnsafe: apitaskstatus.TaskRunning,
+	for _, tc := range []struct {
+		knownStatus                    apicontainerstatus.ContainerStatus
+		expectedContainerDesiredStatus apicontainerstatus.ContainerStatus
+		expectedTaskDesiredStatus      apitaskstatus.TaskStatus
+	}{
+		{
+			knownStatus:                    apicontainerstatus.ContainerCreated,
+			expectedContainerDesiredStatus: apicontainerstatus.ContainerStopped,
+			expectedTaskDesiredStatus:      apitaskstatus.TaskStopped,
 		},
-		engine: &DockerTaskEngine{
-			dataClient: data.NewNoopClient(),
+		{
+			knownStatus:                    apicontainerstatus.ContainerRunning,
+			expectedContainerDesiredStatus: apicontainerstatus.ContainerRunning,
+			expectedTaskDesiredStatus:      apitaskstatus.TaskRunning,
 		},
-		ctx: context.TODO(),
-	}
+	} {
+		t.Run(fmt.Sprintf("Essential container with knownStatus=%s", tc.knownStatus.String()), func(t *testing.T) {
+			firstContainerName := "container1"
+			firstContainer := &apicontainer.Container{
+				KnownStatusUnsafe:   tc.knownStatus,
+				DesiredStatusUnsafe: apicontainerstatus.ContainerRunning,
+				Name:                firstContainerName,
+				Essential:           true, // setting this to true since at least one container in the task must be essential.
+			}
+			task := &managedTask{
+				Task: &apitask.Task{
+					Containers: []*apicontainer.Container{
+						firstContainer,
+					},
+					DesiredStatusUnsafe: apitaskstatus.TaskRunning,
+				},
+				engine: &DockerTaskEngine{
+					dataClient: data.NewNoopClient(),
+				},
+				ctx: context.TODO(),
+			}
 
-	task.handleContainersUnableToTransitionState()
-	assert.Equal(t, task.GetDesiredStatus(), apitaskstatus.TaskStopped)
-	assert.Equal(t, task.Containers[0].GetDesiredStatus(), apicontainerstatus.ContainerStopped)
+			task.handleContainersUnableToTransitionState()
+			assert.Equal(t, tc.expectedTaskDesiredStatus, task.GetDesiredStatus())
+			assert.Equal(t, tc.expectedContainerDesiredStatus, task.Containers[0].GetDesiredStatus())
+		})
+	}
 }
 
 // TODO: Test progressContainers workflow
@@ -1323,6 +1437,75 @@ func TestTaskWaitForExecutionCredentials(t *testing.T) {
 			assert.Equal(t, tc.result, task.isWaitingForACSExecutionCredentials(tc.errs), tc.msg)
 		})
 	}
+}
+
+func TestCleanupTaskWithExecutionCredentials(t *testing.T) {
+	cfg := getTestConfig()
+	ctrl := gomock.NewController(t)
+	mockTime := mock_ttime.NewMockTime(ctrl)
+	mockState := mock_dockerstate.NewMockTaskEngineState(ctrl)
+	mockClient := mock_dockerapi.NewMockDockerClient(ctrl)
+	mockImageManager := mock_engine.NewMockImageManager(ctrl)
+	mockCredentialsManager := mock_credentials.NewMockManager(ctrl)
+	mockResource := mock_taskresource.NewMockTaskResource(ctrl)
+	defer ctrl.Finish()
+
+	ctx, cancel := context.WithCancel(context.TODO())
+	defer cancel()
+
+	taskEngine := &DockerTaskEngine{
+		ctx:                ctx,
+		cfg:                &cfg,
+		dataClient:         data.NewNoopClient(),
+		state:              mockState,
+		client:             mockClient,
+		imageManager:       mockImageManager,
+		credentialsManager: mockCredentialsManager,
+	}
+	mTask := &managedTask{
+		ctx:                      ctx,
+		cancel:                   cancel,
+		Task:                     testdata.LoadTask("sleep5"),
+		credentialsManager:       mockCredentialsManager,
+		_time:                    mockTime,
+		engine:                   taskEngine,
+		acsMessages:              make(chan acsTransition),
+		dockerMessages:           make(chan dockerContainerChange),
+		resourceStateChangeEvent: make(chan resourceStateChange),
+		cfg:                      taskEngine.cfg,
+	}
+
+	mTask.Task.ResourcesMapUnsafe = make(map[string][]taskresource.TaskResource)
+	mTask.Task.SetExecutionRoleCredentialsID("executionRoleCredentialsId")
+	mTask.AddResource("mockResource", mockResource)
+	mTask.SetKnownStatus(apitaskstatus.TaskStopped)
+	mTask.SetSentStatus(apitaskstatus.TaskStopped)
+	container := mTask.Containers[0]
+	dockerContainer := &apicontainer.DockerContainer{
+		DockerName: "dockerContainer",
+	}
+
+	// Expectations for triggering cleanup
+	now := mTask.GetKnownStatusTime()
+	taskStoppedDuration := 1 * time.Minute
+	mockTime.EXPECT().Now().Return(now).AnyTimes()
+	cleanupTimeTrigger := make(chan time.Time)
+	mockTime.EXPECT().After(gomock.Any()).Return(cleanupTimeTrigger)
+	go func() {
+		cleanupTimeTrigger <- now
+	}()
+
+	// Expectations to verify the execution credentials get removed
+	mockCredentialsManager.EXPECT().RemoveCredentials("executionRoleCredentialsId")
+
+	// Expectations to verify that the task gets removed
+	mockState.EXPECT().ContainerMapByArn(mTask.Arn).Return(map[string]*apicontainer.DockerContainer{container.Name: dockerContainer}, true)
+	mockClient.EXPECT().RemoveContainer(gomock.Any(), dockerContainer.DockerName, gomock.Any()).Return(nil)
+	mockImageManager.EXPECT().RemoveContainerReferenceFromImageState(container).Return(nil)
+	mockState.EXPECT().RemoveTask(mTask.Task)
+	mockResource.EXPECT().Cleanup()
+	mockResource.EXPECT().GetName()
+	mTask.cleanupTask(taskStoppedDuration)
 }
 
 func TestCleanupTaskWithInvalidInterval(t *testing.T) {

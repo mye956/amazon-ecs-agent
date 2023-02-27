@@ -1,3 +1,4 @@
+//go:build unit
 // +build unit
 
 // Copyright Amazon.com Inc. or its affiliates. All Rights Reserved.
@@ -18,6 +19,7 @@ package config
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"testing"
 	"time"
@@ -25,10 +27,12 @@ import (
 	"github.com/aws/amazon-ecs-agent/agent/dockerclient"
 	"github.com/aws/amazon-ecs-agent/agent/ec2"
 	mock_ec2 "github.com/aws/amazon-ecs-agent/agent/ec2/mocks"
+	"github.com/aws/amazon-ecs-agent/agent/utils"
 
 	"github.com/aws/aws-sdk-go/aws/ec2metadata"
 	"github.com/golang/mock/gomock"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestMerge(t *testing.T) {
@@ -113,6 +117,13 @@ func TestGetRegionWithNoIID(t *testing.T) {
 }
 
 func TestEnvironmentConfig(t *testing.T) {
+	const (
+		testTaskCleanupWaitDurationStr       = "90s"
+		testTaskCleanupWaitDurationJitterStr = "1m"
+		testTaskCleanupWaitDuration          = 90 * time.Second
+		testTaskCleanupWaitDurationJitter    = time.Minute
+	)
+
 	defer setTestRegion()()
 	defer setTestEnv("ECS_CLUSTER", "myCluster")()
 	defer setTestEnv("ECS_RESERVED_PORTS_UDP", "[42,99]")()
@@ -125,7 +136,8 @@ func TestEnvironmentConfig(t *testing.T) {
 	defer setTestEnv("ECS_SELINUX_CAPABLE", "true")()
 	defer setTestEnv("ECS_APPARMOR_CAPABLE", "true")()
 	defer setTestEnv("ECS_DISABLE_PRIVILEGED", "true")()
-	defer setTestEnv("ECS_ENGINE_TASK_CLEANUP_WAIT_DURATION", "90s")()
+	defer setTestEnv("ECS_ENGINE_TASK_CLEANUP_WAIT_DURATION", testTaskCleanupWaitDurationStr)()
+	defer setTestEnv("ECS_ENGINE_TASK_CLEANUP_WAIT_DURATION_JITTER", testTaskCleanupWaitDurationJitterStr)()
 	defer setTestEnv("ECS_ENABLE_TASK_IAM_ROLE", "true")()
 	defer setTestEnv("ECS_ENABLE_UNTRACKED_IMAGE_CLEANUP", "true")()
 	defer setTestEnv("ECS_ENABLE_TASK_IAM_ROLE_NETWORK_HOST", "true")()
@@ -147,6 +159,10 @@ func TestEnvironmentConfig(t *testing.T) {
 	defer setTestEnv("ECS_POLLING_METRICS_WAIT_DURATION", "10s")()
 	defer setTestEnv("ECS_CGROUP_CPU_PERIOD", "")
 	defer setTestEnv("ECS_PULL_DEPENDENT_CONTAINERS_UPFRONT", "true")()
+	defer setTestEnv("ECS_ENABLE_RUNTIME_STATS", "true")()
+	defer setTestEnv("ECS_EXCLUDE_IPV6_PORTBINDING", "true")()
+	defer setTestEnv("ECS_WARM_POOLS_CHECK", "false")()
+	defer setTestEnv("ECS_DYNAMIC_HOST_PORT_RANGE", "200-300")()
 	additionalLocalRoutesJSON := `["1.2.3.4/22","5.6.7.8/32"]`
 	setTestEnv("ECS_AWSVPC_ADDITIONAL_LOCAL_ROUTES", additionalLocalRoutesJSON)
 	setTestEnv("ECS_ENABLE_CONTAINER_METADATA", "true")
@@ -186,7 +202,8 @@ func TestEnvironmentConfig(t *testing.T) {
 	assert.Equal(t, ImagePullAlwaysBehavior, conf.ImagePullBehavior)
 	assert.Equal(t, "testing", conf.InstanceAttributes["my_attribute"])
 	assert.Equal(t, "testing", conf.ContainerInstanceTags["my_tag"])
-	assert.Equal(t, (90 * time.Second), conf.TaskCleanupWaitDuration)
+	assert.Equal(t, testTaskCleanupWaitDuration, conf.TaskCleanupWaitDuration)
+	assert.Equal(t, testTaskCleanupWaitDurationJitter, conf.TaskCleanupWaitDurationJitter)
 	serializedAdditionalLocalRoutesJSON, err := json.Marshal(conf.AWSVPCAdditionalLocalRoutes)
 	assert.NoError(t, err, "should marshal additional local routes")
 	assert.Equal(t, additionalLocalRoutesJSON, string(serializedAdditionalLocalRoutesJSON))
@@ -202,6 +219,10 @@ func TestEnvironmentConfig(t *testing.T) {
 	assert.False(t, conf.SpotInstanceDrainingEnabled.Enabled())
 	assert.Equal(t, []string{"efsAuth"}, conf.VolumePluginCapabilities)
 	assert.True(t, conf.DependentContainersPullUpfront.Enabled(), "Wrong value for DependentContainersPullUpfront")
+	assert.True(t, conf.EnableRuntimeStats.Enabled(), "Wrong value for EnableRuntimeStats")
+	assert.True(t, conf.ShouldExcludeIPv6PortBinding.Enabled(), "Wrong value for ShouldExcludeIPv6PortBinding")
+	assert.False(t, conf.WarmPoolsSupport.Enabled(), "Wrong value for WarmPoolsSupport")
+	assert.Equal(t, "200-300", conf.DynamicHostPortRange)
 }
 
 func TestTrimWhitespaceWhenCreating(t *testing.T) {
@@ -284,6 +305,7 @@ func TestDefaultCheckpointWithoutECSDataDir(t *testing.T) {
 	conf, err := environmentConfig()
 	assert.NoError(t, err)
 	assert.False(t, conf.Checkpoint.Enabled())
+	assert.Equal(t, NotSet, conf.Checkpoint.Value)
 }
 
 func TestDefaultCheckpointWithECSDataDir(t *testing.T) {
@@ -476,9 +498,72 @@ func TestValidFormatParseEnvVariableDuration(t *testing.T) {
 	assert.Equal(t, 1*time.Second, duration, "Unexpected value parsed in parseEnvVariableDuration.")
 }
 
+func TestParseDynamicHostPortRange(t *testing.T) {
+	testCases := []struct {
+		testName                            string
+		testDynamicHostPortRangeVal         string
+		expectedPortRangeVal                string
+		expectedErrorDynamicHostPortRange   error
+		expectedErrorEphemeralHostPortRange error
+	}{
+		{
+			testName:                            "Parse DynamicHostPortRange for valid DynamicHostPortRange value",
+			testDynamicHostPortRangeVal:         "200-300",
+			expectedPortRangeVal:                "200-300",
+			expectedErrorDynamicHostPortRange:   nil,
+			expectedErrorEphemeralHostPortRange: nil,
+		},
+		{
+			testName:                            "Parse DynamicHostPortRange for valid case when config option is not set or is empty",
+			testDynamicHostPortRangeVal:         "",
+			expectedPortRangeVal:                "300-400",
+			expectedErrorDynamicHostPortRange:   nil,
+			expectedErrorEphemeralHostPortRange: nil,
+		},
+		{
+			testName:                            "Parse DynamicHostPortRange for Invalid DynamicHostPortRange value",
+			testDynamicHostPortRangeVal:         "test1",
+			expectedPortRangeVal:                "300-400",
+			expectedErrorDynamicHostPortRange:   errors.New("Invalid DynamicHostPortRange"),
+			expectedErrorEphemeralHostPortRange: nil,
+		},
+		{
+			testName:                            "Invalid DynamicHostPortRange value and error on getDynamicHostPortRange value",
+			testDynamicHostPortRangeVal:         "test2",
+			expectedPortRangeVal:                fmt.Sprintf("%d-%d", utils.DefaultPortRangeStart, utils.DefaultPortRangeEnd),
+			expectedErrorDynamicHostPortRange:   nil,
+			expectedErrorEphemeralHostPortRange: errors.New("Error getting EphemeralHostPortRange"),
+		},
+	}
+	defer func() {
+		getDynamicHostPortRange = utils.GetDynamicHostPortRange
+	}()
+	for _, tc := range testCases {
+		t.Run(tc.testName, func(t *testing.T) {
+			defer setTestRegion()()
+			defer setTestEnv("ECS_DYNAMIC_HOST_PORT_RANGE", tc.testDynamicHostPortRangeVal)()
+
+			if tc.testDynamicHostPortRangeVal == "" || tc.expectedErrorDynamicHostPortRange != nil {
+				getDynamicHostPortRange = func() (start int, end int, err error) {
+					return 300, 400, nil
+				}
+			}
+
+			if tc.expectedErrorEphemeralHostPortRange != nil {
+				getDynamicHostPortRange = func() (start int, end int, err error) {
+					return 10, 20, errors.New("test default values")
+				}
+			}
+
+			dynamicHostPortRange := parseDynamicHostPortRange("ECS_DYNAMIC_HOST_PORT_RANGE")
+			assert.Equal(t, tc.expectedPortRangeVal, dynamicHostPortRange)
+		})
+	}
+}
+
 func TestInvalidTaskCleanupTimeoutOverridesToThreeHours(t *testing.T) {
 	defer setTestRegion()()
-	setTestEnv("ECS_ENGINE_TASK_CLEANUP_WAIT_DURATION", "1s")
+	setTestEnv("ECS_ENGINE_TASK_CLEANUP_WAIT_DURATION", "1ms")
 	cfg, err := NewConfig(ec2.NewBlackholeEC2MetadataClient())
 	assert.NoError(t, err)
 
@@ -584,6 +669,14 @@ func TestSharedVolumeMatchFullConfigEnabled(t *testing.T) {
 	cfg, err := NewConfig(ec2.NewBlackholeEC2MetadataClient())
 	assert.NoError(t, err)
 	assert.True(t, cfg.SharedVolumeMatchFullConfig.Enabled(), "Wrong value for SharedVolumeMatchFullConfig")
+}
+
+func TestEnableRuntimeStatsConfigEnabled(t *testing.T) {
+	defer setTestRegion()()
+	defer setTestEnv("ECS_ENABLE_RUNTIME_STATS", "true")()
+	cfg, err := NewConfig(ec2.NewBlackholeEC2MetadataClient())
+	assert.NoError(t, err)
+	assert.True(t, cfg.EnableRuntimeStats.Enabled(), "Wrong value for EnableRuntimeStats")
 }
 
 func TestParseImagePullBehavior(t *testing.T) {
@@ -841,6 +934,20 @@ func TestTaskMetadataAZDisabled(t *testing.T) {
 	cfg, err := NewConfig(ec2.NewBlackholeEC2MetadataClient())
 	assert.NoError(t, err)
 	assert.True(t, cfg.TaskMetadataAZDisabled, "Wrong value for TaskMetadataAZDisabled")
+}
+
+func TestExternalConfig(t *testing.T) {
+	defer setTestRegion()()
+	defer setTestEnv("ECS_EXTERNAL", "true")()
+	cfg, err := NewConfig(ec2.NewBlackholeEC2MetadataClient())
+	require.NoError(t, err)
+	assert.True(t, cfg.External.Enabled())
+}
+
+func TestExternalConfigMissingRegion(t *testing.T) {
+	defer setTestEnv("ECS_EXTERNAL", "true")()
+	_, err := NewConfig(ec2.NewBlackholeEC2MetadataClient())
+	assert.Error(t, err)
 }
 
 func setTestRegion() func() {

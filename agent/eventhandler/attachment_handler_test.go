@@ -1,3 +1,4 @@
+//go:build unit
 // +build unit
 
 // Copyright Amazon.com Inc. or its affiliates. All Rights Reserved.
@@ -85,8 +86,7 @@ func TestSendAttachmentEventRetries(t *testing.T) {
 	}
 	assert.NoError(t, attachmentEvent.Attachment.StartTimer(timeoutFunc))
 
-	dataClient, cleanup := newTestDataClient(t)
-	defer cleanup()
+	dataClient := newTestDataClient(t)
 	ctx, cancel := context.WithCancel(context.Background())
 	handler := NewAttachmentEventHandler(ctx, dataClient, client)
 	// use smaller backoff value for unit test
@@ -162,8 +162,7 @@ func TestSubmitAttachmentEventSucceeds(t *testing.T) {
 	defer ctrl.Finish()
 	client := mock_api.NewMockECSClient(ctrl)
 
-	dataClient, cleanup := newTestDataClient(t)
-	defer cleanup()
+	dataClient := newTestDataClient(t)
 
 	attachmentEvent := attachmentEvent(attachmentARN)
 

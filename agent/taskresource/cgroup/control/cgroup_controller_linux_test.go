@@ -1,3 +1,4 @@
+//go:build linux && unit
 // +build linux,unit
 
 // Copyright Amazon.com Inc. or its affiliates. All Rights Reserved.
@@ -44,8 +45,7 @@ func TestCreateHappyCase(t *testing.T) {
 
 	control := newControl(mockCgroupFactory)
 
-	res, err := control.Create(&Spec{testCgroupRoot, testSpecs})
-	assert.Equal(t, mockCgroup, res)
+	err := control.Create(&Spec{testCgroupRoot, testSpecs})
 	assert.NoError(t, err)
 }
 
@@ -61,8 +61,7 @@ func TestCreateErrorCase(t *testing.T) {
 
 	control := newControl(mockCgroupFactory)
 
-	res, err := control.Create(&Spec{testCgroupRoot, testSpecs})
-	assert.Nil(t, res)
+	err := control.Create(&Spec{testCgroupRoot, testSpecs})
 	assert.Error(t, err)
 }
 
@@ -87,9 +86,8 @@ func TestCreateWithBadSpecs(t *testing.T) {
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
-			control, err := cg.Create(tc.spec)
+			err := cg.Create(tc.spec)
 			assert.Error(t, err, "Create should return an error")
-			assert.Nil(t, control, "Create call should not return a controller")
 		})
 	}
 }
@@ -179,4 +177,31 @@ func TestExistsErrorPathWithLoadError(t *testing.T) {
 	control := newControl(mockCgroupFactory)
 
 	assert.False(t, control.Exists(testCgroupRoot))
+}
+
+func TestInitHappyCase(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	mockCgroup := mock_cgroups.NewMockCgroup(ctrl)
+	mockCgroupFactory := mock_factory.NewMockCgroupFactory(ctrl)
+
+	mockCgroupFactory.EXPECT().New(gomock.Any(), gomock.Any(), gomock.Any()).Return(mockCgroup, nil)
+
+	control := newControl(mockCgroupFactory)
+
+	assert.NoError(t, control.Init())
+}
+
+func TestInitErrorCase(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	mockCgroupFactory := mock_factory.NewMockCgroupFactory(ctrl)
+
+	mockCgroupFactory.EXPECT().New(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil, errors.New("cgroup error"))
+
+	control := newControl(mockCgroupFactory)
+
+	assert.Error(t, control.Init())
 }

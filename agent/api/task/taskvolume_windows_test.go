@@ -1,3 +1,4 @@
+//go:build windows && unit
 // +build windows,unit
 
 // Copyright Amazon.com Inc. or its affiliates. All Rights Reserved.
@@ -50,6 +51,7 @@ func TestMarshalTaskVolumeFSxWindowsFileServer(t *testing.T) {
 		"Arn": "test",
 		"Family": "",
 		"Version": "",
+		"ServiceName": "",
 		"Containers": null,
 		"associations": null,
 		"resources": null,	

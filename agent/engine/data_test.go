@@ -1,3 +1,4 @@
+//go:build unit
 // +build unit
 
 // Copyright Amazon.com Inc. or its affiliates. All Rights Reserved.
@@ -16,8 +17,6 @@
 package engine
 
 import (
-	"io/ioutil"
-	"os"
 	"testing"
 
 	apicontainer "github.com/aws/amazon-ecs-agent/agent/api/container"
@@ -84,22 +83,20 @@ var (
 	}
 )
 
-func newTestDataClient(t *testing.T) (data.Client, func()) {
-	testDir, err := ioutil.TempDir("", "agent_engine_unit_test")
-	require.NoError(t, err)
+func newTestDataClient(t *testing.T) data.Client {
+	testDir := t.TempDir()
 
 	testClient, err := data.NewWithSetup(testDir)
+	require.NoError(t, err)
 
-	cleanup := func() {
+	t.Cleanup(func() {
 		require.NoError(t, testClient.Close())
-		require.NoError(t, os.RemoveAll(testDir))
-	}
-	return testClient, cleanup
+	})
+	return testClient
 }
 
 func TestLoadState(t *testing.T) {
-	dataClient, cleanup := newTestDataClient(t)
-	defer cleanup()
+	dataClient := newTestDataClient(t)
 
 	engine := &DockerTaskEngine{
 		state:      dockerstate.NewTaskEngineState(),
@@ -136,8 +133,7 @@ func TestLoadState(t *testing.T) {
 }
 
 func TestSaveState(t *testing.T) {
-	dataClient, cleanup := newTestDataClient(t)
-	defer cleanup()
+	dataClient := newTestDataClient(t)
 
 	engine := &DockerTaskEngine{
 		state:      dockerstate.NewTaskEngineState(),
@@ -167,8 +163,7 @@ func TestSaveState(t *testing.T) {
 }
 
 func TestSaveStateEnsureBoltDBCompatibility(t *testing.T) {
-	dataClient, cleanup := newTestDataClient(t)
-	defer cleanup()
+	dataClient := newTestDataClient(t)
 
 	engine := &DockerTaskEngine{
 		state:      dockerstate.NewTaskEngineState(),
@@ -205,8 +200,7 @@ func TestSaveStateEnsureBoltDBCompatibility(t *testing.T) {
 }
 
 func TestSaveAndRemoveTaskData(t *testing.T) {
-	dataClient, cleanup := newTestDataClient(t)
-	defer cleanup()
+	dataClient := newTestDataClient(t)
 
 	engine := &DockerTaskEngine{
 		dataClient: dataClient,
@@ -223,8 +217,7 @@ func TestSaveAndRemoveTaskData(t *testing.T) {
 }
 
 func TestSaveContainerData(t *testing.T) {
-	dataClient, cleanup := newTestDataClient(t)
-	defer cleanup()
+	dataClient := newTestDataClient(t)
 
 	engine := &DockerTaskEngine{
 		dataClient: dataClient,
@@ -236,8 +229,7 @@ func TestSaveContainerData(t *testing.T) {
 }
 
 func TestSaveDockerContainerData(t *testing.T) {
-	dataClient, cleanup := newTestDataClient(t)
-	defer cleanup()
+	dataClient := newTestDataClient(t)
 
 	engine := &DockerTaskEngine{
 		dataClient: dataClient,
@@ -252,8 +244,7 @@ func TestSaveDockerContainerData(t *testing.T) {
 }
 
 func TestSaveAndRemoveImageStateData(t *testing.T) {
-	dataClient, cleanup := newTestDataClient(t)
-	defer cleanup()
+	dataClient := newTestDataClient(t)
 
 	imageManager := &dockerImageManager{
 		dataClient: dataClient,
@@ -270,8 +261,7 @@ func TestSaveAndRemoveImageStateData(t *testing.T) {
 }
 
 func TestRemoveENIAttachmentData(t *testing.T) {
-	dataClient, cleanup := newTestDataClient(t)
-	defer cleanup()
+	dataClient := newTestDataClient(t)
 
 	engine := &DockerTaskEngine{
 		state:      dockerstate.NewTaskEngineState(),

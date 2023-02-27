@@ -15,8 +15,10 @@ package container
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -63,6 +65,13 @@ const (
 
 	// MetadataURIFormat defines the URI format for v4 metadata endpoint
 	MetadataURIFormatV4 = "http://169.254.170.2/v4/%s"
+
+	// AgentURIEnvVarName defines the name of the environment variable
+	// injected into containers that contains the Agent endpoints.
+	AgentURIEnvVarName = "ECS_AGENT_URI"
+
+	// AgentURIFormat defines the URI format for Agent endpoints
+	AgentURIFormat = "http://169.254.170.2/api/%s"
 
 	// SecretProviderSSM is to show secret provider being SSM
 	SecretProviderSSM = "ssm"
@@ -310,6 +319,13 @@ type Container struct {
 	finishedAt time.Time
 
 	labels map[string]string
+
+	// ContainerHasPortRange is set to true when the container has at least 1 port range requested.
+	ContainerHasPortRange bool
+	// ContainerPortSet is a set of singular container ports that don't belong to a containerPortRange request
+	ContainerPortSet map[int]struct{}
+	// ContainerPortRangeMap is a map of containerPortRange to its associated hostPortRange
+	ContainerPortRangeMap map[string]string
 }
 
 type DependsOn struct {
@@ -495,16 +511,29 @@ func (c *Container) String() string {
 
 // GetSteadyStateStatus returns the steady state status for the container. If
 // Container.steadyState is not initialized, the default steady state status
-// defined by `defaultContainerSteadyStateStatus` is returned. The 'pause'
+// defined by `defaultContainerSteadyStateStatus` is returned. In awsvpc, the 'pause'
 // container's steady state differs from that of other containers, as the
 // 'pause' container can reach its teady state once networking resources
 // have been provisioned for it, which is done in the `ContainerResourcesProvisioned`
-// state
+// state. In bridge mode, pause containers are currently used exclusively for
+// supporting service-connect tasks. Those pause containers will have steady state
+// status "ContainerRunning" as the actual network provisioning is done by ServiceConnect
+// container (aka Appnet agent)
 func (c *Container) GetSteadyStateStatus() apicontainerstatus.ContainerStatus {
 	if c.SteadyStateStatusUnsafe == nil {
 		return defaultContainerSteadyStateStatus
 	}
 	return *c.SteadyStateStatusUnsafe
+}
+
+// SetSteadyStateStatusUnsafe allows setting container steady state status after they
+// are initially created.
+// In bridge mode, this is used by overriding the ServiceConnect container steady
+// status to ContainerResourcesProvisioned because it comes with ACS task payload and will
+// get ContainerRunning by default during unmarshalling. We need ServiceConnect container
+// to provision network resources to support SC bridge mode
+func (c *Container) SetSteadyStateStatusUnsafe(steadyState apicontainerstatus.ContainerStatus) {
+	c.SteadyStateStatusUnsafe = &steadyState
 }
 
 // IsKnownSteadyState returns true if the `KnownState` of the container equals
@@ -934,6 +963,22 @@ func (c *Container) InjectV4MetadataEndpoint() {
 		fmt.Sprintf(MetadataURIFormatV4, c.V3EndpointID)
 }
 
+// InjectV1AgentAPIEndpoint injects the v1 Agent API endpoint into the container
+// as an environment variable.
+func (c *Container) InjectV1AgentAPIEndpoint() {
+	c.lock.Lock()
+	defer c.lock.Unlock()
+	c.ensureEnvironmentIsInitialized()
+	c.Environment[AgentURIEnvVarName] = fmt.Sprintf(AgentURIFormat, c.V3EndpointID)
+}
+
+// Initializes Environment Map if it is nil
+func (c *Container) ensureEnvironmentIsInitialized() {
+	if c.Environment == nil {
+		c.Environment = make(map[string]string)
+	}
+}
+
 // ShouldCreateWithSSMSecret returns true if this container needs to get secret
 // value from SSM Parameter Store
 func (c *Container) ShouldCreateWithSSMSecret() bool {
@@ -1289,6 +1334,44 @@ func (c *Container) UpdateManagedAgentSentStatus(agentName string, status apicon
 	return false
 }
 
+// RequiresCredentialSpec checks if container needs a credentialspec resource
+func (c *Container) RequiresCredentialSpec() bool {
+	credSpec, err := c.getCredentialSpec()
+	if err != nil || credSpec == "" {
+		return false
+	}
+
+	return true
+}
+
+// GetCredentialSpec is used to retrieve the current credentialspec resource
+func (c *Container) GetCredentialSpec() (string, error) {
+	return c.getCredentialSpec()
+}
+
+func (c *Container) getCredentialSpec() (string, error) {
+	c.lock.RLock()
+	defer c.lock.RUnlock()
+
+	if c.DockerConfig.HostConfig == nil {
+		return "", errors.New("empty container hostConfig")
+	}
+
+	hostConfig := &dockercontainer.HostConfig{}
+	err := json.Unmarshal([]byte(*c.DockerConfig.HostConfig), hostConfig)
+	if err != nil || len(hostConfig.SecurityOpt) == 0 {
+		return "", errors.New("unable to obtain security options from container hostConfig")
+	}
+
+	for _, opt := range hostConfig.SecurityOpt {
+		if strings.HasPrefix(opt, "credentialspec") {
+			return opt, nil
+		}
+	}
+
+	return "", errors.New("unable to obtain credentialspec")
+}
+
 func (c *Container) GetManagedAgentStatus(agentName string) apicontainerstatus.ManagedAgentStatus {
 	c.lock.RLock()
 	defer c.lock.RUnlock()
@@ -1323,4 +1406,40 @@ func (c *Container) IsContainerTornDown() bool {
 	c.lock.RLock()
 	defer c.lock.RUnlock()
 	return c.ContainerTornDownUnsafe
+}
+
+func (c *Container) SetContainerHasPortRange(containerHasPortRange bool) {
+	c.lock.Lock()
+	defer c.lock.Unlock()
+	c.ContainerHasPortRange = containerHasPortRange
+}
+
+func (c *Container) HasPortRange() bool {
+	c.lock.RLock()
+	defer c.lock.RUnlock()
+	return c.ContainerHasPortRange
+}
+
+func (c *Container) SetContainerPortSet(containerPortSet map[int]struct{}) {
+	c.lock.Lock()
+	defer c.lock.Unlock()
+	c.ContainerPortSet = containerPortSet
+}
+
+func (c *Container) GetContainerPortSet() map[int]struct{} {
+	c.lock.RLock()
+	defer c.lock.RUnlock()
+	return c.ContainerPortSet
+}
+
+func (c *Container) SetContainerPortRangeMap(portRangeMap map[string]string) {
+	c.lock.Lock()
+	defer c.lock.Unlock()
+	c.ContainerPortRangeMap = portRangeMap
+}
+
+func (c *Container) GetContainerPortRangeMap() map[string]string {
+	c.lock.RLock()
+	defer c.lock.RUnlock()
+	return c.ContainerPortRangeMap
 }

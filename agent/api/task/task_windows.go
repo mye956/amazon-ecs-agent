@@ -1,3 +1,4 @@
+//go:build windows
 // +build windows
 
 // Copyright Amazon.com Inc. or its affiliates. All Rights Reserved.
@@ -16,23 +17,25 @@
 package task
 
 import (
-	"errors"
 	"runtime"
 	"time"
 
+	"github.com/aws/amazon-ecs-agent/agent/ecscni"
+	"github.com/aws/amazon-ecs-agent/agent/logger"
+	"github.com/aws/amazon-ecs-agent/agent/logger/field"
 	"github.com/aws/amazon-ecs-agent/agent/utils"
+	"github.com/containernetworking/cni/libcni"
 
-	apicontainerstatus "github.com/aws/amazon-ecs-agent/agent/api/container/status"
+	apieni "github.com/aws/amazon-ecs-agent/agent/api/eni"
 	"github.com/aws/amazon-ecs-agent/agent/config"
 	"github.com/aws/amazon-ecs-agent/agent/credentials"
 	"github.com/aws/amazon-ecs-agent/agent/taskresource"
-	"github.com/aws/amazon-ecs-agent/agent/taskresource/credentialspec"
 	"github.com/aws/amazon-ecs-agent/agent/taskresource/fsxwindowsfileserver"
-	resourcestatus "github.com/aws/amazon-ecs-agent/agent/taskresource/status"
 	resourcetype "github.com/aws/amazon-ecs-agent/agent/taskresource/types"
 	taskresourcevolume "github.com/aws/amazon-ecs-agent/agent/taskresource/volume"
 	"github.com/cihub/seelog"
 	dockercontainer "github.com/docker/docker/api/types/container"
+	"github.com/pkg/errors"
 )
 
 const (
@@ -120,64 +123,17 @@ func (task *Task) dockerCPUShares(containerCPU uint) int64 {
 }
 
 func (task *Task) initializeCgroupResourceSpec(cgroupPath string, cGroupCPUPeriod time.Duration, resourceFields *taskresource.ResourceFields) error {
+	if !task.MemoryCPULimitsEnabled {
+		if task.CPU > 0 || task.Memory > 0 {
+			// Client-side validation/warning if a task with task-level CPU/memory limits specified somehow lands on an instance
+			// where agent does not support it. These limits will be ignored.
+			logger.Warn("Ignoring task-level CPU/memory limits since agent does not support the TaskCPUMemLimits capability", logger.Fields{
+				field.TaskID: task.GetID(),
+			})
+		}
+		return nil
+	}
 	return errors.New("unsupported platform")
-}
-
-// requiresCredentialSpecResource returns true if at least one container in the task
-// needs a valid credentialspec resource
-func (task *Task) requiresCredentialSpecResource() bool {
-	for _, container := range task.Containers {
-		if container.RequiresCredentialSpec() {
-			return true
-		}
-	}
-	return false
-}
-
-// initializeCredentialSpecResource builds the resource dependency map for the credentialspec resource
-func (task *Task) initializeCredentialSpecResource(config *config.Config, credentialsManager credentials.Manager,
-	resourceFields *taskresource.ResourceFields) error {
-	credentialspecResource, err := credentialspec.NewCredentialSpecResource(task.Arn, config.AWSRegion, task.getAllCredentialSpecRequirements(),
-		task.ExecutionCredentialsID, credentialsManager, resourceFields.SSMClientCreator, resourceFields.S3ClientCreator)
-	if err != nil {
-		return err
-	}
-
-	task.AddResource(credentialspec.ResourceName, credentialspecResource)
-
-	// for every container that needs credential spec vending, it needs to wait for all credential spec resources
-	for _, container := range task.Containers {
-		if container.RequiresCredentialSpec() {
-			container.BuildResourceDependency(credentialspecResource.GetName(),
-				resourcestatus.ResourceStatus(credentialspec.CredentialSpecCreated),
-				apicontainerstatus.ContainerCreated)
-		}
-	}
-
-	return nil
-}
-
-// getAllCredentialSpecRequirements is used to build all the credential spec requirements for the task
-func (task *Task) getAllCredentialSpecRequirements() []string {
-	reqs := []string{}
-
-	for _, container := range task.Containers {
-		credentialSpec, err := container.GetCredentialSpec()
-		if err == nil && credentialSpec != "" && !utils.StrSliceContains(reqs, credentialSpec) {
-			reqs = append(reqs, credentialSpec)
-		}
-	}
-
-	return reqs
-}
-
-// GetCredentialSpecResource retrieves credentialspec resource from resource map
-func (task *Task) GetCredentialSpecResource() ([]taskresource.TaskResource, bool) {
-	task.lock.RLock()
-	defer task.lock.RUnlock()
-
-	res, ok := task.ResourcesMapUnsafe[credentialspec.ResourceName]
-	return res, ok
 }
 
 func enableIPv6SysctlSetting(hostConfig *dockercontainer.HostConfig) {
@@ -245,4 +201,55 @@ func (task *Task) addFSxWindowsFileServerResource(
 	task.updateContainerVolumeDependency(vol.Name)
 
 	return nil
+}
+
+// BuildCNIConfigAwsvpc builds a list of CNI network configurations for the task.
+func (task *Task) BuildCNIConfigAwsvpc(includeIPAMConfig bool, cniConfig *ecscni.Config) (*ecscni.Config, error) {
+	if !task.IsNetworkModeAWSVPC() {
+		return nil, errors.New("task config: task network mode is not awsvpc")
+	}
+
+	var netconf *libcni.NetworkConfig
+	var err error
+
+	// Build a CNI network configuration for each ENI.
+	for _, eni := range task.ENIs {
+		switch eni.InterfaceAssociationProtocol {
+		// If the association protocol is set to "default" or unset (to preserve backwards
+		// compatibility), consider it a "standard" ENI attachment.
+		case "", apieni.DefaultInterfaceAssociationProtocol:
+			cniConfig.ID = eni.MacAddress
+			netconf, err = ecscni.NewVPCENIPluginConfigForTaskNSSetup(eni, cniConfig)
+		default:
+			err = errors.Errorf("task config: unknown interface association type: %s",
+				eni.InterfaceAssociationProtocol)
+		}
+
+		if err != nil {
+			return nil, err
+		}
+
+		// IfName is expected by the plugin but is not used.
+		cniConfig.NetworkConfigs = append(cniConfig.NetworkConfigs, &ecscni.NetworkConfig{
+			IfName:           ecscni.DefaultENIName,
+			CNINetworkConfig: netconf,
+		})
+	}
+
+	// Create the vpc-eni plugin configuration to setup ecs-bridge endpoint in the task namespace.
+	netconf, err = ecscni.NewVPCENIPluginConfigForECSBridgeSetup(cniConfig)
+	if err != nil {
+		return nil, err
+	}
+	cniConfig.NetworkConfigs = append(cniConfig.NetworkConfigs, &ecscni.NetworkConfig{
+		IfName:           ecscni.ECSBridgeNetworkName,
+		CNINetworkConfig: netconf,
+	})
+
+	return cniConfig, nil
+}
+
+// BuildCNIConfigBridgeMode builds a list of CNI network configurations for a task in docker bridge mode.
+func (task *Task) BuildCNIConfigBridgeMode(cniConfig *ecscni.Config, containerName string) (*ecscni.Config, error) {
+	return nil, errors.New("unsupported platform")
 }

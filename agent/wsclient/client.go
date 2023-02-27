@@ -33,6 +33,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/aws/amazon-ecs-agent/agent/logger"
+
 	"crypto/tls"
 
 	"github.com/aws/amazon-ecs-agent/agent/config"
@@ -145,7 +147,9 @@ type MakeRequestHookFunc func([]byte) ([]byte, error)
 // 'MakeRequest' can be made after calling this, but responses will not be
 // receivable until 'Serve' is also called.
 func (cs *ClientServerImpl) Connect() error {
-	seelog.Infof("Establishing a Websocket connection to %s", cs.URL)
+	logger.Info("Establishing a Websocket connection", logger.Fields{
+		"url": cs.URL,
+	})
 	parsedURL, err := url.Parse(cs.URL)
 	if err != nil {
 		return err
@@ -188,7 +192,7 @@ func (cs *ClientServerImpl) Connect() error {
 		ReadBufferSize:   readBufSize,
 		WriteBufferSize:  writeBufSize,
 		TLSClientConfig:  tlsConfig,
-		Proxy:            http.ProxyFromEnvironment,
+		Proxy:            utils.Proxy,
 		NetDial:          timeoutDialer.Dial,
 		HandshakeTimeout: wsHandshakeTimeout,
 	}
@@ -265,7 +269,7 @@ func (cs *ClientServerImpl) SetReadDeadline(t time.Time) error {
 }
 
 func (cs *ClientServerImpl) forceCloseConnection() {
-	closeChan := make(chan error)
+	closeChan := make(chan error, 1)
 	go func() {
 		closeChan <- cs.Close()
 	}()
@@ -308,7 +312,9 @@ func (cs *ClientServerImpl) Disconnect(...interface{}) error {
 // argument *must* be a pointer to a recognized 'ecsacs' struct.
 // E.g. if you desired to handle messages from acs of type 'FooMessage', you
 // would pass the following handler in:
-//     func(message *ecsacs.FooMessage)
+//
+//	func(message *ecsacs.FooMessage)
+//
 // This function will panic if the passed in function does not have one pointer
 // argument or the argument is not a recognized type.
 // Additionally, the request handler will block processing of further messages

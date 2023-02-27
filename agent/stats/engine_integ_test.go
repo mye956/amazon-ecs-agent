@@ -1,4 +1,5 @@
-//+build integration
+//go:build integration
+// +build integration
 
 // Copyright Amazon.com Inc. or its affiliates. All Rights Reserved.
 //
@@ -40,7 +41,10 @@ func init() {
 	dockerClient, _ = dockerapi.NewDockerGoClient(sdkClientFactory, &cfg, ctx)
 }
 
-func createRunningTask() *apitask.Task {
+func createRunningTask(networkMode string) *apitask.Task {
+	if networkMode == "default" {
+		networkMode = "bridge"
+	}
 	return &apitask.Task{
 		Arn:                 taskArn,
 		DesiredStatusUnsafe: apitaskstatus.TaskRunning,
@@ -52,6 +56,7 @@ func createRunningTask() *apitask.Task {
 				Name: containerName,
 			},
 		},
+		NetworkMode: networkMode,
 	}
 }
 
@@ -78,8 +83,8 @@ func TestStatsEngineWithExistingContainersWithoutHealth(t *testing.T) {
 
 	containerChangeEventStream := eventStream("TestStatsEngineWithExistingContainersWithoutHealth")
 	taskEngine := ecsengine.NewTaskEngine(&config.Config{}, nil, nil, containerChangeEventStream,
-		nil, dockerstate.NewTaskEngineState(), nil, nil, nil)
-	testTask := createRunningTask()
+		nil, dockerstate.NewTaskEngineState(), nil, nil, nil, nil)
+	testTask := createRunningTask("default")
 	// Populate Tasks and Container map in the engine.
 	dockerTaskEngine := taskEngine.(*ecsengine.DockerTaskEngine)
 	dockerTaskEngine.State().AddTask(testTask)
@@ -99,7 +104,7 @@ func TestStatsEngineWithExistingContainersWithoutHealth(t *testing.T) {
 
 	// Wait for the stats collection go routine to start.
 	time.Sleep(checkPointSleep)
-	validateInstanceMetrics(t, engine)
+	validateInstanceMetrics(t, engine, false)
 	validateEmptyTaskHealthMetrics(t, engine)
 
 	err = client.ContainerStop(ctx, container.ID, &timeout)
@@ -137,8 +142,8 @@ func TestStatsEngineWithNewContainersWithoutHealth(t *testing.T) {
 
 	containerChangeEventStream := eventStream("TestStatsEngineWithNewContainers")
 	taskEngine := ecsengine.NewTaskEngine(&config.Config{}, nil, nil, containerChangeEventStream,
-		nil, dockerstate.NewTaskEngineState(), nil, nil, nil)
-	testTask := createRunningTask()
+		nil, dockerstate.NewTaskEngineState(), nil, nil, nil, nil)
+	testTask := createRunningTask("default")
 	// Populate Tasks and Container map in the engine.
 	dockerTaskEngine := taskEngine.(*ecsengine.DockerTaskEngine)
 	dockerTaskEngine.State().AddTask(testTask)
@@ -171,7 +176,7 @@ func TestStatsEngineWithNewContainersWithoutHealth(t *testing.T) {
 
 	// Wait for the stats collection go routine to start.
 	time.Sleep(checkPointSleep)
-	validateInstanceMetrics(t, engine)
+	validateInstanceMetrics(t, engine, false)
 	validateEmptyTaskHealthMetrics(t, engine)
 
 	err = client.ContainerStop(ctx, container.ID, &timeout)
@@ -215,8 +220,8 @@ func TestStatsEngineWithExistingContainers(t *testing.T) {
 
 	containerChangeEventStream := eventStream("TestStatsEngineWithExistingContainers")
 	taskEngine := ecsengine.NewTaskEngine(&config.Config{}, nil, nil, containerChangeEventStream,
-		nil, dockerstate.NewTaskEngineState(), nil, nil, nil)
-	testTask := createRunningTask()
+		nil, dockerstate.NewTaskEngineState(), nil, nil, nil, nil)
+	testTask := createRunningTask("bridge")
 	// enable container health check for this container
 	testTask.Containers[0].HealthCheckType = "docker"
 	// Populate Tasks and Container map in the engine.
@@ -240,7 +245,7 @@ func TestStatsEngineWithExistingContainers(t *testing.T) {
 	time.Sleep(checkPointSleep)
 
 	// Verify the metrics of the container
-	validateInstanceMetrics(t, engine)
+	validateInstanceMetrics(t, engine, false)
 
 	// Verify the health metrics of container
 	validateTaskHealthMetrics(t, engine)
@@ -282,9 +287,9 @@ func TestStatsEngineWithNewContainers(t *testing.T) {
 
 	containerChangeEventStream := eventStream("TestStatsEngineWithNewContainers")
 	taskEngine := ecsengine.NewTaskEngine(&config.Config{}, nil, nil, containerChangeEventStream,
-		nil, dockerstate.NewTaskEngineState(), nil, nil, nil)
+		nil, dockerstate.NewTaskEngineState(), nil, nil, nil, nil)
 
-	testTask := createRunningTask()
+	testTask := createRunningTask("bridge")
 	// enable health check of the container
 	testTask.Containers[0].HealthCheckType = "docker"
 	// Populate Tasks and Container map in the engine.
@@ -317,7 +322,7 @@ func TestStatsEngineWithNewContainers(t *testing.T) {
 
 	// Wait for the stats collection go routine to start.
 	time.Sleep(checkPointSleep)
-	validateInstanceMetrics(t, engine)
+	validateInstanceMetrics(t, engine, false)
 	// Verify the health metrics of container
 	validateTaskHealthMetrics(t, engine)
 
@@ -364,9 +369,9 @@ func TestStatsEngineWithNewContainersWithPolling(t *testing.T) {
 
 	containerChangeEventStream := eventStream("TestStatsEngineWithNewContainers")
 	taskEngine := ecsengine.NewTaskEngine(&config.Config{}, nil, nil, containerChangeEventStream,
-		nil, dockerstate.NewTaskEngineState(), nil, nil, nil)
+		nil, dockerstate.NewTaskEngineState(), nil, nil, nil, nil)
 
-	testTask := createRunningTask()
+	testTask := createRunningTask("bridge")
 	// enable health check of the container
 	testTask.Containers[0].HealthCheckType = "docker"
 	// Populate Tasks and Container map in the engine.
@@ -399,7 +404,7 @@ func TestStatsEngineWithNewContainersWithPolling(t *testing.T) {
 
 	// Wait for the stats collection go routine to start.
 	time.Sleep(10 * time.Second)
-	validateInstanceMetrics(t, engine)
+	validateInstanceMetrics(t, engine, false)
 	// Verify the health metrics of container
 	validateTaskHealthMetrics(t, engine)
 
@@ -429,7 +434,7 @@ func TestStatsEngineWithNewContainersWithPolling(t *testing.T) {
 func TestStatsEngineWithDockerTaskEngine(t *testing.T) {
 	containerChangeEventStream := eventStream("TestStatsEngineWithDockerTaskEngine")
 	taskEngine := ecsengine.NewTaskEngine(&config.Config{}, nil, nil, containerChangeEventStream,
-		nil, dockerstate.NewTaskEngineState(), nil, nil, nil)
+		nil, dockerstate.NewTaskEngineState(), nil, nil, nil, nil)
 	container, err := createHealthContainer(client)
 	require.NoError(t, err, "creating container failed")
 	ctx, cancel := context.WithCancel(context.TODO())
@@ -439,7 +444,7 @@ func TestStatsEngineWithDockerTaskEngine(t *testing.T) {
 	unmappedContainer, err := createHealthContainer(client)
 	require.NoError(t, err, "creating container failed")
 	defer client.ContainerRemove(ctx, unmappedContainer.ID, types.ContainerRemoveOptions{Force: true})
-	testTask := createRunningTask()
+	testTask := createRunningTask("bridge")
 	// enable the health check of the container
 	testTask.Containers[0].HealthCheckType = "docker"
 	// Populate Tasks and Container map in the engine.
@@ -489,7 +494,7 @@ func TestStatsEngineWithDockerTaskEngine(t *testing.T) {
 
 	// Wait for the stats collection go routine to start.
 	time.Sleep(checkPointSleep)
-	validateInstanceMetrics(t, statsEngine)
+	validateInstanceMetrics(t, statsEngine, false)
 	validateTaskHealthMetrics(t, statsEngine)
 
 	err = client.ContainerStop(ctx, container.ID, &timeout)
@@ -513,14 +518,14 @@ func TestStatsEngineWithDockerTaskEngine(t *testing.T) {
 func TestStatsEngineWithDockerTaskEngineMissingRemoveEvent(t *testing.T) {
 	containerChangeEventStream := eventStream("TestStatsEngineWithDockerTaskEngineMissingRemoveEvent")
 	taskEngine := ecsengine.NewTaskEngine(&config.Config{}, nil, nil, containerChangeEventStream,
-		nil, dockerstate.NewTaskEngineState(), nil, nil, nil)
+		nil, dockerstate.NewTaskEngineState(), nil, nil, nil, nil)
 	ctx, cancel := context.WithCancel(context.TODO())
 	defer cancel()
 
 	container, err := createHealthContainer(client)
 	require.NoError(t, err, "creating container failed")
 	defer client.ContainerRemove(ctx, container.ID, types.ContainerRemoveOptions{Force: true})
-	testTask := createRunningTask()
+	testTask := createRunningTask("")
 	// enable container health check of this container
 	testTask.Containers[0].HealthCheckType = "docker"
 	testTask.Containers[0].KnownStatusUnsafe = apicontainerstatus.ContainerStopped
@@ -567,7 +572,7 @@ func TestStatsEngineWithDockerTaskEngineMissingRemoveEvent(t *testing.T) {
 	time.Sleep(checkPointSleep)
 
 	// Simulate tcs client invoking GetInstanceMetrics.
-	_, _, err = statsEngine.GetInstanceMetrics()
+	_, _, err = statsEngine.GetInstanceMetrics(false)
 	assert.Error(t, err, "expect error 'no task metrics tp report' when getting instance metrics")
 
 	// Should not contain any metrics after cleanup.
@@ -576,10 +581,10 @@ func TestStatsEngineWithDockerTaskEngineMissingRemoveEvent(t *testing.T) {
 }
 
 func TestStatsEngineWithNetworkStatsDefaultMode(t *testing.T) {
-	testNetworkModeStats(t, "default", false)
+	testNetworkModeStatsInteg(t, "default", false)
 }
 
-func testNetworkModeStats(t *testing.T, networkMode string, statsEmpty bool) {
+func testNetworkModeStatsInteg(t *testing.T, networkMode string, statsEmpty bool) {
 	// Create a new docker stats engine
 	engine := NewDockerStatsEngine(&cfg, dockerClient, eventStream("TestStatsEngineWithNetworkStats"))
 	ctx, cancel := context.WithCancel(context.TODO())
@@ -602,8 +607,8 @@ func testNetworkModeStats(t *testing.T, networkMode string, statsEmpty bool) {
 
 	containerChangeEventStream := eventStream("TestStatsEngineWithNetworkStats")
 	taskEngine := ecsengine.NewTaskEngine(&config.Config{}, nil, nil, containerChangeEventStream,
-		nil, dockerstate.NewTaskEngineState(), nil, nil, nil)
-	testTask := createRunningTask()
+		nil, dockerstate.NewTaskEngineState(), nil, nil, nil, nil)
+	testTask := createRunningTask(networkMode)
 
 	// Populate Tasks and Container map in the engine.
 	dockerTaskEngine := taskEngine.(*ecsengine.DockerTaskEngine)
@@ -632,7 +637,7 @@ func testNetworkModeStats(t *testing.T, networkMode string, statsEmpty bool) {
 
 	// Wait for the stats collection go routine to start.
 	time.Sleep(checkPointSleep)
-	_, taskMetrics, err := engine.GetInstanceMetrics()
+	_, taskMetrics, err := engine.GetInstanceMetrics(false)
 	assert.NoError(t, err, "getting instance metrics failed")
 	taskMetric := taskMetrics[0]
 	for _, containerMetric := range taskMetric.ContainerMetrics {
@@ -683,8 +688,8 @@ func TestStorageStats(t *testing.T) {
 
 	containerChangeEventStream := eventStream("TestStatsEngineWithStorageStats")
 	taskEngine := ecsengine.NewTaskEngine(&config.Config{}, nil, nil, containerChangeEventStream,
-		nil, dockerstate.NewTaskEngineState(), nil, nil, nil)
-	testTask := createRunningTask()
+		nil, dockerstate.NewTaskEngineState(), nil, nil, nil, nil)
+	testTask := createRunningTask("bridge")
 
 	// Populate Tasks and Container map in the engine.
 	dockerTaskEngine := taskEngine.(*ecsengine.DockerTaskEngine)
@@ -712,7 +717,7 @@ func TestStorageStats(t *testing.T) {
 
 	// Wait for the stats collection go routine to start.
 	time.Sleep(checkPointSleep)
-	_, taskMetrics, err := engine.GetInstanceMetrics()
+	_, taskMetrics, err := engine.GetInstanceMetrics(false)
 	assert.NoError(t, err, "getting instance metrics failed")
 	taskMetric := taskMetrics[0]
 	for _, containerMetric := range taskMetric.ContainerMetrics {

@@ -1,0 +1,470 @@
+AWSTemplateFormatVersion: 2010-09-09
+Description: A template that brings up a simple code pipeline for testing
+
+Parameters:
+    GithubFullRepoName:
+      Type: String
+      Description: The name of the repository that we want to use (e.g. aws/amazon-ecs-agent)
+    GithubBranchName:
+      Type: String
+      Description: The name of the branch to use to build (e.g. mainline, dev)
+    GithubRepositoryName:
+      Type: String
+      Description: The name of the repository
+    CodeStarConnectionArn:
+      Type: String
+      Description: The ARN of the connection to use to connect to GitHub
+    
+Resources:
+  CodeBuildServiceRole:
+    Type: 'AWS::IAM::Role'
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: codebuild.amazonaws.com
+            Action: 'sts:AssumeRole'
+      Policies:
+        - PolicyName: base-policy
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Sid: CloudWatchLogsPolicy
+                Effect: Allow
+                Action:
+                  - 'logs:CreateLogGroup'
+                  - 'logs:CreateLogStream'
+                  - 'logs:PutLogEvents'
+                Resource: '*'
+              - Sid: S3GetObjectPolicy
+                Effect: Allow
+                Action:
+                  - 's3:GetObject'
+                  - 's3:GetObjectVersion'
+                Resource: '*'
+              - Sid: S3PutObjectPolicy
+                Effect: Allow
+                Action:
+                  - 's3:PutObject'
+                Resource: '*'
+              - Sid: ECRPullPolicy
+                Effect: Allow
+                Action:
+                  - 'ecr:BatchCheckLayerAvailability'
+                  - 'ecr:GetDownloadUrlForLayer'
+                  - 'ecr:BatchGetImage'
+                Resource: '*'
+              - Sid: ECRAuthPolicy
+                Effect: Allow
+                Action:
+                  - 'ecr:GetAuthorizationToken'
+                Resource: '*'
+              - Sid: S3BucketIdentity
+                Effect: Allow
+                Action:
+                  - 's3:GetBucketAcl'
+                  - 's3:GetBucketLocation'
+                Resource: '*'
+              - Sid: CodeBuildCodeStarConnectionAccess
+                Effect: Allow
+                Resource:
+                  - !Ref CodeStarConnectionArn
+                Action:
+                  - codestar-connections:UseConnection
+  CodeBuildSourceCredential:
+    Type: 'AWS::CodeBuild::SourceCredential'
+    Properties:
+      AuthType: PERSONAL_ACCESS_TOKEN
+      ServerType: GITHUB
+      Token: '{{resolve:secretsmanager:CODEBUILD_GITHUB_ACCESS:SecretString:CODEBUILD_GITHUB_ACCESS_TOKEN}}'
+  CodeBuildTest:
+    Type: 'AWS::CodeBuild::Project'
+    Properties:
+      Name: !Ref 'AWS::StackName'
+      ServiceRole: !GetAtt CodeBuildServiceRole.Arn
+      Source:
+        Type: GITHUB
+        Location: !Sub 'https://github.com/mye956/${GithubRepositoryName}.git'
+        BuildSpec: buildspecs/test-buildspec.yml
+        Auth:
+          Type: OAUTH
+          Resource: !Ref CodeBuildSourceCredential
+      Artifacts:
+        Type: NO_ARTIFACTS
+      Triggers:
+        Webhook: true
+        FilterGroups:
+          - - Type: EVENT
+              Pattern: 'PULL_REQUEST_CREATED, PULL_REQUEST_UPDATED'
+            - Type: BASE_REF
+              Pattern: !Sub ^refs/heads/${GithubBranchName}$
+      Environment:
+          Type: LINUX_CONTAINER
+          ComputeType: BUILD_GENERAL1_SMALL
+          ImagePullCredentialsType: CODEBUILD
+          Image: aws/codebuild/amazonlinux2-x86_64-standard:3.0
+    
+  CodePipelineServiceRole:
+    Type: 'AWS::IAM::Role'
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: codepipeline.amazonaws.com
+            Action: 'sts:AssumeRole'
+      Policies:
+        - PolicyName: base-policy
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Sid: CloudWatchLogsPolicy
+                Effect: Allow
+                Action:
+                  - 'logs:CreateLogGroup'
+                  - 'logs:CreateLogStream'
+                  - 'logs:PutLogEvents'
+                Resource: '*'
+              - Sid: S3GetObjectPolicy
+                Effect: Allow
+                Action:
+                  - 's3:GetObject'
+                  - 's3:GetObjectVersion'
+                Resource: '*'
+              - Sid: S3PutObjectPolicy
+                Effect: Allow
+                Action:
+                  - 's3:PutObject'
+                Resource: '*'
+              - Sid: ECRPullPolicy
+                Effect: Allow
+                Action:
+                  - 'ecr:BatchCheckLayerAvailability'
+                  - 'ecr:GetDownloadUrlForLayer'
+                  - 'ecr:BatchGetImage'
+                Resource: '*'
+              - Sid: ECRAuthPolicy
+                Effect: Allow
+                Action:
+                  - 'ecr:GetAuthorizationToken'
+                Resource: '*'
+              - Sid: S3BucketIdentity
+                Effect: Allow
+                Action:
+                  - 's3:GetBucketAcl'
+                  - 's3:GetBucketLocation'
+                Resource: '*'
+              - Sid: CodePipelineCodeBuildAccess
+                Effect: Allow
+                Resource: '*'
+                Action:
+                  - codebuild:BatchGetBuilds
+                  - codebuild:StartBuild
+                  - codebuild:BatchGetBuildBatches
+                  - codebuild:StartBuildBatch
+
+  CodePipelineArtifactStore:
+    Type: AWS::S3::Bucket
+    Properties:
+      VersionConfiguration:
+        Status: Enabled  
+  
+  CodePipelineWebhook:
+    Type: 'AWS::CodePipeline::Webhook'
+    Properties:
+      Authentication: GITHUB_HMAC
+      AuthenticationConfiguration:
+        SecretToken: '{{resolve:secretsmanager:CODEBUILD_GITHUB_ACCESS:SecretString:CODEBUILD_GITHUB_ACCESS_TOKEN}}'
+      RegisterWithThirdParty: 'true'
+      Filters:
+        - JsonPath: '$.ref'
+          MatchEquals: 'refs/heads/${BranchName}'
+        - JsonPath: '$.repository.name'
+          MatchEquals: '{FullRepositoryId}'
+      TargetPipeline: !Ref CodePipelineTest
+      TargetAction: Source
+      TargetPipelineVersion: !GetAtt CodePipelineTest.Version
+
+  CodePipelineTest:
+    Type: AWS::CodePipeline::Pipeline
+    Properties:
+      Name: !Ref 'AWS::StackName'
+      RoleArn: !GetAtt CodePipelineServiceRole.Arn
+      ArtifactStore:
+        Type: S3
+        Location: !Ref CodePipelineArtifactStore
+      Stages:
+        - Name: Source
+          Actions:
+            - Name: Source
+              ActionTypeId:
+                Category: Source
+                Owner: ThirdParty
+                Version: 1
+                Provider: Github
+              Configuration:
+                Owner: 'mye956'
+                FullRepositoryId: !Ref GithubFullRepoName
+                BranchName: !Ref GithubBranchName
+                PollForSourceChanges: false
+                OAuthToken: '{{resolve:secretsmanager:CODEBUILD_GITHUB_ACCESS:SecretString:CODEBUILD_GITHUB_ACCESS_TOKEN}}'
+              OutputArtifacts:
+                - Name: SourceCode
+        - Name: Build
+          Actions:
+            - Name: Build
+              ActionTypeId:
+                Category: Build
+                Owner: AWS
+                Provider: CodeBuild
+                Version: '1'
+              Configuration:
+                ProjectName: !Ref CodeBuildTest
+              OutputArtifacts:
+                - Name: BuildOutput
+              InputArtifacts:
+                - Name: SourceCode
+              
+#########################################
+
+AWSTemplateFormatVersion: 2010-09-09
+Description: A template that brings up a simple code pipeline for testing
+
+Parameters:
+    GithubFullRepoName:
+      Type: String
+      Description: The name of the repository that we want to use (e.g. aws/amazon-ecs-agent)
+    GithubBranchName:
+      Type: String
+      Description: The name of the branch to use to build (e.g. mainline, dev)
+    GithubRepositoryName:
+      Type: String
+      Description: The name of the repository
+    CodeStarConnectionArn:
+      Type: String
+      Description: The ARN of the connection to use to connect to GitHub
+    
+Resources:
+  CodeBuildServiceRole:
+    Type: 'AWS::IAM::Role'
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: codebuild.amazonaws.com
+            Action: 'sts:AssumeRole'
+      Policies:
+        - PolicyName: base-policy
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Sid: CloudWatchLogsPolicy
+                Effect: Allow
+                Action:
+                  - 'logs:CreateLogGroup'
+                  - 'logs:CreateLogStream'
+                  - 'logs:PutLogEvents'
+                Resource: '*'
+              - Sid: S3GetObjectPolicy
+                Effect: Allow
+                Action:
+                  - 's3:GetObject'
+                  - 's3:GetObjectVersion'
+                Resource: '*'
+              - Sid: S3PutObjectPolicy
+                Effect: Allow
+                Action:
+                  - 's3:PutObject'
+                Resource: '*'
+              - Sid: ECRPullPolicy
+                Effect: Allow
+                Action:
+                  - 'ecr:BatchCheckLayerAvailability'
+                  - 'ecr:GetDownloadUrlForLayer'
+                  - 'ecr:BatchGetImage'
+                Resource: '*'
+              - Sid: ECRAuthPolicy
+                Effect: Allow
+                Action:
+                  - 'ecr:GetAuthorizationToken'
+                Resource: '*'
+              - Sid: S3BucketIdentity
+                Effect: Allow
+                Action:
+                  - 's3:GetBucketAcl'
+                  - 's3:GetBucketLocation'
+                Resource: '*'
+              - Sid: CodeBuildCodeStarConnectionAccess
+                Effect: Allow
+                Resource:
+                  - !Ref CodeStarConnectionArn
+                Action:
+                  - codestar-connections:UseConnection
+  CodeBuildSourceCredential:
+    Type: 'AWS::CodeBuild::SourceCredential'
+    Properties:
+      AuthType: PERSONAL_ACCESS_TOKEN
+      ServerType: GITHUB
+      Token: '{{resolve:secretsmanager:CODEBUILD_GITHUB_ACCESS:SecretString:CODEBUILD_GITHUB_ACCESS_TOKEN}}'
+  CodeBuildTest:
+    Type: 'AWS::CodeBuild::Project'
+    Properties:
+      Name: !Ref 'AWS::StackName'
+      ServiceRole: !GetAtt CodeBuildServiceRole.Arn
+      Source:
+        Type: GITHUB
+        Location: !Sub 'https://github.com/mye956/${GithubRepositoryName}.git'
+        BuildSpec: buildspecs/test-buildspec.yml
+        Auth:
+          Type: OAUTH
+          Resource: !Ref CodeBuildSourceCredential
+      Artifacts:
+        Type: NO_ARTIFACTS
+      Triggers:
+        Webhook: true
+        FilterGroups:
+          - - Type: EVENT
+              Pattern: 'PULL_REQUEST_CREATED, PULL_REQUEST_UPDATED'
+            - Type: BASE_REF
+              Pattern: !Sub ^refs/heads/${GithubBranchName}$
+      Environment:
+          Type: LINUX_CONTAINER
+          ComputeType: BUILD_GENERAL1_SMALL
+          ImagePullCredentialsType: CODEBUILD
+          Image: aws/codebuild/amazonlinux2-x86_64-standard:3.0
+    
+  CodePipelineServiceRole:
+    Type: 'AWS::IAM::Role'
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: codepipeline.amazonaws.com
+            Action: 'sts:AssumeRole'
+      Policies:
+        - PolicyName: base-policy
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Sid: CloudWatchLogsPolicy
+                Effect: Allow
+                Action:
+                  - 'logs:CreateLogGroup'
+                  - 'logs:CreateLogStream'
+                  - 'logs:PutLogEvents'
+                Resource: '*'
+              - Sid: S3GetObjectPolicy
+                Effect: Allow
+                Action:
+                  - 's3:GetObject'
+                  - 's3:GetObjectVersion'
+                Resource: '*'
+              - Sid: S3PutObjectPolicy
+                Effect: Allow
+                Action:
+                  - 's3:PutObject'
+                Resource: '*'
+              - Sid: ECRPullPolicy
+                Effect: Allow
+                Action:
+                  - 'ecr:BatchCheckLayerAvailability'
+                  - 'ecr:GetDownloadUrlForLayer'
+                  - 'ecr:BatchGetImage'
+                Resource: '*'
+              - Sid: ECRAuthPolicy
+                Effect: Allow
+                Action:
+                  - 'ecr:GetAuthorizationToken'
+                Resource: '*'
+              - Sid: S3BucketIdentity
+                Effect: Allow
+                Action:
+                  - 's3:GetBucketAcl'
+                  - 's3:GetBucketLocation'
+                Resource: '*'
+              - Sid: CodePipelineCodeBuildAccess
+                Effect: Allow
+                Resource: '*'
+                Action:
+                  - codebuild:BatchGetBuilds
+                  - codebuild:StartBuild
+                  - codebuild:BatchGetBuildBatches
+                  - codebuild:StartBuildBatch
+              - Sid: CodePipelineGithubConnectionsAccess
+                Effect: Allow
+                Resource: '*'
+                Action:
+                  - codestar-connections:UseConnection
+
+  CodePipelineArtifactStore:
+    Type: AWS::S3::Bucket
+    Properties:
+      VersioningConfiguration:
+        Status: Enabled  
+  
+  # CodePipelineWebhook:
+  #   Type: 'AWS::CodePipeline::Webhook'
+  #   Properties:
+  #     Authentication: GITHUB_HMAC
+  #     AuthenticationConfiguration:
+  #       SecretToken: '{{resolve:secretsmanager:CODEBUILD_GITHUB_ACCESS:SecretString:CODEBUILD_GITHUB_ACCESS_TOKEN}}'
+  #     RegisterWithThirdParty: 'true'
+  #     Filters:
+  #       - JsonPath: '$.ref'
+  #         MatchEquals: 'refs/heads/${BranchName}'
+  #       - JsonPath: '$.repository.name'
+  #         MatchEquals: '{FullRepositoryId}'
+  #     TargetPipeline: !Ref CodePipelineTest
+  #     TargetAction: Source
+  #     TargetPipelineVersion: !GetAtt CodePipelineTest.Version
+
+  CodePipelineTest:
+    Type: AWS::CodePipeline::Pipeline
+    Properties:
+      Name: !Ref 'AWS::StackName'
+      RoleArn: !GetAtt CodePipelineServiceRole.Arn
+      ArtifactStore:
+        Type: S3
+        Location: !Ref CodePipelineArtifactStore
+      Stages:
+        - Name: Source
+          Actions:
+            - Name: Source
+              ActionTypeId:
+                Category: Source
+                Owner: AWS
+                Version: '1'
+                Provider: CodeStarSourceConnection
+              Configuration:
+                ConnectionArn: !Ref CodeStarConnectionArn
+                # Owner: 'mye956'
+                FullRepositoryId: !Ref GithubFullRepoName
+                BranchName: !Ref GithubBranchName
+                # PollForSourceChanges: false
+                # OAuthToken: '{{resolve:secretsmanager:CODEBUILD_GITHUB_ACCESS:SecretString:CODEBUILD_GITHUB_ACCESS_TOKEN}}'
+              OutputArtifacts:
+                - Name: SourceCode
+              RunOrder: 1
+              Namespace: SourceVariables
+        - Name: Build
+          Actions:
+            - Name: Build
+              ActionTypeId:
+                Category: Build
+                Owner: AWS
+                Provider: CodeBuild
+                Version: '1'
+              Configuration:
+                ProjectName: !Ref CodeBuildTest
+              OutputArtifacts:
+                - Name: BuildOutput
+              InputArtifacts:
+                - Name: SourceCode
+              

@@ -1,3 +1,4 @@
+//go:build linux && unit
 // +build linux,unit
 
 // Copyright Amazon.com Inc. or its affiliates. All Rights Reserved.
@@ -17,15 +18,20 @@ package task
 
 import (
 	"encoding/json"
+	"fmt"
 	"testing"
 	"time"
 
+	"github.com/aws/amazon-ecs-agent/agent/api/serviceconnect"
+
+	"github.com/aws/amazon-ecs-agent/agent/api/appmesh"
 	apiappmesh "github.com/aws/amazon-ecs-agent/agent/api/appmesh"
 	apicontainer "github.com/aws/amazon-ecs-agent/agent/api/container"
 	apicontainerstatus "github.com/aws/amazon-ecs-agent/agent/api/container/status"
 	apieni "github.com/aws/amazon-ecs-agent/agent/api/eni"
 	"github.com/aws/amazon-ecs-agent/agent/config"
 	"github.com/aws/amazon-ecs-agent/agent/dockerclient"
+	"github.com/aws/amazon-ecs-agent/agent/ecscni"
 	"github.com/aws/amazon-ecs-agent/agent/taskresource"
 	"github.com/aws/amazon-ecs-agent/agent/taskresource/asmsecret"
 	"github.com/aws/amazon-ecs-agent/agent/taskresource/cgroup/control/mock_control"
@@ -45,7 +51,8 @@ const (
 	validTaskArn   = "arn:aws:ecs:region:account-id:task/task-id"
 	invalidTaskArn = "invalid:task::arn"
 
-	expectedCgroupRoot = "/ecs/task-id"
+	expectedCgroupV1Root = "/ecs/task-id"
+	expectedCgroupV2Root = "ecstasks-task-id.slice"
 
 	taskVCPULimit             = 2.0
 	taskMemoryLimit           = 512
@@ -63,7 +70,24 @@ const (
 	testExecutionCredentialsID = "testExecutionCredentialsID"
 
 	defaultCPUPeriod = 100 * time.Millisecond // 100ms
+
+	scContainerName      = "service-connect"
+	scEgressListenerPort = 12345
+	scInterceptPort      = 8080
+	scListenerPort       = 15000
+	scPauseIPv4          = "172.0.0.2"
 )
+
+var (
+	scPauseContainerName = fmt.Sprintf(ServiceConnectPauseContainerNameFormat, scContainerName)
+)
+
+func getExpectedCgroupRoot() string {
+	if config.CgroupV2 {
+		return expectedCgroupV2Root
+	}
+	return expectedCgroupV1Root
+}
 
 func TestAddNetworkResourceProvisioningDependencyNop(t *testing.T) {
 	testTask := &Task{
@@ -86,6 +110,7 @@ func TestAddNetworkResourceProvisioningDependencyWithENI(t *testing.T) {
 				TransitionDependenciesMap: make(map[apicontainerstatus.ContainerStatus]apicontainer.TransitionDependencySet),
 			},
 		},
+		NetworkMode: AWSVPCNetworkMode,
 	}
 	cfg := &config.Config{
 		PauseContainerImageName: "pause-container-image-name",
@@ -114,7 +139,8 @@ func TestAddNetworkResourceProvisioningDependencyWithAppMesh(t *testing.T) {
 		AppMesh: &apiappmesh.AppMesh{
 			ContainerName: proxyName,
 		},
-		ENIs: []*apieni.ENI{{}},
+		ENIs:        []*apieni.ENI{{}},
+		NetworkMode: AWSVPCNetworkMode,
 		Containers: []*apicontainer.Container{
 			{
 				Name:                      "c1",
@@ -160,7 +186,8 @@ func TestAddNetworkResourceProvisioningDependencyWithAppMeshDefaultImage(t *test
 		AppMesh: &apiappmesh.AppMesh{
 			ContainerName: proxyName,
 		},
-		ENIs: []*apieni.ENI{{}},
+		ENIs:        []*apieni.ENI{{}},
+		NetworkMode: AWSVPCNetworkMode,
 		Containers: []*apicontainer.Container{
 			{
 				Name:                      "c1",
@@ -196,7 +223,8 @@ func TestAddNetworkResourceProvisioningDependencyWithAppMeshError(t *testing.T) 
 		AppMesh: &apiappmesh.AppMesh{
 			ContainerName: proxyName,
 		},
-		ENIs: []*apieni.ENI{{}},
+		ENIs:        []*apieni.ENI{{}},
+		NetworkMode: AWSVPCNetworkMode,
 		Containers: []*apicontainer.Container{
 			{
 				Name:                      "c1",
@@ -224,6 +252,7 @@ func TestBuildCgroupRootHappyPath(t *testing.T) {
 	}
 
 	cgroupRoot, err := task.BuildCgroupRoot()
+	expectedCgroupRoot := getExpectedCgroupRoot()
 
 	assert.NoError(t, err)
 	assert.Equal(t, expectedCgroupRoot, cgroupRoot)
@@ -239,6 +268,16 @@ func TestBuildCgroupRootErrorPath(t *testing.T) {
 
 	assert.Error(t, err)
 	assert.Empty(t, cgroupRoot)
+}
+
+func TestBuildCgroupV1Root(t *testing.T) {
+	cgroupRoot := buildCgroupV1Root("111mytaskid")
+	assert.Equal(t, "/ecs/111mytaskid", cgroupRoot)
+}
+
+func TestBuildCgroupV2Root(t *testing.T) {
+	cgroupRoot := buildCgroupV2Root("111mytaskid")
+	assert.Equal(t, "ecstasks-111mytaskid.slice", cgroupRoot)
 }
 
 // TestBuildLinuxResourceSpecCPUMem validates the linux resource spec builder
@@ -292,6 +331,29 @@ func TestBuildLinuxResourceSpecCPU(t *testing.T) {
 	assert.EqualValues(t, expectedLinuxResourceSpec, linuxResourceSpec)
 }
 
+// TestBuildLinuxResourceSpecIncreasedTaskCPULimit validates the linux resource spec builder
+// with increased task CPU limit (>10 vCPUs).
+func TestBuildLinuxResourceSpecIncreasedTaskCPULimit(t *testing.T) {
+	const increasedTaskVCPULimit float64 = 15
+	task := &Task{
+		Arn: validTaskArn,
+		CPU: increasedTaskVCPULimit,
+	}
+
+	linuxResourceSpec, err := task.BuildLinuxResourceSpec(defaultCPUPeriod)
+
+	expectedTaskCPUPeriod := uint64(defaultCPUPeriod / time.Microsecond)
+	expectedTaskCPUQuota := int64(increasedTaskVCPULimit * float64(expectedTaskCPUPeriod))
+	expectedLinuxResourceSpec := specs.LinuxResources{
+		CPU: &specs.LinuxCPU{
+			Quota:  &expectedTaskCPUQuota,
+			Period: &expectedTaskCPUPeriod,
+		},
+	}
+	assert.NoError(t, err)
+	assert.EqualValues(t, expectedLinuxResourceSpec, linuxResourceSpec)
+}
+
 // TestBuildLinuxResourceSpecWithoutTaskCPULimits validates behavior of CPU Shares
 func TestBuildLinuxResourceSpecWithoutTaskCPULimits(t *testing.T) {
 	task := &Task{
@@ -339,6 +401,31 @@ func TestBuildLinuxResourceSpecWithoutTaskCPUWithContainerCPULimits(t *testing.T
 	assert.EqualValues(t, expectedLinuxResourceSpec, linuxResourceSpec)
 }
 
+// TestBuildLinuxResourceSpecWithoutTaskCPUWithLessThanMinimumContainerCPULimits validates behavior of CPU Shares
+// when container CPU share is 1 (less than the current minimumCPUShare which is 2)
+func TestBuildLinuxResourceSpecWithoutTaskCPUWithLessThanMinimumContainerCPULimits(t *testing.T) {
+	task := &Task{
+		Arn: validTaskArn,
+		Containers: []*apicontainer.Container{
+			{
+				Name: "C1",
+				CPU:  uint(1),
+			},
+		},
+	}
+	expectedCPUShares := uint64(2)
+	expectedLinuxResourceSpec := specs.LinuxResources{
+		CPU: &specs.LinuxCPU{
+			Shares: &expectedCPUShares,
+		},
+	}
+
+	linuxResourceSpec, err := task.BuildLinuxResourceSpec(defaultCPUPeriod)
+
+	assert.NoError(t, err)
+	assert.EqualValues(t, expectedLinuxResourceSpec, linuxResourceSpec)
+}
+
 // TestBuildLinuxResourceSpecInvalidMem validates the linux resource spec builder
 func TestBuildLinuxResourceSpecInvalidMem(t *testing.T) {
 	taskMemoryLimit := int64(taskMemoryLimit)
@@ -372,6 +459,7 @@ func TestOverrideCgroupParentHappyPath(t *testing.T) {
 	}
 
 	hostConfig := &dockercontainer.HostConfig{}
+	expectedCgroupRoot := getExpectedCgroupRoot()
 
 	assert.NoError(t, task.overrideCgroupParent(hostConfig))
 	assert.NotEmpty(t, hostConfig)
@@ -404,6 +492,7 @@ func TestPlatformHostConfigOverride(t *testing.T) {
 	}
 
 	hostConfig := &dockercontainer.HostConfig{}
+	expectedCgroupRoot := getExpectedCgroupRoot()
 
 	assert.NoError(t, task.platformHostConfigOverride(hostConfig))
 	assert.NotEmpty(t, hostConfig)
@@ -1145,8 +1234,9 @@ func getFirelensTask(t *testing.T) *Task {
 		LogConfig: dockercontainer.LogConfig{
 			Type: firelensDriverName,
 			Config: map[string]string{
-				"key1": "value1",
-				"key2": "value2",
+				"key1":                    "value1",
+				"key2":                    "value2",
+				"log-driver-buffer-limit": "10000",
 			},
 		},
 	}
@@ -1202,4 +1292,201 @@ func TestEnableIPv6SysctlSetting(t *testing.T) {
 	enableIPv6SysctlSetting(hostConfig)
 	require.NotNil(t, hostConfig.Sysctls)
 	assert.Equal(t, sysctlValueOff, hostConfig.Sysctls[disableIPv6SysctlKey])
+}
+
+func TestBuildCNIConfigRegularENIWithAppMesh(t *testing.T) {
+	for _, blockIMDS := range []bool{true, false} {
+		t.Run(fmt.Sprintf("When BlockInstanceMetadata is %t", blockIMDS), func(t *testing.T) {
+			testTask := &Task{}
+			testTask.NetworkMode = AWSVPCNetworkMode
+			testTask.AddTaskENI(getTestENI())
+			testTask.SetAppMesh(&appmesh.AppMesh{
+				IgnoredUID:       ignoredUID,
+				ProxyIngressPort: proxyIngressPort,
+				ProxyEgressPort:  proxyEgressPort,
+				AppPorts: []string{
+					appPort,
+				},
+				EgressIgnoredIPs: []string{
+					egressIgnoredIP,
+				},
+			})
+			cniConfig, err := testTask.BuildCNIConfigAwsvpc(true, &ecscni.Config{
+				BlockInstanceMetadata: blockIMDS,
+			})
+			assert.NoError(t, err)
+			// We expect 3 NetworkConfig objects in the cni Config wrapper object:
+			// ENI, Bridge and Appmesh
+			require.Len(t, cniConfig.NetworkConfigs, 3)
+			// The first one should be for the ENI.
+			var eniConfig ecscni.ENIConfig
+			err = json.Unmarshal(cniConfig.NetworkConfigs[0].CNINetworkConfig.Bytes, &eniConfig)
+			require.NoError(t, err)
+			assert.Equal(t, mac, eniConfig.MACAddress, eniConfig)
+			assert.Equal(t, []string{ipv4 + ipv4Block, ipv6 + ipv6Block}, eniConfig.IPAddresses)
+			assert.Equal(t, []string{ipv4Gateway}, eniConfig.GatewayIPAddresses)
+			assert.Equal(t, blockIMDS, eniConfig.BlockInstanceMetadata)
+			// The second one should be for the Bridge.
+			var bridgeConfig ecscni.BridgeConfig
+			err = json.Unmarshal(cniConfig.NetworkConfigs[1].CNINetworkConfig.Bytes, &bridgeConfig)
+			require.NoError(t, err)
+			assert.Equal(t, "ecs-bridge", bridgeConfig.BridgeName)
+			// The third one should be for Appmesh.
+			var appMeshConfig ecscni.AppMeshConfig
+			err = json.Unmarshal(cniConfig.NetworkConfigs[2].CNINetworkConfig.Bytes, &appMeshConfig)
+			require.NoError(t, err)
+			assert.Equal(t, ignoredUID, appMeshConfig.IgnoredUID)
+			assert.Equal(t, proxyIngressPort, appMeshConfig.ProxyIngressPort)
+			assert.Equal(t, proxyEgressPort, appMeshConfig.ProxyEgressPort)
+			assert.Equal(t, appPort, appMeshConfig.AppPorts[0])
+			assert.Equal(t, egressIgnoredIP, appMeshConfig.EgressIgnoredIPs[0])
+		})
+	}
+}
+
+func TestBuildCNIConfigRegularENIWithServiceConnect(t *testing.T) {
+	for _, blockIMDS := range []bool{true, false} {
+		t.Run(fmt.Sprintf("When BlockInstanceMetadata is %t", blockIMDS), func(t *testing.T) {
+			testTask := &Task{}
+			testTask.AddTaskENI(getTestENI())
+			testTask.NetworkMode = AWSVPCNetworkMode
+			testTask.ServiceConnectConfig = &serviceconnect.Config{
+				ContainerName: scContainerName,
+				IngressConfig: []serviceconnect.IngressConfigEntry{{ListenerPort: scListenerPort}},
+				EgressConfig:  &serviceconnect.EgressConfig{ListenerPort: scEgressListenerPort},
+			}
+			testTask.Containers = []*apicontainer.Container{{Name: scContainerName}}
+
+			cniConfig, err := testTask.BuildCNIConfigAwsvpc(true, &ecscni.Config{
+				BlockInstanceMetadata: blockIMDS,
+			})
+			assert.NoError(t, err)
+			// We expect 3 NetworkConfig objects in the cni Config wrapper object:
+			// ENI, Bridge and ServiceConnect
+			require.Len(t, cniConfig.NetworkConfigs, 3)
+			// The first one should be for the ENI.
+			var eniConfig ecscni.ENIConfig
+			err = json.Unmarshal(cniConfig.NetworkConfigs[0].CNINetworkConfig.Bytes, &eniConfig)
+			require.NoError(t, err)
+			assert.Equal(t, mac, eniConfig.MACAddress, eniConfig)
+			assert.Equal(t, []string{ipv4 + ipv4Block, ipv6 + ipv6Block}, eniConfig.IPAddresses)
+			assert.Equal(t, []string{ipv4Gateway}, eniConfig.GatewayIPAddresses)
+			assert.Equal(t, blockIMDS, eniConfig.BlockInstanceMetadata)
+			// The second one should be for the Bridge.
+			var bridgeConfig ecscni.BridgeConfig
+			err = json.Unmarshal(cniConfig.NetworkConfigs[1].CNINetworkConfig.Bytes, &bridgeConfig)
+			require.NoError(t, err)
+			assert.Equal(t, "ecs-bridge", bridgeConfig.BridgeName)
+			// The third one should be for ServiceConnect.
+			var scConfig ecscni.ServiceConnectConfig
+			err = json.Unmarshal(cniConfig.NetworkConfigs[2].CNINetworkConfig.Bytes, &scConfig)
+			require.NoError(t, err)
+			assert.Equal(t, 1, len(scConfig.IngressConfig))
+			assert.Equal(t, uint16(scListenerPort), scConfig.IngressConfig[0].ListenerPort)
+			assert.NotNil(t, scConfig.EgressConfig)
+			assert.Equal(t, string(ecscni.NAT), scConfig.EgressConfig.RedirectMode)
+			assert.Equal(t, uint16(scEgressListenerPort), scConfig.EgressConfig.ListenerPort)
+			assert.Nil(t, scConfig.EgressConfig.RedirectIP) // AWSVPC mode task should not include RedirectIP
+			assert.True(t, scConfig.EnableIPv4)
+			assert.True(t, scConfig.EnableIPv6)
+		})
+	}
+}
+
+func TestBuildCNIConfigTrunkBranchENI(t *testing.T) {
+	for _, blockIMDS := range []bool{true, false} {
+		t.Run(fmt.Sprintf("When BlockInstanceMetadata is %t", blockIMDS), func(t *testing.T) {
+			testTask := &Task{}
+			testTask.NetworkMode = AWSVPCNetworkMode
+			testTask.AddTaskENI(&apieni.ENI{
+				ID:                           "TestBuildCNIConfigTrunkBranchENI",
+				MacAddress:                   mac,
+				InterfaceAssociationProtocol: apieni.VLANInterfaceAssociationProtocol,
+				InterfaceVlanProperties: &apieni.InterfaceVlanProperties{
+					VlanID:                   "1234",
+					TrunkInterfaceMacAddress: "macTrunk",
+				},
+				SubnetGatewayIPV4Address: ipv4Gateway + ipv4Block,
+				IPV4Addresses: []*apieni.ENIIPV4Address{
+					{
+						Primary: true,
+						Address: ipv4,
+					},
+				},
+				IPV6Addresses: []*apieni.ENIIPV6Address{
+					{
+						Address: ipv6,
+					},
+				},
+			})
+
+			cniConfig, err := testTask.BuildCNIConfigAwsvpc(true, &ecscni.Config{
+				BlockInstanceMetadata: blockIMDS,
+			})
+			assert.NoError(t, err)
+			// We expect 2 NetworkConfig objects in the cni Config wrapper object:
+			// Branch ENI and Bridge.
+			require.Len(t, cniConfig.NetworkConfigs, 2)
+			// The first one should be for the ENI.
+			var eniConfig ecscni.BranchENIConfig
+			err = json.Unmarshal(cniConfig.NetworkConfigs[0].CNINetworkConfig.Bytes, &eniConfig)
+			require.NoError(t, err)
+			assert.Equal(t, mac, eniConfig.BranchMACAddress, eniConfig)
+			assert.Equal(t, "macTrunk", eniConfig.TrunkMACAddress, eniConfig)
+			assert.Equal(t, "1234", eniConfig.BranchVlanID)
+			assert.Equal(t, []string{ipv4 + ipv4Block, ipv6 + ipv6Block}, eniConfig.IPAddresses)
+			assert.Equal(t, []string{ipv4Gateway}, eniConfig.GatewayIPAddresses)
+			assert.Equal(t, blockIMDS, eniConfig.BlockInstanceMetadata)
+			// The second one should be for the Bridge.
+			var bridgeConfig ecscni.BridgeConfig
+			err = json.Unmarshal(cniConfig.NetworkConfigs[1].CNINetworkConfig.Bytes, &bridgeConfig)
+			require.NoError(t, err)
+			assert.Equal(t, "ecs-bridge", bridgeConfig.BridgeName)
+		})
+	}
+}
+
+func TestBuildCNIBridgeModeWithServiceConnect(t *testing.T) {
+	for _, containerName := range []string{"other-pause", scPauseContainerName} {
+		t.Run(fmt.Sprintf("When container name is %s", containerName), func(t *testing.T) {
+			testTask := &Task{}
+			testTask.NetworkMode = BridgeNetworkMode
+			testTask.ServiceConnectConfig = &serviceconnect.Config{
+				ContainerName: scContainerName,
+				IngressConfig: []serviceconnect.IngressConfigEntry{{ListenerPort: scListenerPort}},
+				EgressConfig:  &serviceconnect.EgressConfig{ListenerPort: scEgressListenerPort},
+				NetworkConfig: serviceconnect.NetworkConfig{
+					SCPauseIPv4Addr: scPauseIPv4,
+					SCPauseIPv6Addr: "",
+				},
+			}
+			testTask.Containers = []*apicontainer.Container{{Name: scContainerName}}
+
+			cniConfig := &ecscni.Config{}
+			cniConfig, err := testTask.BuildCNIConfigBridgeMode(cniConfig, containerName)
+			assert.NoError(t, err)
+			// We expect 1 NetworkConfig objects in the cni Config wrapper object which is ServiceConnect
+			require.Len(t, cniConfig.NetworkConfigs, 1)
+			// The first one should be for the ENI.
+			var scConfig ecscni.ServiceConnectConfig
+			err = json.Unmarshal(cniConfig.NetworkConfigs[0].CNINetworkConfig.Bytes, &scConfig)
+			require.NoError(t, err)
+			assert.Equal(t, 1, len(scConfig.IngressConfig))
+			assert.Equal(t, uint16(scListenerPort), scConfig.IngressConfig[0].ListenerPort)
+			assert.NotNil(t, scConfig.EgressConfig)
+			assert.Equal(t, string(ecscni.TPROXY), scConfig.EgressConfig.RedirectMode)
+			if containerName != scPauseContainerName {
+				// Should only include redirect IPs if container is an application pause container
+				assert.Equal(t, uint16(0), scConfig.EgressConfig.ListenerPort)
+				assert.Equal(t, scPauseIPv4, scConfig.EgressConfig.RedirectIP.IPv4)
+				assert.Equal(t, "", scConfig.EgressConfig.RedirectIP.IPv6)
+			} else {
+				// SC pause container should not include redirect IP in CNI config
+				assert.Equal(t, uint16(scEgressListenerPort), scConfig.EgressConfig.ListenerPort)
+				assert.Nil(t, scConfig.EgressConfig.RedirectIP)
+			}
+			assert.True(t, scConfig.EnableIPv4)
+			assert.False(t, scConfig.EnableIPv6)
+		})
+	}
 }

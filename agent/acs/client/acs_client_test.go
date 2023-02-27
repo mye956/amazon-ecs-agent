@@ -1,3 +1,4 @@
+//go:build unit
 // +build unit
 
 // Copyright Amazon.com Inc. or its affiliates. All Rights Reserved.
@@ -347,9 +348,9 @@ func testCS(conn *mock_wsconn.MockWebsocketConn) wsclient.ClientServer {
 
 // TODO: replace with gomock
 func startMockAcsServer(t *testing.T, closeWS <-chan bool) (*httptest.Server, chan<- string, <-chan string, <-chan error, error) {
-	serverChan := make(chan string)
-	requestsChan := make(chan string)
-	errChan := make(chan error)
+	serverChan := make(chan string, 1)
+	requestsChan := make(chan string, 1)
+	errChan := make(chan error, 1)
 
 	upgrader := websocket.Upgrader{ReadBufferSize: 1024, WriteBufferSize: 1024}
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

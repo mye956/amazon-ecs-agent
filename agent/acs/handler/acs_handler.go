@@ -24,12 +24,13 @@ import (
 	"time"
 
 	acsclient "github.com/aws/amazon-ecs-agent/agent/acs/client"
-	"github.com/aws/amazon-ecs-agent/agent/acs/model/ecsacs"
 	updater "github.com/aws/amazon-ecs-agent/agent/acs/update_handler"
 	"github.com/aws/amazon-ecs-agent/agent/api"
 	"github.com/aws/amazon-ecs-agent/agent/config"
 	rolecredentials "github.com/aws/amazon-ecs-agent/agent/credentials"
 	"github.com/aws/amazon-ecs-agent/agent/data"
+	"github.com/aws/amazon-ecs-agent/agent/dockerclient/dockerapi"
+	"github.com/aws/amazon-ecs-agent/agent/doctor"
 	"github.com/aws/amazon-ecs-agent/agent/engine"
 	"github.com/aws/amazon-ecs-agent/agent/engine/dockerstate"
 	"github.com/aws/amazon-ecs-agent/agent/eventhandler"
@@ -65,6 +66,10 @@ const (
 	// credentials for all tasks on establishing the connection
 	sendCredentialsURLParameterName = "sendCredentials"
 	inactiveInstanceExceptionPrefix = "InactiveInstanceException:"
+	// ACS protocol version spec:
+	// 1: default protocol version
+	// 2: ACS will proactively close the connection when heartbeat acks are missing
+	acsProtocolVersion = 2
 )
 
 // Session defines an interface for handler's long-lived connection with ACS.
@@ -81,6 +86,7 @@ type session struct {
 	agentConfig                     *config.Config
 	deregisterInstanceEventStream   *eventstream.EventStream
 	taskEngine                      engine.TaskEngine
+	dockerClient                    dockerapi.DockerClient
 	ecsClient                       api.ECSClient
 	state                           dockerstate.TaskEngineState
 	dataClient                      data.Client
@@ -91,6 +97,7 @@ type session struct {
 	backoff                         retry.Backoff
 	resources                       sessionResources
 	latestSeqNumTaskManifest        *int64
+	doctor                          *doctor.Doctor
 	_heartbeatTimeout               time.Duration
 	_heartbeatJitter                time.Duration
 	_inactiveInstanceReconnectDelay time.Duration
@@ -134,17 +141,22 @@ type sessionState interface {
 }
 
 // NewSession creates a new Session object
-func NewSession(ctx context.Context,
+func NewSession(
+	ctx context.Context,
 	config *config.Config,
 	deregisterInstanceEventStream *eventstream.EventStream,
-	containerInstanceArn string,
+	containerInstanceARN string,
 	credentialsProvider *credentials.Credentials,
+	dockerClient dockerapi.DockerClient,
 	ecsClient api.ECSClient,
 	taskEngineState dockerstate.TaskEngineState,
 	dataClient data.Client,
 	taskEngine engine.TaskEngine,
 	credentialsManager rolecredentials.Manager,
-	taskHandler *eventhandler.TaskHandler, latestSeqNumTaskManifest *int64) Session {
+	taskHandler *eventhandler.TaskHandler,
+	latestSeqNumTaskManifest *int64,
+	doctor *doctor.Doctor,
+) Session {
 	resources := newSessionResources(credentialsProvider)
 	backoff := retry.NewExponentialBackoff(connectionBackoffMin, connectionBackoffMax,
 		connectionBackoffJitter, connectionBackoffMultiplier)
@@ -153,9 +165,10 @@ func NewSession(ctx context.Context,
 	return &session{
 		agentConfig:                     config,
 		deregisterInstanceEventStream:   deregisterInstanceEventStream,
-		containerInstanceARN:            containerInstanceArn,
+		containerInstanceARN:            containerInstanceARN,
 		credentialsProvider:             credentialsProvider,
 		ecsClient:                       ecsClient,
+		dockerClient:                    dockerClient,
 		state:                           taskEngineState,
 		dataClient:                      dataClient,
 		taskEngine:                      taskEngine,
@@ -166,6 +179,7 @@ func NewSession(ctx context.Context,
 		backoff:                         backoff,
 		resources:                       resources,
 		latestSeqNumTaskManifest:        latestSeqNumTaskManifest,
+		doctor:                          doctor,
 		_heartbeatTimeout:               heartbeatTimeout,
 		_heartbeatJitter:                heartbeatJitter,
 		_inactiveInstanceReconnectDelay: inactiveInstanceReconnectDelay,
@@ -182,12 +196,10 @@ func NewSession(ctx context.Context,
 func (acsSession *session) Start() error {
 	// connectToACS channel is used to indicate the intent to connect to ACS
 	// It's processed by the select loop to connect to ACS
-	connectToACS := make(chan struct{})
+	connectToACS := make(chan struct{}, 1)
 	// This is required to trigger the first connection to ACS. Subsequent
 	// connections are triggered by the handleACSError() method
-	go func() {
-		connectToACS <- struct{}{}
-	}()
+	connectToACS <- struct{}{}
 	for {
 		select {
 		case <-connectToACS:
@@ -332,8 +344,12 @@ func (acsSession *session) startACSSession(client wsclient.ClientServer) error {
 
 	client.AddRequestHandler(payloadHandler.handlerFunc())
 
-	// Ignore heartbeat messages; anyMessageHandler gets 'em
-	client.AddRequestHandler(func(*ecsacs.HeartbeatMessage) {})
+	heartbeatHandler := newHeartbeatHandler(acsSession.ctx, client, acsSession.doctor)
+	defer heartbeatHandler.clearAcks()
+	heartbeatHandler.start()
+	defer heartbeatHandler.stop()
+
+	client.AddRequestHandler(heartbeatHandler.handlerFunc())
 
 	updater.AddAgentUpdateHandlers(client, cfg, acsSession.state, acsSession.dataClient, acsSession.taskEngine)
 
@@ -454,6 +470,7 @@ func acsWsURL(endpoint, cluster, containerInstanceArn string, taskEngine engine.
 	query.Set("agentHash", version.GitHashString())
 	query.Set("agentVersion", version.Version)
 	query.Set("seqNum", "1")
+	query.Set("protocolVersion", strconv.Itoa(acsProtocolVersion))
 	if dockerVersion, err := taskEngine.Version(); err == nil {
 		query.Set("dockerVersion", "DockerVersion: "+dockerVersion)
 	}

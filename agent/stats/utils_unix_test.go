@@ -1,3 +1,4 @@
+//go:build !windows && unit
 // +build !windows,unit
 
 // Copyright Amazon.com Inc. or its affiliates. All Rights Reserved.
@@ -52,8 +53,9 @@ func TestDockerStatsToContainerStatsEmptyCpuUsageGeneratesError(t *testing.T) {
 	jsonBytes, _ := ioutil.ReadFile(inputJsonFile)
 	dockerStat := &types.StatsJSON{}
 	json.Unmarshal([]byte(jsonBytes), dockerStat)
-	// empty the PercpuUsage array
-	dockerStat.CPUStats.CPUUsage.PercpuUsage = make([]uint64, 0)
+	prevNumCores := numCores
+	numCores = uint64(0)
 	err := validateDockerStats(dockerStat)
-	assert.Error(t, err, "expected error converting container stats with empty PercpuUsage")
+	assert.Error(t, err, "expected error converting container stats with numCores=0")
+	numCores = prevNumCores
 }

@@ -101,10 +101,21 @@ type AttachmentStateChange struct {
 	Attachment *apieni.ENIAttachment
 }
 
+type ErrShouldNotSendEvent struct {
+	resourceId string
+}
+
+func (e ErrShouldNotSendEvent) Error() string {
+	return fmt.Sprintf("should not send events for internal tasks or containers: %s", e.resourceId)
+}
+
 // NewTaskStateChangeEvent creates a new task state change event
 // returns error if the state change doesn't need to be sent to the ECS backend.
 func NewTaskStateChangeEvent(task *apitask.Task, reason string) (TaskStateChange, error) {
 	var event TaskStateChange
+	if task.IsInternal {
+		return event, ErrShouldNotSendEvent{task.Arn}
+	}
 	taskKnownStatus := task.GetKnownStatus()
 	if !taskKnownStatus.BackendRecognized() {
 		return event, errors.Errorf(
@@ -157,9 +168,15 @@ func NewContainerStateChangeEvent(task *apitask.Task, cont *apicontainer.Contain
 func newUncheckedContainerStateChangeEvent(task *apitask.Task, cont *apicontainer.Container, reason string) (ContainerStateChange, error) {
 	var event ContainerStateChange
 	if cont.IsInternal() {
-		return event, errors.Errorf(
-			"create container state change event api: internal container: %s",
-			cont.Name)
+		return event, ErrShouldNotSendEvent{cont.Name}
+	}
+	portBindings := cont.GetKnownPortBindings()
+	if task.IsServiceConnectEnabled() && task.IsNetworkModeBridge() {
+		pauseCont, err := task.GetBridgeModePauseContainerForTaskContainer(cont)
+		if err != nil {
+			return event, fmt.Errorf("error resolving pause container for bridge mode SC container: %s", cont.Name)
+		}
+		portBindings = pauseCont.GetKnownPortBindings()
 	}
 	contKnownStatus := cont.GetKnownStatus()
 	event = ContainerStateChange{
@@ -168,7 +185,7 @@ func newUncheckedContainerStateChangeEvent(task *apitask.Task, cont *apicontaine
 		RuntimeID:     cont.GetRuntimeID(),
 		Status:        contKnownStatus.BackendStatus(cont.GetSteadyStateStatus()),
 		ExitCode:      cont.GetKnownExitCode(),
-		PortBindings:  cont.GetKnownPortBindings(),
+		PortBindings:  portBindings,
 		ImageDigest:   cont.GetImageDigest(),
 		Reason:        reason,
 		Container:     cont,

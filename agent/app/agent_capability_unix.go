@@ -1,3 +1,4 @@
+//go:build linux
 // +build linux
 
 // Copyright Amazon.com Inc. or its affiliates. All Rights Reserved.
@@ -16,6 +17,7 @@
 package app
 
 import (
+	"path/filepath"
 	"strings"
 
 	"github.com/aws/amazon-ecs-agent/agent/config"
@@ -30,11 +32,31 @@ import (
 )
 
 const (
-	AVX         = "avx"
-	AVX2        = "avx2"
-	SSE41       = "sse4_1"
-	SSE42       = "sse4_2"
-	CpuInfoPath = "/proc/cpuinfo"
+	AVX                   = "avx"
+	AVX2                  = "avx2"
+	SSE41                 = "sse4_1"
+	SSE42                 = "sse4_2"
+	CpuInfoPath           = "/proc/cpuinfo"
+	capabilityDepsRootDir = "/managed-agents"
+)
+
+var (
+	certsDir                    = filepath.Join(capabilityExecRootDir, capabilityExecCertsRelativePath)
+	capabilityExecRequiredCerts = []string{
+		"tls-ca-bundle.pem",
+	}
+	capabilityExecRequiredBinaries = []string{
+		"amazon-ssm-agent",
+		"ssm-agent-worker",
+		"ssm-session-worker",
+	}
+
+	// top-level folders, /bin, /config, /certs
+	dependencies = map[string][]string{
+		binDir:    []string{},
+		configDir: []string{},
+		certsDir:  capabilityExecRequiredCerts,
+	}
 )
 
 func (agent *ecsAgent) appendVolumeDriverCapabilities(capabilities []*ecs.Attribute) []*ecs.Attribute {
@@ -124,7 +146,6 @@ func (agent *ecsAgent) appendAppMeshCapabilities(capabilities []*ecs.Attribute) 
 }
 
 func (agent *ecsAgent) appendTaskEIACapabilities(capabilities []*ecs.Attribute) []*ecs.Attribute {
-
 	capabilities = appendNameOnlyAttribute(capabilities, attributePrefix+taskEIAAttributeSuffix)
 
 	eiaRequiredFlags := []string{AVX, AVX2, SSE41, SSE42}
@@ -170,13 +191,13 @@ func (agent *ecsAgent) appendFirelensLoggingDriverCapabilities(capabilities []*e
 	return appendNameOnlyAttribute(capabilities, capabilityPrefix+capabilityFirelensLoggingDriver)
 }
 
+func (agent *ecsAgent) appendFirelensLoggingDriverConfigCapabilities(capabilities []*ecs.Attribute) []*ecs.Attribute {
+	return appendNameOnlyAttribute(capabilities, attributePrefix+capabilityFirelensLoggingDriver+capabilityFireLensLoggingDriverConfigBufferLimitSuffix)
+}
+
 func (agent *ecsAgent) appendFirelensConfigCapabilities(capabilities []*ecs.Attribute) []*ecs.Attribute {
 	capabilities = appendNameOnlyAttribute(capabilities, attributePrefix+capabilityFirelensConfigFile)
 	return appendNameOnlyAttribute(capabilities, attributePrefix+capabilityFirelensConfigS3)
-}
-
-func (agent *ecsAgent) appendGMSACapabilities(capabilities []*ecs.Attribute) []*ecs.Attribute {
-	return capabilities
 }
 
 func (agent *ecsAgent) appendIPv6Capability(capabilities []*ecs.Attribute) []*ecs.Attribute {
@@ -185,4 +206,29 @@ func (agent *ecsAgent) appendIPv6Capability(capabilities []*ecs.Attribute) []*ec
 
 func (agent *ecsAgent) appendFSxWindowsFileServerCapabilities(capabilities []*ecs.Attribute) []*ecs.Attribute {
 	return capabilities
+}
+
+// getTaskENIPluginVersionAttribute returns the version information of the ECS
+// CNI plugins. It just executes the ENI plugin as the assumption is that these
+// plugins are packaged with the ECS Agent, which means all of the other plugins
+// should also emit the same version information. Also, the version information
+// doesn't contribute to placement decisions and just serves as additional
+// debugging information
+func (agent *ecsAgent) getTaskENIPluginVersionAttribute() (*ecs.Attribute, error) {
+	version, err := agent.cniClient.Version(ecscni.ECSENIPluginName)
+	if err != nil {
+		seelog.Warnf(
+			"Unable to determine the version of the plugin '%s': %v",
+			ecscni.ECSENIPluginName, err)
+		return nil, err
+	}
+
+	return &ecs.Attribute{
+		Name:  aws.String(attributePrefix + cniPluginVersionSuffix),
+		Value: aws.String(version),
+	}, nil
+}
+
+func defaultIsPlatformExecSupported() (bool, error) {
+	return true, nil
 }
