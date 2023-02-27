@@ -1,0 +1,95 @@
+AWSTemplateFormatVersion: 2010-09-09
+Description: A template that brings up a simple code pipeline for testing
+
+Parameters:
+    GithubFullRepoName:
+        Type: String
+        Description: The name of the repository that we want to use (e.g. aws/amazon-ecs-agent)
+    GithubBranchName:
+        Type: String
+        Description: The name of the branch to use to build (e.g. mainline, dev)
+
+Resources:
+  CodeBuildServiceRole:
+    Type: 'AWS::IAM::Role'
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          Effect: Allow
+          Principal:
+            Service: codebuild.amazonaws.com
+          Action: 'sts:AssumeRole'
+      Policies:
+        - PolicyName: codebuild-base-policy
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Sid: CloudWatchLogsPolicy
+                Effect: Allow
+                Action:
+                  - 'logs:CreateLogGroup'
+                  - 'logs:CreateLogStream'
+                  - 'logs:PutLogEvents'
+                Resource: '*'
+              - Sid: S3GetObjectPolicy
+                Effect: Allow
+                Action:
+                  - 's3:GetObject'
+                  - 's3:GetObjectVersion'
+                Resource: '*'
+              - Sid: S3PutObjectPolicy
+                Effect: Allow
+                Action:
+                  - 's3:PutObject'
+                Resource: '*'
+              - Sid: ECRPullPolicy
+                Effect: Allow
+                Action:
+                  - 'ecr:BatchCheckLayerAvailability'
+                  - 'ecr:GetDownloadUrlForLayer'
+                  - 'ecr:BatchGetImage'
+                Resource: '*'
+              - Sid: ECRAuthPolicy
+                Effect: Allow
+                Action:
+                  - 'ecr:GetAuthorizationToken'
+                Resource: '*'
+              - Sid: S3BucketIdentity
+                Effect: Allow
+                Action:
+                  - 's3:GetBucketAcl'
+                  - 's3:GetBucketLocation'
+                Resource: '*'
+  CodeBuildSourceCredential:
+    Type: 'AWS::CodeBuild::SourceCredential'
+    Properties:
+      AuthType: PERSONAL_ACCESS_TOKEN
+      ServerType: GITHUB
+      Token: '{{resolve:secretsmanager:CODEBUILD_GITHUB_ACCESS:SecretString:CODEBUILD_GITHUB_ACCESS_TOKEN}}'
+  CodeBuildTest:
+    Type: 'AWS::CodeBuild::Project'
+    Properties:
+      Name: !Ref 'AWS::StackName'
+      ServiceRole: !GetAtt CodeBuildServiceRole.Arn
+      Source:
+        Type: GITHUB
+        Location: 'https://github.com/mye956/amazon-ecs-agent.git'
+        BuildSpec: test-buildspec.yml
+        Auth:
+          Type: OAUTH
+          Resource: !Ref CodeBuildSourceCredential
+      Artifacts:
+        Type: NO_ARTIFACTS
+      Triggers:
+        Webhook: true
+        FilterGroups:
+          - - Type: EVENT
+              Pattern: 'PULL_REQUEST_CREATED, PULL_REQUEST_UPDATED'
+            - Type: BASE_REF
+              Pattern: !Sub ^refs/head/AmazonLinuxLegacyTest$
+      Environment:
+          Type: LINUX_CONTAINER
+          ComputeType: BUILD_GENERAL1_SMALL
+          ImagePullCredentialsType: CODEBUILD
+          Image: aws/codebuild/amazonlinux2-x86_64-standard:3.0
