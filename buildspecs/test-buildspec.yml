@@ -7,4 +7,6 @@ phases:
       - echo Build started on `date` 
       - ls
       - printenv
+      - GITHUB_BRANCH=$(echo ${CODEBUILD_WEBHOOK_HEAD_REF} | cut -d "/" -f3-)
+      - echo $GITHUB_BRANCH
       - git branch
