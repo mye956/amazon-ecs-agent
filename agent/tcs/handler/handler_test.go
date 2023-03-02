@@ -1,3 +1,4 @@
+//go:build unit
 // +build unit
 
 // Copyright Amazon.com Inc. or its affiliates. All Rights Reserved.
@@ -30,6 +31,7 @@ import (
 
 	mock_api "github.com/aws/amazon-ecs-agent/agent/api/mocks"
 	"github.com/aws/amazon-ecs-agent/agent/config"
+	"github.com/aws/amazon-ecs-agent/agent/doctor"
 	mock_engine "github.com/aws/amazon-ecs-agent/agent/engine/mocks"
 	"github.com/aws/amazon-ecs-agent/agent/eventstream"
 	"github.com/aws/amazon-ecs-agent/agent/stats"
@@ -63,7 +65,9 @@ var testCfg = &config.Config{
 	AWSRegion:          "us-east-1",
 }
 
-func (*mockStatsEngine) GetInstanceMetrics() (*ecstcs.MetricsMetadata, []*ecstcs.TaskMetric, error) {
+var emptyDoctor, _ = doctor.NewDoctor([]doctor.Healthcheck{}, "test-cluster", "this:is:an:instance:arn")
+
+func (*mockStatsEngine) GetInstanceMetrics(includeServiceConnectStats bool) (*ecstcs.MetricsMetadata, []*ecstcs.TaskMetric, error) {
 	req := createPublishMetricsRequest()
 	return req.Metadata, req.TaskMetrics, nil
 }
@@ -74,6 +78,18 @@ func (*mockStatsEngine) ContainerDockerStats(taskARN string, id string) (*types.
 
 func (*mockStatsEngine) GetTaskHealthMetrics() (*ecstcs.HealthMetadata, []*ecstcs.TaskHealth, error) {
 	return nil, nil, nil
+}
+
+func (*mockStatsEngine) GetPublishServiceConnectTickerInterval() int32 {
+	return 0
+}
+
+func (*mockStatsEngine) SetPublishServiceConnectTickerInterval(counter int32) {
+	return
+}
+
+func (*mockStatsEngine) GetPublishMetricsTicker() *time.Ticker {
+	return time.NewTicker(config.DefaultContainerMetricsPublishInterval)
 }
 
 // TestDisableMetrics tests the StartMetricsSession will return immediately if
@@ -136,7 +152,7 @@ func TestStartSession(t *testing.T) {
 	// Start a session with the test server.
 	go startSession(ctx, server.URL, testCfg, testCreds, &mockStatsEngine{},
 		defaultHeartbeatTimeout, defaultHeartbeatJitter,
-		testPublishMetricsInterval, deregisterInstanceEventStream)
+		testPublishMetricsInterval, deregisterInstanceEventStream, emptyDoctor)
 
 	// startSession internally starts publishing metrics from the mockStatsEngine object.
 	time.Sleep(testPublishMetricsInterval)
@@ -200,7 +216,7 @@ func TestSessionConnectionClosedByRemote(t *testing.T) {
 	// Start a session with the test server.
 	err = startSession(ctx, server.URL, testCfg, testCreds, &mockStatsEngine{},
 		defaultHeartbeatTimeout, defaultHeartbeatJitter,
-		testPublishMetricsInterval, deregisterInstanceEventStream)
+		testPublishMetricsInterval, deregisterInstanceEventStream, emptyDoctor)
 
 	if err == nil {
 		t.Error("Expected io.EOF on closed connection")
@@ -237,7 +253,7 @@ func TestConnectionInactiveTimeout(t *testing.T) {
 	// Start a session with the test server.
 	err = startSession(ctx, server.URL, testCfg, testCreds, &mockStatsEngine{},
 		50*time.Millisecond, 100*time.Millisecond,
-		testPublishMetricsInterval, deregisterInstanceEventStream)
+		testPublishMetricsInterval, deregisterInstanceEventStream, emptyDoctor)
 	// if we are not blocked here, then the test pass as it will reconnect in StartSession
 	assert.NoError(t, err, "Close the connection should cause the tcs client return error")
 

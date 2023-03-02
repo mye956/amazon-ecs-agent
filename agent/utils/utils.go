@@ -21,12 +21,15 @@ import (
 	"io/ioutil"
 	"math"
 	"math/big"
+	"net/http"
+	"net/url"
 	"path/filepath"
 	"reflect"
 	"strconv"
 	"strings"
 
 	"github.com/aws/amazon-ecs-agent/agent/ecs_client/model/ecs"
+	"github.com/aws/amazon-ecs-agent/agent/utils/httpproxy"
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/aws/arn"
 	"github.com/aws/aws-sdk-go/aws/awserr"
@@ -107,6 +110,18 @@ func Strptr(s string) *string {
 	return &s
 }
 
+func IntPtr(i int) *int {
+	return &i
+}
+
+func Int64Ptr(i int64) *int64 {
+	return &i
+}
+
+func BoolPtr(b bool) *bool {
+	return &b
+}
+
 // Uint16SliceToStringSlice converts a slice of type uint16 to a slice of type
 // *string. It uses strconv.Itoa on each element
 func Uint16SliceToStringSlice(slice []uint16) []*string {
@@ -148,12 +163,27 @@ func ParseBool(str string, default_ bool) bool {
 	return res
 }
 
+// Removes element at a particular index in the slice
+func Remove(slice []string, s int) []string {
+	return append(slice[:s], slice[s+1:]...)
+}
+
 // IsAWSErrorCodeEqual returns true if the err implements Error
 // interface of awserr and it has the same error code as
 // the passed in error code.
 func IsAWSErrorCodeEqual(err error, code string) bool {
 	awsErr, ok := err.(awserr.Error)
 	return ok && awsErr.Code() == code
+}
+
+// GetRequestFailureStatusCode returns the status code from a
+// RequestFailure error, or 0 if the error is not of that type
+func GetRequestFailureStatusCode(err error) int {
+	var statusCode int
+	if reqErr, ok := err.(awserr.RequestFailure); ok {
+		statusCode = reqErr.StatusCode()
+	}
+	return statusCode
 }
 
 // MapToTags converts a map to a slice of tags.
@@ -233,4 +263,9 @@ func GetENIAttachmentId(eniAttachmentArn string) (string, error) {
 		return "", errors.Errorf("failed to get eni attachment id: eni attachment arn invalid: %s", eniAttachmentArn)
 	}
 	return fields[len(fields)-1], nil
+}
+
+// Proxy is an uncached version of http.ProxyFromEnvironment.
+func Proxy(req *http.Request) (*url.URL, error) {
+	return httpproxy.FromEnvironment().ProxyFunc()(req.URL)
 }

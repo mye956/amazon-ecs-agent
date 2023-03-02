@@ -1,3 +1,4 @@
+//go:build unit
 // +build unit
 
 // Copyright Amazon.com Inc. or its affiliates. All Rights Reserved.
@@ -29,8 +30,7 @@ const (
 )
 
 func TestManageENIAttachments(t *testing.T) {
-	testClient, cleanup := newTestClient(t)
-	defer cleanup()
+	testClient := newTestClient(t)
 
 	testEniAttachment := &eni.ENIAttachment{
 		AttachmentARN:    testAttachmentArn,
@@ -64,8 +64,7 @@ func TestManageENIAttachments(t *testing.T) {
 }
 
 func TestSaveENIAttachmentInvalidID(t *testing.T) {
-	testClient, cleanup := newTestClient(t)
-	defer cleanup()
+	testClient := newTestClient(t)
 
 	testEniAttachment := &eni.ENIAttachment{
 		AttachmentARN:    "invalid-arn",

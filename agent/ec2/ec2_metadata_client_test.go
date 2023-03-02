@@ -1,3 +1,4 @@
+//go:build unit
 // +build unit
 
 // Copyright Amazon.com Inc. or its affiliates. All Rights Reserved.
@@ -97,8 +98,8 @@ func TestDefaultCredentials(t *testing.T) {
 	mockGetter := mock_ec2.NewMockHttpClient(ctrl)
 	testClient := ec2.NewEC2MetadataClient(mockGetter)
 
-	mockGetter.EXPECT().GetMetadata(ec2.SecurityCrednetialsResource).Return(testRoleName, nil)
-	mockGetter.EXPECT().GetMetadata(ec2.SecurityCrednetialsResource+testRoleName).Return(
+	mockGetter.EXPECT().GetMetadata(ec2.SecurityCredentialsResource).Return(testRoleName, nil)
+	mockGetter.EXPECT().GetMetadata(ec2.SecurityCredentialsResource+testRoleName).Return(
 		string(ignoreError(json.Marshal(makeTestRoleCredentials())).([]byte)), nil)
 
 	credentials, err := testClient.DefaultCredentials()

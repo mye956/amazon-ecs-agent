@@ -20,7 +20,7 @@
       },
       "input":{"shape":"AttachInstanceNetworkInterfacesMessage"},
       "output":{"shape":"AckRequest"},
-      "documentation":"AttachNetworkInterface requests that the Agent look for and confirm the attachment of a network interface by the control plane that is not bound to a specific task."
+      "documentation":"AttachInstanceNetworkInterfaces requests that the Agent look for and confirm the attachment of a network interface by the control plane that is not bound to a specific task."
     },
     "AttachTaskNetworkInterfaces":{
       "name":"AttachTaskNetworkInterfaces",
@@ -47,6 +47,7 @@
         "requestUri":"/"
       },
       "input":{"shape":"HeartbeatMessage"},
+      "output":{"shape":"HeartbeatAckRequest"},
       "documentation":"Heartbeat is a periodic message that informs the agent all is well."
     },
     "Payload":{
@@ -178,6 +179,29 @@
         "waitTimeoutMs":{"shape":"Long"},
         "elasticNetworkInterfaces":{"shape":"ElasticNetworkInterfaceList"}
       }
+    },
+    "Attachment":{
+      "type":"structure",
+      "members":{
+        "attachmentArn":{"shape":"String"},
+        "attachmentType":{"shape":"String"},
+        "attachmentProperties":{"shape":"AttachmentPropertyList"}
+      }
+    },
+    "AttachmentList":{
+      "type":"list",
+      "member":{"shape":"Attachment"}
+    },
+    "AttachmentProperty":{
+      "type":"structure",
+      "members":{
+        "name":{"shape":"String"},
+        "value":{"shape":"String"}
+      }
+    },
+    "AttachmentPropertyList":{
+      "type":"list",
+      "member":{"shape":"AttachmentProperty"}
     },
     "AuthStrategy":{
       "type":"string",
@@ -417,7 +441,14 @@
     "HeartbeatMessage":{
       "type":"structure",
       "members":{
-        "healthy":{"shape":"Boolean"}
+        "healthy":{"shape":"Boolean"},
+        "messageId":{"shape":"String"}
+      }
+    },
+    "HeartbeatAckRequest":{
+      "type":"structure",
+      "members":{
+        "messageId":{"shape":"String"}
       }
     },
     "HostVolumeProperties":{
@@ -587,6 +618,7 @@
       "type":"structure",
       "members":{
         "containerPort":{"shape":"Integer"},
+        "containerPortRange":{"shape":"String"},
         "hostPort":{"shape":"Integer"},
         "protocol":{"shape":"TransportProtocol"}
       }
@@ -715,7 +747,10 @@
         "pidMode":{"shape":"String"},
         "ipcMode":{"shape":"String"},
         "proxyConfiguration":{"shape":"ProxyConfiguration"},
-        "launchType":{"shape":"String"}
+        "launchType":{"shape":"String"},
+        "serviceName":{"shape":"String"},
+        "attachments":{"shape":"AttachmentList"},
+        "networkMode":{"shape":"String"}
       }
     },
     "TaskList":{

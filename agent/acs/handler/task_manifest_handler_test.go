@@ -1,3 +1,4 @@
+//go:build unit
 // +build unit
 
 // Copyright Amazon.com Inc. or its affiliates. All Rights Reserved.
@@ -17,6 +18,7 @@ package handler
 import (
 	"context"
 	"strconv"
+	"sync"
 	"testing"
 	"time"
 
@@ -26,6 +28,7 @@ import (
 	"github.com/aws/amazon-ecs-agent/agent/data"
 	mock_engine "github.com/aws/amazon-ecs-agent/agent/engine/mocks"
 	mock_wsclient "github.com/aws/amazon-ecs-agent/agent/wsclient/mock"
+
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/golang/mock/gomock"
 	"github.com/stretchr/testify/assert"
@@ -49,8 +52,7 @@ func TestManifestHandlerKillAllTasks(t *testing.T) {
 	ctx := context.TODO()
 	mockWSClient := mock_wsclient.NewMockClientServer(ctrl)
 
-	dataClient, cleanup := newTestDataClient(t)
-	defer cleanup()
+	dataClient := newTestDataClient(t)
 
 	newTaskManifest := newTaskManifestHandler(ctx, cluster, containerInstanceArn, mockWSClient,
 		dataClient, taskEngine, aws.Int64(11))
@@ -144,8 +146,7 @@ func TestManifestHandlerKillFewTasks(t *testing.T) {
 	ctx := context.TODO()
 	mockWSClient := mock_wsclient.NewMockClientServer(ctrl)
 
-	dataClient, cleanup := newTestDataClient(t)
-	defer cleanup()
+	dataClient := newTestDataClient(t)
 
 	newTaskManifest := newTaskManifestHandler(ctx, cluster, containerInstanceArn, mockWSClient,
 		dataClient, taskEngine, aws.Int64(11))
@@ -248,8 +249,7 @@ func TestManifestHandlerKillNoTasks(t *testing.T) {
 	ctx := context.TODO()
 	mockWSClient := mock_wsclient.NewMockClientServer(ctrl)
 
-	dataClient, cleanup := newTestDataClient(t)
-	defer cleanup()
+	dataClient := newTestDataClient(t)
 
 	newTaskManifest := newTaskManifestHandler(ctx, cluster, containerInstanceArn, mockWSClient,
 		dataClient, taskEngine, aws.Int64(11))
@@ -338,8 +338,7 @@ func TestManifestHandlerDifferentTaskLists(t *testing.T) {
 	ctx := context.TODO()
 	mockWSClient := mock_wsclient.NewMockClientServer(ctrl)
 
-	dataClient, cleanup := newTestDataClient(t)
-	defer cleanup()
+	dataClient := newTestDataClient(t)
 
 	newTaskManifest := newTaskManifestHandler(ctx, cluster, containerInstanceArn, mockWSClient,
 		dataClient, taskEngine, aws.Int64(11))
@@ -432,8 +431,7 @@ func TestManifestHandlerDifferentTaskLists(t *testing.T) {
 }
 
 func TestManifestHandlerSequenceNumbers(t *testing.T) {
-	dataClient, cleanup := newTestDataClient(t)
-	defer cleanup()
+	dataClient := newTestDataClient(t)
 
 	testcases := []struct {
 		name                string
@@ -546,4 +544,79 @@ func TestCompareTasksSameTasks(t *testing.T) {
 	compareTaskList := compareTasks(receivedTaskList, taskList, "test-cluster-arn")
 
 	assert.Equal(t, 0, len(compareTaskList))
+}
+
+func TestTaskManifestHandlerSendPendingTaskManifestMessageAck(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	ctx := context.TODO()
+	taskEngine := mock_engine.NewMockTaskEngine(ctrl)
+	mockWSClient := mock_wsclient.NewMockClientServer(ctrl)
+	mockWSClient.EXPECT().MakeRequest(gomock.Any()).Return(nil).Times(1)
+	handler := newTaskManifestHandler(ctx, cluster, containerInstanceArn, mockWSClient,
+		data.NewNoopClient(), taskEngine, aws.Int64(testSeqNum))
+
+	wg := sync.WaitGroup{}
+	wg.Add(2)
+
+	// write a dummy ack into the messageBufferTaskManifestAck
+	go func() {
+		handler.messageBufferTaskManifestAck <- "testMessageID"
+		wg.Done()
+	}()
+
+	// sleep here to ensure that the sending go routine executes before the receiving one below. if not, then the
+	// receiving go routine will finish without reading since sendPendingTaskManifestMessageAck() is non-blocking.
+	time.Sleep(1 * time.Second)
+
+	go func() {
+		handler.sendPendingTaskManifestMessageAck()
+		wg.Done()
+	}()
+
+	// wait for both go routines above to finish before we verify that ack channel is empty and exit the test.
+	// this also ensures that the mock MakeRequest call happened as expected.
+	wg.Wait()
+
+	// verify that the messageBufferTaskManifestAck channel is empty
+	assert.Equal(t, 0, len(handler.messageBufferTaskManifestAck))
+}
+
+func TestTaskManifestHandlerHandlePendingTaskStopVerificationAck(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	ctx := context.TODO()
+	taskEngine := mock_engine.NewMockTaskEngine(ctrl)
+	mockWSClient := mock_wsclient.NewMockClientServer(ctrl)
+	handler := newTaskManifestHandler(ctx, cluster, containerInstanceArn, mockWSClient,
+		data.NewNoopClient(), taskEngine, aws.Int64(testSeqNum))
+
+	wg := sync.WaitGroup{}
+	wg.Add(2)
+
+	// write a dummy ack into the messageBufferTaskStopVerificationAck
+	go func() {
+		handler.messageBufferTaskStopVerificationAck <- &ecsacs.TaskStopVerificationAck{
+			MessageId: aws.String("testMessageID"),
+		}
+		wg.Done()
+	}()
+
+	// sleep here to ensure that the sending go routine executes before the receiving one below. if not, then the
+	// receiving go routine will finish without receiving the ack since sendPendingTaskManifestMessageAck()
+	// is non-blocking.
+	time.Sleep(1 * time.Second)
+
+	go func() {
+		handler.handlePendingTaskStopVerificationAck()
+		wg.Done()
+	}()
+
+	// wait for both go routines above to finish before we verify that ack channel is empty and exit the test.
+	wg.Wait()
+
+	// verify that the messageBufferTaskStopVerificationAck channel is empty
+	assert.Equal(t, 0, len(handler.messageBufferTaskStopVerificationAck))
 }

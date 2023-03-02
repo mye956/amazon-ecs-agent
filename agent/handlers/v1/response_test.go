@@ -1,3 +1,4 @@
+//go:build unit
 // +build unit
 
 // Copyright Amazon.com Inc. or its affiliates. All Rights Reserved.
@@ -23,6 +24,7 @@ import (
 	apieni "github.com/aws/amazon-ecs-agent/agent/api/eni"
 	apitask "github.com/aws/amazon-ecs-agent/agent/api/task"
 	apitaskstatus "github.com/aws/amazon-ecs-agent/agent/api/task/status"
+
 	"github.com/docker/docker/api/types"
 	"github.com/stretchr/testify/assert"
 )

@@ -92,7 +92,7 @@ const (
 
 	// minimumTaskCleanupWaitDuration specifies the minimum duration to wait before cleaning up
 	// a task's container. This is used to enforce sane values for the config.TaskCleanupWaitDuration field.
-	minimumTaskCleanupWaitDuration = 1 * time.Minute
+	minimumTaskCleanupWaitDuration = time.Second
 
 	// minimumImagePullInactivityTimeout specifies the minimum amount of time for that an image can be
 	// 'stuck' in the pull / unpack step. Very small values are unsafe and lead to high failure rate.
@@ -187,6 +187,9 @@ var (
 	// DefaultPauseContainerTag is the tag for the pause container image. The linker's load
 	// flags are used to populate this value from the Makefile
 	DefaultPauseContainerTag = ""
+
+	// CgroupV2 Specifies whether or not to run in Cgroups V2 mode.
+	CgroupV2 = false
 )
 
 // Merge merges two config files, preferring the ones on the left. Any nil or
@@ -225,6 +228,14 @@ func NewConfig(ec2client ec2.EC2MetadataClient) (*Config, error) {
 		errs = append(errs, err)
 	}
 	config := &envConfig
+
+	if config.External.Enabled() {
+		if config.AWSRegion == "" {
+			return nil, errors.New("AWS_DEFAULT_REGION has to be set when running on external capacity")
+		}
+		// Use fake ec2 metadata client if on prem config is set.
+		ec2client = ec2.NewBlackholeEC2MetadataClient()
+	}
 
 	if config.complete() {
 		// No need to do file / network IO
@@ -429,8 +440,11 @@ func (cfg *Config) complete() bool {
 }
 
 func fileConfig() (Config, error) {
-	fileName := utils.DefaultIfBlank(os.Getenv("ECS_AGENT_CONFIG_FILE_PATH"), defaultConfigFileName)
 	cfg := Config{}
+	fileName, err := getConfigFileName()
+	if err != nil {
+		return cfg, nil
+	}
 
 	file, err := os.Open(fileName)
 	if err != nil {
@@ -531,6 +545,7 @@ func environmentConfig() (Config, error) {
 		SELinuxCapable:                      parseBooleanDefaultFalseConfig("ECS_SELINUX_CAPABLE"),
 		AppArmorCapable:                     parseBooleanDefaultFalseConfig("ECS_APPARMOR_CAPABLE"),
 		TaskCleanupWaitDuration:             parseEnvVariableDuration("ECS_ENGINE_TASK_CLEANUP_WAIT_DURATION"),
+		TaskCleanupWaitDurationJitter:       parseEnvVariableDuration("ECS_ENGINE_TASK_CLEANUP_WAIT_DURATION_JITTER"),
 		TaskENIEnabled:                      parseBooleanDefaultFalseConfig("ECS_ENABLE_TASK_ENI"),
 		TaskIAMRoleEnabled:                  parseBooleanDefaultFalseConfig("ECS_ENABLE_TASK_IAM_ROLE"),
 		DeleteNonECSImagesEnabled:           parseBooleanDefaultFalseConfig("ECS_ENABLE_UNTRACKED_IMAGE_CLEANUP"),
@@ -577,6 +592,11 @@ func environmentConfig() (Config, error) {
 		GMSACapable:                         parseGMSACapability(),
 		VolumePluginCapabilities:            parseVolumePluginCapabilities(),
 		FSxWindowsFileServerCapable:         parseFSxWindowsFileServerCapability(),
+		External:                            parseBooleanDefaultFalseConfig("ECS_EXTERNAL"),
+		EnableRuntimeStats:                  parseBooleanDefaultFalseConfig("ECS_ENABLE_RUNTIME_STATS"),
+		ShouldExcludeIPv6PortBinding:        parseBooleanDefaultTrueConfig("ECS_EXCLUDE_IPV6_PORTBINDING"),
+		WarmPoolsSupport:                    parseBooleanDefaultFalseConfig("ECS_WARM_POOLS_CHECK"),
+		DynamicHostPortRange:                parseDynamicHostPortRange("ECS_DYNAMIC_HOST_PORT_RANGE"),
 	}, err
 }
 
@@ -609,6 +629,7 @@ func (cfg *Config) String() string {
 			"ContainerCreateTimeout: %v, "+
 			"DependentContainersPullUpfront: %v, "+
 			"TaskCPUMemLimit: %v, "+
+			"ShouldExcludeIPv6PortBinding: %v, "+
 			"%s",
 		cfg.Cluster,
 		cfg.AWSRegion,
@@ -626,6 +647,7 @@ func (cfg *Config) String() string {
 		cfg.ContainerCreateTimeout,
 		cfg.DependentContainersPullUpfront,
 		cfg.TaskCPUMemLimit,
+		cfg.ShouldExcludeIPv6PortBinding,
 		cfg.platformString(),
 	)
 }

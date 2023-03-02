@@ -1,3 +1,4 @@
+//go:build unit
 // +build unit
 
 // Copyright Amazon.com Inc. or its affiliates. All Rights Reserved.
@@ -127,7 +128,7 @@ func TestPerformUpdateWithUpdatesDisabled(t *testing.T) {
 		Reason:            ptr("Updates are disabled").(*string),
 	}})
 
-	taskEngine := engine.NewTaskEngine(cfg, nil, nil, nil, nil, nil, nil, nil, nil)
+	taskEngine := engine.NewTaskEngine(cfg, nil, nil, nil, nil, nil, nil, nil, nil, nil)
 	msg := &ecsacs.PerformUpdateMessage{
 		ClusterArn:           ptr("cluster").(*string),
 		ContainerInstanceArn: ptr("containerInstance").(*string),
@@ -181,7 +182,7 @@ func TestFullUpdateFlow(t *testing.T) {
 
 			require.Equal(t, "update-tar-data", writtenFile.String(), "incorrect data written")
 
-			taskEngine := engine.NewTaskEngine(cfg, nil, nil, nil, nil, nil, nil, nil, nil)
+			taskEngine := engine.NewTaskEngine(cfg, nil, nil, nil, nil, nil, nil, nil, nil, nil)
 			msg := &ecsacs.PerformUpdateMessage{
 				ClusterArn:           ptr("cluster").(*string),
 				ContainerInstanceArn: ptr("containerInstance").(*string),
@@ -249,7 +250,7 @@ func TestUndownloadedUpdate(t *testing.T) {
 		MessageId:         ptr("mid").(*string),
 	}})
 
-	taskEngine := engine.NewTaskEngine(cfg, nil, nil, nil, nil, nil, nil, nil, nil)
+	taskEngine := engine.NewTaskEngine(cfg, nil, nil, nil, nil, nil, nil, nil, nil, nil)
 	msg := &ecsacs.PerformUpdateMessage{
 		ClusterArn:           ptr("cluster").(*string),
 		ContainerInstanceArn: ptr("containerInstance").(*string),
@@ -307,7 +308,7 @@ func TestDuplicateUpdateMessagesWithSuccess(t *testing.T) {
 
 	require.Equal(t, "update-tar-data", writtenFile.String(), "incorrect data written")
 
-	taskEngine := engine.NewTaskEngine(cfg, nil, nil, nil, nil, nil, nil, nil, nil)
+	taskEngine := engine.NewTaskEngine(cfg, nil, nil, nil, nil, nil, nil, nil, nil, nil)
 	msg := &ecsacs.PerformUpdateMessage{
 		ClusterArn:           ptr("cluster").(*string),
 		ContainerInstanceArn: ptr("containerInstance").(*string),
@@ -376,7 +377,7 @@ func TestDuplicateUpdateMessagesWithFailure(t *testing.T) {
 
 	require.Equal(t, "update-tar-data", writtenFile.String(), "incorrect data written")
 
-	taskEngine := engine.NewTaskEngine(cfg, nil, nil, nil, nil, nil, nil, nil, nil)
+	taskEngine := engine.NewTaskEngine(cfg, nil, nil, nil, nil, nil, nil, nil, nil, nil)
 	msg := &ecsacs.PerformUpdateMessage{
 		ClusterArn:           ptr("cluster").(*string),
 		ContainerInstanceArn: ptr("containerInstance").(*string),
@@ -447,7 +448,7 @@ func TestNewerUpdateMessages(t *testing.T) {
 
 	require.Equal(t, "newer-update-tar-data", writtenFile.String(), "incorrect data written")
 
-	taskEngine := engine.NewTaskEngine(cfg, nil, nil, nil, nil, nil, nil, nil, nil)
+	taskEngine := engine.NewTaskEngine(cfg, nil, nil, nil, nil, nil, nil, nil, nil, nil)
 	msg := &ecsacs.PerformUpdateMessage{
 		ClusterArn:           ptr("cluster").(*string),
 		ContainerInstanceArn: ptr("containerInstance").(*string),

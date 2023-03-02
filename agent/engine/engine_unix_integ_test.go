@@ -1,3 +1,4 @@
+//go:build !windows && integration
 // +build !windows,integration
 
 // Copyright Amazon.com Inc. or its affiliates. All Rights Reserved.
@@ -30,6 +31,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/cihub/seelog"
 	"github.com/docker/docker/api/types"
 
 	"github.com/aws/amazon-ecs-agent/agent/api"
@@ -47,6 +49,7 @@ import (
 	"github.com/aws/amazon-ecs-agent/agent/utils/ttime"
 	"github.com/aws/aws-sdk-go/aws"
 	sdkClient "github.com/docker/docker/client"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
@@ -61,6 +64,28 @@ var (
 	endpoint            = utils.DefaultIfBlank(os.Getenv(DockerEndpointEnvVariable), DockerDefaultEndpoint)
 	TestGPUInstanceType = []string{"p2", "p3", "g3", "g4dn", "p4d"}
 )
+
+// Starting from Docker version 20.10.6, a behavioral change was introduced in docker container port bindings,
+// where both IPv4 and IPv6 port bindings will be exposed.
+// To mitigate this issue, Agent introduced an environment variable ECS_EXCLUDE_IPV6_PORTBINDING,
+// which is true by default in the [PR#3025](https://github.com/aws/amazon-ecs-agent/pull/3025).
+// However, the PR does not modify port bindings in the container state change object, it only filters out IPv6 port
+// bindings while building the container state change payload. Thus the invalid IPv6 port bindings still exists
+// in ContainerStateChange, and need to be filtered out in this integration test.
+//
+// The getValidPortBinding function and the ECS_EXCLUDE_IPV6_PORTBINDING environment variable should be removed once
+// the IPv6 issue is resolved by Docker and is fully supported by ECS.
+func getValidPortBinding(portBindings []apicontainer.PortBinding) []apicontainer.PortBinding {
+	validPortBindings := []apicontainer.PortBinding{}
+	for _, binding := range portBindings {
+		if binding.BindIP == "::" {
+			seelog.Debugf("Exclude IPv6 port binding %v", binding)
+			continue
+		}
+		validPortBindings = append(validPortBindings, binding)
+	}
+	return validPortBindings
+}
 
 func createTestHealthCheckTask(arn string) *apitask.Task {
 	testTask := &apitask.Task{
@@ -129,14 +154,11 @@ func createNamespaceSharingTask(arn, pidMode, ipcMode, testImage string, theComm
 	return testTask
 }
 
-func createVolumeTask(scope, arn, volume string, autoprovision bool) (*apitask.Task, string, error) {
-	tmpDirectory, err := ioutil.TempDir("", "ecs_test")
+func createVolumeTask(t *testing.T, scope, arn, volume string, autoprovision bool) (*apitask.Task, error) {
+	tmpDirectory := t.TempDir()
+	err := ioutil.WriteFile(filepath.Join(tmpDirectory, "volume-data"), []byte("volume"), 0666)
 	if err != nil {
-		return nil, "", err
-	}
-	err = ioutil.WriteFile(filepath.Join(tmpDirectory, "volume-data"), []byte("volume"), 0666)
-	if err != nil {
-		return nil, "", err
+		return nil, err
 	}
 
 	testTask := createTestTask(arn)
@@ -172,7 +194,65 @@ func createVolumeTask(scope, arn, volume string, autoprovision bool) (*apitask.T
 	}
 	testTask.ResourcesMapUnsafe = make(map[string][]taskresource.TaskResource)
 	testTask.Containers[0].Command = []string{"sh", "-c", "if [[ $(cat /ecs/volume-data) != \"volume\" ]]; then cat /ecs/volume-data; exit 1; fi; exit 0"}
-	return testTask, tmpDirectory, nil
+	return testTask, nil
+}
+
+func TestSharedAutoprovisionVolume(t *testing.T) {
+	taskEngine, done, _ := setupWithDefaultConfig(t)
+	defer done()
+	stateChangeEvents := taskEngine.StateChangeEvents()
+	// Set the task clean up duration to speed up the test
+	taskEngine.(*DockerTaskEngine).cfg.TaskCleanupWaitDuration = 1 * time.Second
+
+	testTask, err := createVolumeTask(t, "shared", "TestSharedAutoprovisionVolume", "TestSharedAutoprovisionVolume", true)
+	require.NoError(t, err, "creating test task failed")
+
+	go taskEngine.AddTask(testTask)
+
+	verifyTaskIsRunning(stateChangeEvents, testTask)
+	verifyTaskIsStopped(stateChangeEvents, testTask)
+	assert.Equal(t, *testTask.Containers[0].GetKnownExitCode(), 0)
+	assert.Equal(t, testTask.ResourcesMapUnsafe["dockerVolume"][0].(*taskresourcevolume.VolumeResource).VolumeConfig.DockerVolumeName, "TestSharedAutoprovisionVolume", "task volume name is not the same as specified in task definition")
+	// Wait for task to be cleaned up
+	testTask.SetSentStatus(apitaskstatus.TaskStopped)
+	waitForTaskCleanup(t, taskEngine, testTask.Arn, 5)
+	client := taskEngine.(*DockerTaskEngine).client
+	response := client.InspectVolume(context.TODO(), "TestSharedAutoprovisionVolume", 1*time.Second)
+	assert.NoError(t, response.Error, "expect shared volume not removed")
+
+	cleanVolumes(testTask, taskEngine)
+}
+
+func TestSharedDoNotAutoprovisionVolume(t *testing.T) {
+	taskEngine, done, _ := setupWithDefaultConfig(t)
+	defer done()
+	stateChangeEvents := taskEngine.StateChangeEvents()
+	client := taskEngine.(*DockerTaskEngine).client
+	// Set the task clean up duration to speed up the test
+	taskEngine.(*DockerTaskEngine).cfg.TaskCleanupWaitDuration = 1 * time.Second
+
+	testTask, err := createVolumeTask(t, "shared", "TestSharedDoNotAutoprovisionVolume", "TestSharedDoNotAutoprovisionVolume", false)
+	require.NoError(t, err, "creating test task failed")
+
+	// creating volume to simulate previously provisioned volume
+	volumeConfig := testTask.Volumes[0].Volume.(*taskresourcevolume.DockerVolumeConfig)
+	volumeMetadata := client.CreateVolume(context.TODO(), "TestSharedDoNotAutoprovisionVolume",
+		volumeConfig.Driver, volumeConfig.DriverOpts, volumeConfig.Labels, 1*time.Minute)
+	require.NoError(t, volumeMetadata.Error)
+
+	go taskEngine.AddTask(testTask)
+
+	verifyTaskIsRunning(stateChangeEvents, testTask)
+	verifyTaskIsStopped(stateChangeEvents, testTask)
+	assert.Equal(t, *testTask.Containers[0].GetKnownExitCode(), 0)
+	assert.Len(t, testTask.ResourcesMapUnsafe["dockerVolume"], 0, "volume that has been provisioned does not require the agent to create it again")
+	// Wait for task to be cleaned up
+	testTask.SetSentStatus(apitaskstatus.TaskStopped)
+	waitForTaskCleanup(t, taskEngine, testTask.Arn, 5)
+	response := client.InspectVolume(context.TODO(), "TestSharedDoNotAutoprovisionVolume", 1*time.Second)
+	assert.NoError(t, response.Error, "expect shared volume not removed")
+
+	cleanVolumes(testTask, taskEngine)
 }
 
 // TestStartStopUnpulledImage ensures that an unpulled image is successfully
@@ -350,7 +430,7 @@ func TestMultiplePortForwards(t *testing.T) {
 }
 
 // TestDynamicPortForward runs a container serving data on a port chosen by the
-// docker deamon and verifies that the port is reported in the state-change
+// docker daemon and verifies that the port is reported in the state-change.
 func TestDynamicPortForward(t *testing.T) {
 	taskEngine, done, _ := setupWithDefaultConfig(t)
 	defer done()
@@ -370,15 +450,17 @@ func TestDynamicPortForward(t *testing.T) {
 	require.Equal(t, event.(api.ContainerStateChange).Status, apicontainerstatus.ContainerRunning, "Expected container to be RUNNING")
 
 	portBindings := event.(api.ContainerStateChange).PortBindings
+	// See comments on the getValidPortBinding() function for why ports need to be filtered.
+	validPortBindings := getValidPortBinding(portBindings)
 
 	verifyTaskRunningStateChange(t, taskEngine)
 
-	if len(portBindings) != 1 {
+	if len(validPortBindings) != 1 {
 		t.Error("PortBindings was not set; should have been len 1", portBindings)
 	}
 	var bindingForcontainerPortOne uint16
-	for _, binding := range portBindings {
-		if binding.ContainerPort == port {
+	for _, binding := range validPortBindings {
+		if port == binding.ContainerPort {
 			bindingForcontainerPortOne = binding.HostPort
 		}
 	}
@@ -423,16 +505,18 @@ func TestMultipleDynamicPortForward(t *testing.T) {
 	require.Equal(t, event.(api.ContainerStateChange).Status, apicontainerstatus.ContainerRunning, "Expected container to be RUNNING")
 
 	portBindings := event.(api.ContainerStateChange).PortBindings
+	// See comments on the getValidPortBinding() function for why ports need to be filtered.
+	validPortBindings := getValidPortBinding(portBindings)
 
 	verifyTaskRunningStateChange(t, taskEngine)
 
-	if len(portBindings) != 2 {
+	if len(validPortBindings) != 2 {
 		t.Error("Could not bind to two ports from one container port", portBindings)
 	}
 	var bindingForcontainerPortOne_1 uint16
 	var bindingForcontainerPortOne_2 uint16
-	for _, binding := range portBindings {
-		if binding.ContainerPort == port {
+	for _, binding := range validPortBindings {
+		if port == binding.ContainerPort {
 			if bindingForcontainerPortOne_1 == 0 {
 				bindingForcontainerPortOne_1 = binding.HostPort
 			} else {
@@ -771,8 +855,7 @@ func TestTaskLevelVolume(t *testing.T) {
 	defer done()
 	stateChangeEvents := taskEngine.StateChangeEvents()
 
-	testTask, tmpDirectory, err := createVolumeTask("task", "TestTaskLevelVolume", "TestTaskLevelVolume", true)
-	defer os.Remove(tmpDirectory)
+	testTask, err := createVolumeTask(t, "task", "TestTaskLevelVolume", "TestTaskLevelVolume", true)
 	require.NoError(t, err, "creating test task failed")
 
 	go taskEngine.AddTask(testTask)
@@ -1025,7 +1108,8 @@ func TestDockerExecAPI(t *testing.T) {
 		require.NotNil(t, execContainerOut)
 
 		//Start the above Exec process on the host
-		err1 := taskEngine.(*DockerTaskEngine).client.StartContainerExec(ctx, execContainerOut.ID, dockerclient.ContainerExecStartTimeout)
+		err1 := taskEngine.(*DockerTaskEngine).client.StartContainerExec(ctx, execContainerOut.ID, types.ExecStartCheck{Detach: true, Tty: false},
+			dockerclient.ContainerExecStartTimeout)
 		require.NoError(t, err1)
 
 		//Inspect the above Exec process on the host to check if the exit code is 0 which indicates successful run of the command

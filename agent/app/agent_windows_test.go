@@ -1,3 +1,4 @@
+//go:build windows && unit
 // +build windows,unit
 
 // Copyright Amazon.com Inc. or its affiliates. All Rights Reserved.
@@ -47,8 +48,9 @@ func (m *mockAgent) start() int {
 func (m *mockAgent) setTerminationHandler(handler sighandlers.TerminationHandler) {
 	m.terminationHandler = handler
 }
-func (m *mockAgent) printECSAttributes() int  { return 0 }
-func (m *mockAgent) startWindowsService() int { return 0 }
+func (m *mockAgent) printECSAttributes() int   { return 0 }
+func (m *mockAgent) startWindowsService() int  { return 0 }
+func (m *mockAgent) getConfig() *config.Config { return &config.Config{} }
 
 func TestHandler_RunAgent_StartExitImmediately(t *testing.T) {
 	// register some mocks, but nothing should get called on any of them
@@ -287,7 +289,7 @@ func TestHandler_Execute_AgentStops(t *testing.T) {
 
 func TestDoStartTaskLimitsFail(t *testing.T) {
 	ctrl, credentialsManager, state, imageManager, client,
-		dockerClient, stateManagerFactory, saveableOptionFactory, execCmdMgr := setup(t)
+		dockerClient, stateManagerFactory, saveableOptionFactory, execCmdMgr, _ := setup(t)
 	defer ctrl.Finish()
 
 	cfg := getTestConfig()

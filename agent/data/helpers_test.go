@@ -1,3 +1,4 @@
+//go:build unit
 // +build unit
 
 // Copyright Amazon.com Inc. or its affiliates. All Rights Reserved.
@@ -17,14 +18,12 @@ package data
 
 import (
 	"encoding/json"
-	"io/ioutil"
-	"os"
 	"path/filepath"
 	"testing"
 
-	bolt "github.com/etcd-io/bbolt"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	bolt "go.etcd.io/bbolt"
 )
 
 const (
@@ -36,9 +35,8 @@ type testObjType struct {
 	Val string
 }
 
-func setupHelpersTest(t *testing.T) (*bolt.DB, func()) {
-	testDir, err := ioutil.TempDir("", "agent_data_unit_test")
-	require.NoError(t, err)
+func setupHelpersTest(t *testing.T) *bolt.DB {
+	testDir := t.TempDir()
 	db, err := bolt.Open(filepath.Join(testDir, dbName), dbMode, nil)
 	require.NoError(t, err)
 	require.NoError(t, db.Update(func(tx *bolt.Tx) error {
@@ -46,15 +44,15 @@ func setupHelpersTest(t *testing.T) (*bolt.DB, func()) {
 		return err
 	}))
 
-	return db, func() {
+	t.Cleanup(func() {
 		require.NoError(t, db.Close())
-		require.NoError(t, os.RemoveAll(testDir))
-	}
+	})
+
+	return db
 }
 
 func TestHelpers(t *testing.T) {
-	db, cleanup := setupHelpersTest(t)
-	defer cleanup()
+	db := setupHelpersTest(t)
 
 	testObj := &testObjType{
 		Key: "key",

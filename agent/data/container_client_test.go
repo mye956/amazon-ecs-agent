@@ -1,3 +1,4 @@
+//go:build unit
 // +build unit
 
 // Copyright Amazon.com Inc. or its affiliates. All Rights Reserved.
@@ -33,8 +34,7 @@ const (
 )
 
 func TestManageContainers(t *testing.T) {
-	testClient, cleanup := newTestClient(t)
-	defer cleanup()
+	testClient := newTestClient(t)
 
 	// Test saving a container with SaveDockerContainer and updating it with SaveContainer.
 	testDockerContainer := &apicontainer.DockerContainer{
@@ -74,8 +74,7 @@ func TestManageContainers(t *testing.T) {
 }
 
 func TestSaveContainerInvalidID(t *testing.T) {
-	testClient, cleanup := newTestClient(t)
-	defer cleanup()
+	testClient := newTestClient(t)
 
 	testDockerContainer := &apicontainer.DockerContainer{
 		DockerID:   testDockerID,

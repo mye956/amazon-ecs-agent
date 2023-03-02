@@ -1,3 +1,4 @@
+//go:build unit
 // +build unit
 
 // Copyright Amazon.com Inc. or its affiliates. All Rights Reserved.
@@ -16,8 +17,6 @@
 package sighandlers
 
 import (
-	"io/ioutil"
-	"os"
 	"testing"
 
 	apicontainer "github.com/aws/amazon-ecs-agent/agent/api/container"
@@ -40,12 +39,11 @@ var (
 )
 
 func TestFinalSave(t *testing.T) {
-	dataClient, cleanup := newTestDataClient(t)
-	defer cleanup()
+	dataClient := newTestDataClient(t)
 
 	state := dockerstate.NewTaskEngineState()
 	taskEngine := engine.NewTaskEngine(&config.Config{}, nil, nil,
-		nil, nil, state, nil, nil, nil)
+		nil, nil, state, nil, nil, nil, nil)
 
 	task := &apitask.Task{
 		Arn:     taskARN,
@@ -99,15 +97,14 @@ func TestFinalSave(t *testing.T) {
 	assert.Len(t, imageStates, 1)
 }
 
-func newTestDataClient(t *testing.T) (data.Client, func()) {
-	testDir, err := ioutil.TempDir("", "termination_handler_unit_test")
-	require.NoError(t, err)
+func newTestDataClient(t *testing.T) data.Client {
+	testDir := t.TempDir()
 
 	testClient, err := data.NewWithSetup(testDir)
+	require.NoError(t, err)
 
-	cleanup := func() {
+	t.Cleanup(func() {
 		require.NoError(t, testClient.Close())
-		require.NoError(t, os.RemoveAll(testDir))
-	}
-	return testClient, cleanup
+	})
+	return testClient
 }

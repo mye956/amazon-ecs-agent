@@ -1,4 +1,6 @@
+//go:build windows
 // +build windows
+
 // Copyright Amazon.com Inc. or its affiliates. All Rights Reserved.
 //
 // Licensed under the Apache License, Version 2.0 (the "License"). You may
@@ -19,8 +21,13 @@ import (
 	"path/filepath"
 	"time"
 
+	"golang.org/x/sys/windows"
+
 	"github.com/aws/amazon-ecs-agent/agent/dockerclient"
 	"github.com/aws/amazon-ecs-agent/agent/utils"
+
+	"github.com/cihub/seelog"
+	"github.com/hectane/go-acl/api"
 )
 
 const (
@@ -29,6 +36,10 @@ const (
 
 	// defaultAuditLogFile specifies the default audit log filename
 	defaultCredentialsAuditLogFile = `log\audit.log`
+
+	// defaultRuntimeStatsLogFile stores the path where the golang runtime stats are periodically logged
+	defaultRuntimeStatsLogFile = `log\agent-runtime-stats.log`
+
 	// When using IAM roles for tasks on Windows, the credential proxy consumes port 80
 	httpPort = 80
 	// Remote Desktop / Terminal Services
@@ -55,6 +66,22 @@ const (
 	minimumContainerCreateTimeout = 1 * time.Minute
 	// default image pull inactivity time is extra time needed on container extraction
 	defaultImagePullInactivityTimeout = 3 * time.Minute
+	// adminSid is the security ID for the admin group on Windows
+	// Reference: https://docs.microsoft.com/en-us/troubleshoot/windows-server/identity/security-identifiers-in-windows
+	adminSid = "S-1-5-32-544"
+	// default directory name of CNI Plugins
+	defaultCNIPluginDirName = "cni"
+)
+
+var (
+	envProgramFiles = utils.DefaultIfBlank(os.Getenv("ProgramFiles"), `C:\Program Files`)
+	envProgramData  = utils.DefaultIfBlank(os.Getenv("ProgramData"), `C:\ProgramData`)
+
+	AmazonProgramFiles = filepath.Join(envProgramFiles, "Amazon")
+	AmazonProgramData  = filepath.Join(envProgramData, "Amazon")
+
+	AmazonECSProgramFiles = filepath.Join(envProgramFiles, "Amazon", "ECS")
+	AmazonECSProgramData  = filepath.Join(AmazonProgramData, "ECS")
 )
 
 // DefaultConfig returns the default configuration for Windows
@@ -62,6 +89,10 @@ func DefaultConfig() Config {
 	programData := utils.DefaultIfBlank(os.Getenv("ProgramData"), `C:\ProgramData`)
 	ecsRoot := filepath.Join(programData, "Amazon", "ECS")
 	dataDir := filepath.Join(ecsRoot, "data")
+
+	programFiles := utils.DefaultIfBlank(os.Getenv("ProgramFiles"), `C:\Program Files`)
+	ecsBinaryDir := filepath.Join(programFiles, "Amazon", "ECS")
+
 	platformVariables := PlatformVariables{
 		CPUUnbounded:    BooleanDefaultFalse{Value: ExplicitlyDisabled},
 		MemoryUnbounded: BooleanDefaultFalse{Value: ExplicitlyDisabled},
@@ -111,8 +142,14 @@ func DefaultConfig() Config {
 		SharedVolumeMatchFullConfig:         BooleanDefaultFalse{Value: ExplicitlyDisabled}, //only requiring shared volumes to match on name, which is default docker behavior
 		PollMetrics:                         BooleanDefaultFalse{Value: NotSet},
 		PollingMetricsWaitDuration:          DefaultPollingMetricsWaitDuration,
-		GMSACapable:                         true,
-		FSxWindowsFileServerCapable:         true,
+		GMSACapable:                         BooleanDefaultFalse{Value: ExplicitlyDisabled},
+		FSxWindowsFileServerCapable:         BooleanDefaultFalse{Value: ExplicitlyDisabled},
+		PauseContainerImageName:             DefaultPauseContainerImageName,
+		PauseContainerTag:                   DefaultPauseContainerTag,
+		CNIPluginsPath:                      filepath.Join(ecsBinaryDir, defaultCNIPluginDirName),
+		RuntimeStatsLogFile:                 filepath.Join(ecsRoot, defaultRuntimeStatsLogFile),
+		EnableRuntimeStats:                  BooleanDefaultFalse{Value: NotSet},
+		ShouldExcludeIPv6PortBinding:        BooleanDefaultTrue{Value: ExplicitlyEnabled},
 	}
 }
 
@@ -143,4 +180,63 @@ func (cfg *Config) platformOverrides() {
 // to string for debugging
 func (cfg *Config) platformString() string {
 	return ""
+}
+
+var getNamedSecurityInfo = api.GetNamedSecurityInfo
+
+// validateConfigFile checks if the config file owner is an admin
+// Reference: https://github.com/hectane/go-acl#using-the-api-directly
+func validateConfigFile(configFileName string) (bool, error) {
+	var (
+		Sid    *windows.SID
+		handle windows.Handle
+	)
+	err := getNamedSecurityInfo(
+		configFileName,
+		api.SE_FILE_OBJECT,
+		api.OWNER_SECURITY_INFORMATION,
+		&Sid,
+		nil,
+		nil,
+		nil,
+		&handle,
+	)
+	if err != nil {
+		return false, err
+	}
+	defer windows.LocalFree(handle)
+
+	id := Sid.String()
+
+	if id == adminSid {
+		return true, nil
+	}
+	seelog.Debugf("Non-admin cfg file owner with SID: %v, skip merging into agent config", id)
+	return false, nil
+}
+
+var osStat = os.Stat
+
+func getConfigFileName() (string, error) {
+	fileName := os.Getenv("ECS_AGENT_CONFIG_FILE_PATH")
+	// validate the config file only if above env var is not set
+	if len(fileName) == 0 {
+		fileName = defaultConfigFileName
+		// check if the default config file exists before validating it
+		_, err := osStat(fileName)
+		if err != nil {
+			return "", err
+		}
+
+		isValidFile, err := validateConfigFile(fileName)
+		if err != nil {
+			seelog.Errorf("Unable to validate cfg file: %v, err: %v", fileName, err)
+			return "", err
+		}
+		if !isValidFile {
+			seelog.Error("Invalid cfg file")
+			return "", err
+		}
+	}
+	return fileName, nil
 }

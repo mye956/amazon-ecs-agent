@@ -1,3 +1,4 @@
+//go:build unit
 // +build unit
 
 // Copyright Amazon.com Inc. or its affiliates. All Rights Reserved.
@@ -73,8 +74,7 @@ func TestHandleDesiredStatusChangeSaveData(t *testing.T) {
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
-			dataClient, cleanup := newTestDataClient(t)
-			defer cleanup()
+			dataClient := newTestDataClient(t)
 
 			mtask := managedTask{
 				Task: &apitask.Task{
@@ -143,8 +143,7 @@ func TestHandleContainerStateChangeSaveData(t *testing.T) {
 			containerChangeEventStream := eventstream.NewEventStream(eventStreamName, ctx)
 			containerChangeEventStream.StartListening()
 
-			dataClient, cleanup := newTestDataClient(t)
-			defer cleanup()
+			dataClient := newTestDataClient(t)
 
 			mTask := managedTask{
 				Task: &apitask.Task{
@@ -197,8 +196,7 @@ func TestHandleContainerChangeWithTaskStateChangeSaveData(t *testing.T) {
 	containerChangeEventStream := eventstream.NewEventStream(eventStreamName, ctx)
 	containerChangeEventStream.StartListening()
 
-	dataClient, cleanup := newTestDataClient(t)
-	defer cleanup()
+	dataClient := newTestDataClient(t)
 
 	mTask := managedTask{
 		Task: &apitask.Task{
@@ -265,8 +263,7 @@ func TestHandleResourceStateChangeSaveData(t *testing.T) {
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
-			dataClient, cleanup := newTestDataClient(t)
-			defer cleanup()
+			dataClient := newTestDataClient(t)
 
 			res := &volume.VolumeResource{Name: dataTestVolumeName}
 			res.SetKnownStatus(tc.knownState)

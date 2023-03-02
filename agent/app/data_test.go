@@ -1,3 +1,4 @@
+//go:build unit
 // +build unit
 
 // Copyright Amazon.com Inc. or its affiliates. All Rights Reserved.
@@ -17,8 +18,6 @@ package app
 
 import (
 	"context"
-	"io/ioutil"
-	"os"
 	"strconv"
 	"testing"
 
@@ -85,11 +84,10 @@ var (
 
 func TestLoadDataNoPreviousState(t *testing.T) {
 	ctrl, credentialsManager, _, imageManager, _,
-		_, stateManagerFactory, _, execCmdMgr := setup(t)
+		_, stateManagerFactory, _, execCmdMgr, serviceConnectManager := setup(t)
 	defer ctrl.Finish()
 
-	stateManager, dataClient, cleanup := newTestClient(t)
-	defer cleanup()
+	stateManager, dataClient := newTestClient(t)
 
 	cfg := getTestConfig()
 	cfg.Checkpoint = config.BooleanDefaultFalse{Value: config.ExplicitlyEnabled}
@@ -113,17 +111,17 @@ func TestLoadDataNoPreviousState(t *testing.T) {
 	}
 
 	_, err := agent.loadData(eventstream.NewEventStream("events", ctx),
-		credentialsManager, dockerstate.NewTaskEngineState(), imageManager, execCmdMgr)
+		credentialsManager, dockerstate.NewTaskEngineState(), imageManager, execCmdMgr, serviceConnectManager)
 	assert.NoError(t, err)
 }
 
 func TestLoadDataLoadFromBoltDB(t *testing.T) {
 	ctrl, credentialsManager, _, imageManager, _,
-		_, stateManagerFactory, _, execCmdMgr := setup(t)
+		_, stateManagerFactory, _, execCmdMgr, serviceConnectManager := setup(t)
 	defer ctrl.Finish()
 
-	_, dataClient, cleanup := newTestClient(t)
-	defer cleanup()
+	_, dataClient := newTestClient(t)
+
 	// Populate boltdb with test data.
 	populateBoltDB(dataClient, t)
 
@@ -143,18 +141,18 @@ func TestLoadDataLoadFromBoltDB(t *testing.T) {
 
 	state := dockerstate.NewTaskEngineState()
 	s, err := agent.loadData(eventstream.NewEventStream("events", ctx),
-		credentialsManager, state, imageManager, execCmdMgr)
+		credentialsManager, state, imageManager, execCmdMgr, serviceConnectManager)
 	assert.NoError(t, err)
 	checkLoadedData(state, s, t)
 }
 
 func TestLoadDataLoadFromStateFile(t *testing.T) {
 	ctrl, credentialsManager, _, imageManager, _,
-		_, stateManagerFactory, _, execCmdMgr := setup(t)
+		_, stateManagerFactory, _, execCmdMgr, serviceConnectManager := setup(t)
 	defer ctrl.Finish()
 
-	stateManager, dataClient, cleanup := newTestClient(t)
-	defer cleanup()
+	stateManager, dataClient := newTestClient(t)
+
 	// Generate a state file with test data.
 	generateStateFile(stateManager, t)
 
@@ -181,7 +179,7 @@ func TestLoadDataLoadFromStateFile(t *testing.T) {
 
 	state := dockerstate.NewTaskEngineState()
 	s, err := agent.loadData(eventstream.NewEventStream("events", ctx),
-		credentialsManager, state, imageManager, execCmdMgr)
+		credentialsManager, state, imageManager, execCmdMgr, serviceConnectManager)
 	assert.NoError(t, err)
 	checkLoadedData(state, s, t)
 
@@ -214,20 +212,18 @@ func checkLoadedData(state dockerstate.TaskEngineState, s *savedData, t *testing
 	assert.Equal(t, testLatestSeqNumberTaskManifest, s.latestTaskManifestSeqNum)
 }
 
-func newTestClient(t *testing.T) (statemanager.StateManager, data.Client, func()) {
-	testDir, err := ioutil.TempDir("", "agent_app_unit_test")
-	require.NoError(t, err)
+func newTestClient(t *testing.T) (statemanager.StateManager, data.Client) {
+	testDir := t.TempDir()
 
 	stateManager, err := statemanager.NewStateManager(&config.Config{DataDir: testDir})
 	require.NoError(t, err)
 
 	dataClient, err := data.NewWithSetup(testDir)
 
-	cleanup := func() {
+	t.Cleanup(func() {
 		require.NoError(t, dataClient.Close())
-		require.NoError(t, os.RemoveAll(testDir))
-	}
-	return stateManager, dataClient, cleanup
+	})
+	return stateManager, dataClient
 }
 
 func generateStateFile(stateManager statemanager.StateManager, t *testing.T) {

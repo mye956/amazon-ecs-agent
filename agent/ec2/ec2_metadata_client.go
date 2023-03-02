@@ -20,13 +20,14 @@ import (
 	"strings"
 	"time"
 
+	"github.com/aws/amazon-ecs-agent/agent/credentials/instancecreds"
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/aws/ec2metadata"
 	"github.com/aws/aws-sdk-go/aws/session"
 )
 
 const (
-	SecurityCrednetialsResource               = "iam/security-credentials/"
+	SecurityCredentialsResource               = "iam/security-credentials/"
 	InstanceIdentityDocumentResource          = "instance-identity/document"
 	InstanceIdentityDocumentSignatureResource = "instance-identity/signature"
 	MacResource                               = "mac"
@@ -38,6 +39,8 @@ const (
 	PrivateIPv4Resource                       = "local-ipv4"
 	PublicIPv4Resource                        = "public-ipv4"
 	OutpostARN                                = "outpost-arn"
+	PrimaryIPV4VPCCIDRResourceFormat          = "network/interfaces/macs/%s/vpc-ipv4-cidr-block"
+	TargetLifecycleState                      = "autoscaling/target-lifecycle-state"
 )
 
 const (
@@ -80,6 +83,7 @@ type EC2MetadataClient interface {
 	PublicIPv4Address() (string, error)
 	SpotInstanceAction() (string, error)
 	OutpostARN() (string, error)
+	TargetLifecycleState() (string, error)
 }
 
 type ec2MetadataClientImpl struct {
@@ -89,9 +93,10 @@ type ec2MetadataClientImpl struct {
 // NewEC2MetadataClient creates an ec2metadata client to retrieve metadata
 func NewEC2MetadataClient(client HttpClient) EC2MetadataClient {
 	if client == nil {
+		config := aws.NewConfig().WithMaxRetries(metadataRetries)
+		config.Credentials = instancecreds.GetCredentials(false)
 		return &ec2MetadataClientImpl{
-			client: ec2metadata.New(
-				session.New(), aws.NewConfig().WithMaxRetries(metadataRetries)),
+			client: ec2metadata.New(session.New(), config),
 		}
 	} else {
 		return &ec2MetadataClientImpl{client: client}
@@ -100,7 +105,7 @@ func NewEC2MetadataClient(client HttpClient) EC2MetadataClient {
 
 // DefaultCredentials returns the credentials associated with the instance iam role
 func (c *ec2MetadataClientImpl) DefaultCredentials() (*RoleCredentials, error) {
-	securityCredential, err := c.client.GetMetadata(SecurityCrednetialsResource)
+	securityCredential, err := c.client.GetMetadata(SecurityCredentialsResource)
 	if err != nil {
 		return nil, err
 	}
@@ -112,7 +117,7 @@ func (c *ec2MetadataClientImpl) DefaultCredentials() (*RoleCredentials, error) {
 
 	defaultCredentialName := securityCredentialList[0]
 
-	defaultCredentialStr, err := c.client.GetMetadata(SecurityCrednetialsResource + defaultCredentialName)
+	defaultCredentialStr, err := c.client.GetMetadata(SecurityCredentialsResource + defaultCredentialName)
 	if err != nil {
 		return nil, err
 	}
@@ -199,4 +204,8 @@ func (c *ec2MetadataClientImpl) SpotInstanceAction() (string, error) {
 
 func (c *ec2MetadataClientImpl) OutpostARN() (string, error) {
 	return c.client.GetMetadata(OutpostARN)
+}
+
+func (c *ec2MetadataClientImpl) TargetLifecycleState() (string, error) {
+	return c.client.GetMetadata(TargetLifecycleState)
 }
