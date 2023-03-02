@@ -11,7 +11,7 @@ phases:
       - GITHUB_BRANCH=$(echo ${CODEBUILD_WEBHOOK_HEAD_REF} | cut -d "/" -f3-)
       - echo $GITHUB_BRANCH
       - echo $BRANCH
-      - git branch
+      # - git branch
       # - aws s3 cp s3://yemike-testbucket/agentVersionV2-${GITHUB_BRANCH}.json ./agentVersionV2-${GITHUB_BRANCH}.json
       # - cat agentVersionV2-${GITHUB_BRANCH}.json
 
