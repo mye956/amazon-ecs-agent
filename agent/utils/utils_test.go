@@ -1,3 +1,4 @@
+//go:build unit
 // +build unit
 
 // Copyright Amazon.com Inc. or its affiliates. All Rights Reserved.
@@ -105,6 +106,16 @@ func TestSlicesDeepEqual(t *testing.T) {
 	}
 }
 
+func TestRemove(t *testing.T) {
+	testSlice := []string{"cat", "dog", "cat"}
+	removeElementAtIndex := 0
+
+	expectedValue := []string{"dog", "cat"}
+	actualValue := Remove(testSlice, removeElementAtIndex)
+
+	assert.Equal(t, expectedValue, actualValue)
+}
+
 func TestParseBool(t *testing.T) {
 	truthyStrings := []string{"true", "1", "t", "true\r", "true ", "true \r"}
 	falsyStrings := []string{"false", "0", "f", "false\r", "false ", "false \r"}
@@ -158,6 +169,31 @@ func TestIsAWSErrorCodeEqual(t *testing.T) {
 	for _, tc := range testcases {
 		t.Run(tc.name, func(t *testing.T) {
 			assert.Equal(t, tc.res, IsAWSErrorCodeEqual(tc.err, ecs.ErrCodeInvalidParameterException))
+		})
+	}
+}
+
+func TestGetRequestFailureStatusCode(t *testing.T) {
+	testcases := []struct {
+		name string
+		err  error
+		res  int
+	}{
+		{
+			name: "TestGetRequestFailureStatusCodeSuccess",
+			err:  awserr.NewRequestFailure(awserr.Error(awserr.New("BadRequest", "", errors.New(""))), 400, ""),
+			res:  400,
+		},
+		{
+			name: "TestGetRequestFailureStatusCodeWrongErrType",
+			err:  errors.New("err"),
+			res:  0,
+		},
+	}
+
+	for _, tc := range testcases {
+		t.Run(tc.name, func(t *testing.T) {
+			assert.Equal(t, tc.res, GetRequestFailureStatusCode(tc.err))
 		})
 	}
 }

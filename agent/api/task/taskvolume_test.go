@@ -1,3 +1,4 @@
+//go:build unit
 // +build unit
 
 // Copyright Amazon.com Inc. or its affiliates. All Rights Reserved.
@@ -90,6 +91,7 @@ func TestMarshalTaskVolumesEFS(t *testing.T) {
 		"Arn": "test",
 		"Family": "",
 		"Version": "",
+		"ServiceName": "",
 		"Containers": null,
 		"associations": null,
 		"resources": null,

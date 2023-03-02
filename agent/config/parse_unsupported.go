@@ -1,3 +1,4 @@
+//go:build !linux && !windows
 // +build !linux,!windows
 
 // Copyright Amazon.com Inc. or its affiliates. All Rights Reserved.
@@ -15,10 +16,24 @@
 
 package config
 
-func parseGMSACapability() bool {
-	return false
+import (
+	"errors"
+	"strings"
+)
+
+func parseGMSACapability() BooleanDefaultFalse {
+	return BooleanDefaultFalse{Value: ExplicitlyDisabled}
 }
 
-func parseFSxWindowsFileServerCapability() bool {
-	return false
+func parseFSxWindowsFileServerCapability() BooleanDefaultFalse {
+	return BooleanDefaultFalse{Value: ExplicitlyDisabled}
+}
+
+var IsWindows2016 = func() (bool, error) {
+	return false, errors.New("unsupported platform")
+}
+
+// GetOSFamily returns "UNSUPPORTED" as operating system family for non-windows based ecs instances.
+func GetOSFamily() string {
+	return strings.ToUpper(OSType)
 }

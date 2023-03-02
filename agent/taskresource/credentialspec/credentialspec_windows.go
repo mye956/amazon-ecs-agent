@@ -1,3 +1,4 @@
+//go:build windows
 // +build windows
 
 // Copyright Amazon.com Inc. or its affiliates. All Rights Reserved.
@@ -16,24 +17,18 @@
 package credentialspec
 
 import (
-	"encoding/json"
+	"crypto/sha256"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
-	"sync"
 	"time"
 
-	apicontainer "github.com/aws/amazon-ecs-agent/agent/api/container"
-	apicontainerstatus "github.com/aws/amazon-ecs-agent/agent/api/container/status"
-	"github.com/aws/amazon-ecs-agent/agent/api/task/status"
 	"github.com/aws/amazon-ecs-agent/agent/credentials"
 	"github.com/aws/amazon-ecs-agent/agent/s3"
 	s3factory "github.com/aws/amazon-ecs-agent/agent/s3/factory"
 	"github.com/aws/amazon-ecs-agent/agent/ssm"
 	ssmfactory "github.com/aws/amazon-ecs-agent/agent/ssm/factory"
-	"github.com/aws/amazon-ecs-agent/agent/taskresource"
-	resourcestatus "github.com/aws/amazon-ecs-agent/agent/taskresource/status"
 	"github.com/aws/amazon-ecs-agent/agent/utils/ioutilwrapper"
 	"github.com/aws/amazon-ecs-agent/agent/utils/oswrapper"
 	"github.com/aws/aws-sdk-go/aws/arn"
@@ -55,63 +50,32 @@ const (
 
 // CredentialSpecResource is the abstraction for credentialspec resources
 type CredentialSpecResource struct {
-	taskARN                string
-	region                 string
-	executionCredentialsID string
-	credentialsManager     credentials.Manager
-	ioutil                 ioutilwrapper.IOUtil
-	createdAt              time.Time
-	desiredStatusUnsafe    resourcestatus.ResourceStatus
-	knownStatusUnsafe      resourcestatus.ResourceStatus
-	// appliedStatus is the status that has been "applied" (e.g., we've called some
-	// operation such as 'Create' on the resource) but we don't yet know that the
-	// application was successful, which may then change the known status. This is
-	// used while progressing resource states in progressTask() of task manager
-	appliedStatus                      resourcestatus.ResourceStatus
-	resourceStatusToTransitionFunction map[resourcestatus.ResourceStatus]func() error
-	// terminalReason should be set for resource creation failures. This ensures
-	// the resource object carries some context for why provisioning failed.
-	terminalReason     string
-	terminalReasonOnce sync.Once
-	// ssmClientCreator is a factory interface that creates new SSM clients. This is
-	// needed mostly for testing.
-	ssmClientCreator ssmfactory.SSMClientCreator
-	// s3ClientCreator is a factory interface that creates new S3 clients. This is
-	// needed mostly for testing.
-	s3ClientCreator s3factory.S3ClientCreator
+	*CredentialSpecResourceCommon
+	ioutil ioutilwrapper.IOUtil
 	// credentialSpecResourceLocation is the location for all the tasks' credentialspec artifacts
 	credentialSpecResourceLocation string
-	// required for processing credentialspecs
-	// Example item := credentialspec:file://credentialspec.json
-	requiredCredentialSpecs []string
-	// map to transform credentialspec values, key is a input credentialspec
-	// Examples:
-	// * key := credentialspec:file://credentialspec.json, value := credentialspec=file://credentialspec.json
-	// * key := credentialspec:s3ARN, value := credentialspec=file://CredentialSpecResourceLocation/s3_taskARN_fileName.json
-	// * key := credentialspec:ssmARN, value := credentialspec=file://CredentialSpecResourceLocation/ssm_taskARN_param.json
-	CredSpecMap map[string]string
-	// lock is used for fields that are accessed and updated concurrently
-	lock sync.RWMutex
 }
 
 // NewCredentialSpecResource creates a new CredentialSpecResource object
 func NewCredentialSpecResource(taskARN, region string,
-	credentialSpecs []string,
 	executionCredentialsID string,
 	credentialsManager credentials.Manager,
 	ssmClientCreator ssmfactory.SSMClientCreator,
-	s3ClientCreator s3factory.S3ClientCreator) (*CredentialSpecResource, error) {
+	s3ClientCreator s3factory.S3ClientCreator,
+	credentialSpecContainerMap map[string]string) (*CredentialSpecResource, error) {
 
 	s := &CredentialSpecResource{
-		taskARN:                 taskARN,
-		region:                  region,
-		requiredCredentialSpecs: credentialSpecs,
-		credentialsManager:      credentialsManager,
-		executionCredentialsID:  executionCredentialsID,
-		ssmClientCreator:        ssmClientCreator,
-		s3ClientCreator:         s3ClientCreator,
-		CredSpecMap:             make(map[string]string),
-		ioutil:                  ioutilwrapper.NewIOUtil(),
+		CredentialSpecResourceCommon: &CredentialSpecResourceCommon{
+			taskARN:                    taskARN,
+			region:                     region,
+			credentialsManager:         credentialsManager,
+			executionCredentialsID:     executionCredentialsID,
+			ssmClientCreator:           ssmClientCreator,
+			s3ClientCreator:            s3ClientCreator,
+			CredSpecMap:                make(map[string]string),
+			credentialSpecContainerMap: credentialSpecContainerMap,
+		},
+		ioutil: ioutilwrapper.NewIOUtil(),
 	}
 
 	err := s.setCredentialSpecResourceLocation()
@@ -121,189 +85,6 @@ func NewCredentialSpecResource(taskARN, region string,
 
 	s.initStatusToTransition()
 	return s, nil
-}
-
-func (cs *CredentialSpecResource) initStatusToTransition() {
-	resourceStatusToTransitionFunction := map[resourcestatus.ResourceStatus]func() error{
-		resourcestatus.ResourceStatus(CredentialSpecCreated): cs.Create,
-	}
-	cs.resourceStatusToTransitionFunction = resourceStatusToTransitionFunction
-}
-
-func (cs *CredentialSpecResource) Initialize(resourceFields *taskresource.ResourceFields,
-	taskKnownStatus status.TaskStatus,
-	taskDesiredStatus status.TaskStatus) {
-
-	cs.credentialsManager = resourceFields.CredentialsManager
-	cs.ssmClientCreator = resourceFields.SSMClientCreator
-	cs.s3ClientCreator = resourceFields.S3ClientCreator
-	cs.initStatusToTransition()
-}
-
-// GetTerminalReason returns an error string to propagate up through to task
-// state change messages
-func (cs *CredentialSpecResource) GetTerminalReason() string {
-	return cs.terminalReason
-}
-
-func (cs *CredentialSpecResource) setTerminalReason(reason string) {
-	cs.terminalReasonOnce.Do(func() {
-		seelog.Debugf("credentialspec resource: setting terminal reason for credentialspec resource in task: [%s]", cs.taskARN)
-		cs.terminalReason = reason
-	})
-}
-
-// GetDesiredStatus safely returns the desired status of the task
-func (cs *CredentialSpecResource) GetDesiredStatus() resourcestatus.ResourceStatus {
-	cs.lock.RLock()
-	defer cs.lock.RUnlock()
-
-	return cs.desiredStatusUnsafe
-}
-
-// SetDesiredStatus safely sets the desired status of the resource
-func (cs *CredentialSpecResource) SetDesiredStatus(status resourcestatus.ResourceStatus) {
-	cs.lock.Lock()
-	defer cs.lock.Unlock()
-
-	cs.desiredStatusUnsafe = status
-}
-
-// DesiredTerminal returns true if the credentialspec's desired status is REMOVED
-func (cs *CredentialSpecResource) DesiredTerminal() bool {
-	cs.lock.RLock()
-	defer cs.lock.RUnlock()
-
-	return cs.desiredStatusUnsafe == resourcestatus.ResourceStatus(CredentialSpecRemoved)
-}
-
-// KnownCreated returns true if the credentialspec's known status is CREATED
-func (cs *CredentialSpecResource) KnownCreated() bool {
-	cs.lock.RLock()
-	defer cs.lock.RUnlock()
-
-	return cs.knownStatusUnsafe == resourcestatus.ResourceStatus(CredentialSpecCreated)
-}
-
-// TerminalStatus returns the last transition state of credentialspec
-func (cs *CredentialSpecResource) TerminalStatus() resourcestatus.ResourceStatus {
-	return resourcestatus.ResourceStatus(CredentialSpecRemoved)
-}
-
-// NextKnownState returns the state that the resource should
-// progress to based on its `KnownState`.
-func (cs *CredentialSpecResource) NextKnownState() resourcestatus.ResourceStatus {
-	return cs.GetKnownStatus() + 1
-}
-
-// ApplyTransition calls the function required to move to the specified status
-func (cs *CredentialSpecResource) ApplyTransition(nextState resourcestatus.ResourceStatus) error {
-	transitionFunc, ok := cs.resourceStatusToTransitionFunction[nextState]
-	if !ok {
-		err := errors.Errorf("resource [%s]: transition to %s impossible", cs.GetName(),
-			cs.StatusString(nextState))
-		cs.setTerminalReason(err.Error())
-		return err
-	}
-
-	return transitionFunc()
-}
-
-// SteadyState returns the transition state of the resource defined as "ready"
-func (cs *CredentialSpecResource) SteadyState() resourcestatus.ResourceStatus {
-	return resourcestatus.ResourceStatus(CredentialSpecCreated)
-}
-
-// SetKnownStatus safely sets the currently known status of the resource
-func (cs *CredentialSpecResource) SetKnownStatus(status resourcestatus.ResourceStatus) {
-	cs.lock.Lock()
-	defer cs.lock.Unlock()
-
-	cs.knownStatusUnsafe = status
-	cs.updateAppliedStatusUnsafe(status)
-}
-
-// updateAppliedStatusUnsafe updates the resource transitioning status
-func (cs *CredentialSpecResource) updateAppliedStatusUnsafe(knownStatus resourcestatus.ResourceStatus) {
-	if cs.appliedStatus == resourcestatus.ResourceStatus(CredentialSpecStatusNone) {
-		return
-	}
-
-	// Check if the resource transition has already finished
-	if cs.appliedStatus <= knownStatus {
-		cs.appliedStatus = resourcestatus.ResourceStatus(CredentialSpecStatusNone)
-	}
-}
-
-// SetAppliedStatus sets the applied status of resource and returns whether
-// the resource is already in a transition
-func (cs *CredentialSpecResource) SetAppliedStatus(status resourcestatus.ResourceStatus) bool {
-	cs.lock.Lock()
-	defer cs.lock.Unlock()
-
-	if cs.appliedStatus != resourcestatus.ResourceStatus(CredentialSpecStatusNone) {
-		// return false to indicate the set operation failed
-		return false
-	}
-
-	cs.appliedStatus = status
-	return true
-}
-
-// GetKnownStatus safely returns the currently known status of the task
-func (cs *CredentialSpecResource) GetKnownStatus() resourcestatus.ResourceStatus {
-	cs.lock.RLock()
-	defer cs.lock.RUnlock()
-
-	return cs.knownStatusUnsafe
-}
-
-// StatusString returns the string of the cgroup resource status
-func (cs *CredentialSpecResource) StatusString(status resourcestatus.ResourceStatus) string {
-	return CredentialSpecStatus(status).String()
-}
-
-// SetCreatedAt sets the timestamp for resource's creation time
-func (cs *CredentialSpecResource) SetCreatedAt(createdAt time.Time) {
-	if createdAt.IsZero() {
-		return
-	}
-	cs.lock.Lock()
-	defer cs.lock.Unlock()
-
-	cs.createdAt = createdAt
-}
-
-// GetCreatedAt sets the timestamp for resource's creation time
-func (cs *CredentialSpecResource) GetCreatedAt() time.Time {
-	cs.lock.RLock()
-	defer cs.lock.RUnlock()
-
-	return cs.createdAt
-}
-
-// getRequiredCredentialSpecs returns the requiredCredentialSpecs field of credentialspec task resource
-func (cs *CredentialSpecResource) getRequiredCredentialSpecs() []string {
-	cs.lock.RLock()
-	defer cs.lock.RUnlock()
-
-	return cs.requiredCredentialSpecs
-}
-
-// getExecutionCredentialsID returns the execution role's credential ID
-func (cs *CredentialSpecResource) getExecutionCredentialsID() string {
-	cs.lock.RLock()
-	defer cs.lock.RUnlock()
-
-	return cs.executionCredentialsID
-}
-
-// GetName safely returns the name of the resource
-func (cs *CredentialSpecResource) GetName() string {
-	cs.lock.RLock()
-	defer cs.lock.RUnlock()
-
-	return ResourceName
 }
 
 // Create is used to create all the credentialspec resources for a given task
@@ -316,7 +97,7 @@ func (cs *CredentialSpecResource) Create() error {
 		iamCredentials = executionCredentials.GetIAMRoleCredentials()
 	}
 
-	for _, credSpecStr := range cs.requiredCredentialSpecs {
+	for credSpecStr := range cs.credentialSpecContainerMap {
 		credSpecSplit := strings.SplitAfterN(credSpecStr, "credentialspec:", 2)
 		if len(credSpecSplit) != 2 {
 			seelog.Errorf("Invalid credentialspec: %s", credSpecStr)
@@ -402,7 +183,7 @@ func (cs *CredentialSpecResource) handleS3CredentialspecFile(originalCredentials
 		return err
 	}
 
-	s3Client, err := cs.s3ClientCreator.NewS3ClientForBucket(bucket, cs.region, iamCredentials)
+	s3Client, err := cs.s3ClientCreator.NewS3ManagerClient(bucket, cs.region, iamCredentials)
 	if err != nil {
 		cs.setTerminalReason(err.Error())
 		return err
@@ -445,29 +226,48 @@ func (cs *CredentialSpecResource) handleSSMCredentialspecFile(originalCredential
 
 	ssmClient := cs.ssmClientCreator.NewSSMClient(cs.region, iamCredentials)
 
-	ssmParam := filepath.Base(parsedARN.Resource)
-	ssmParams := []string{ssmParam}
-
+	// An SSM ARN is in the form of arn:aws:ssm:us-west-2:123456789012:parameter/a/b. The parsed ARN value
+	// would be parameter/a/b. The following code gets the SSM parameter by passing "/a/b" value to the
+	// GetParametersFromSSM method to retrieve the value in the parameter.
+	ssmParam := strings.SplitAfterN(parsedARN.Resource, "parameter", 2)
+	if len(ssmParam) != 2 {
+		err := fmt.Errorf("the provided SSM parameter:%s is in an invalid format", parsedARN.Resource)
+		cs.setTerminalReason(err.Error())
+		return err
+	}
+	ssmParams := []string{ssmParam[1]}
 	ssmParamMap, err := ssm.GetParametersFromSSM(ssmParams, ssmClient)
 	if err != nil {
 		cs.setTerminalReason(err.Error())
 		return err
 	}
 
-	ssmParamData := ssmParamMap[ssmParam]
+	ssmParamData := ssmParamMap[ssmParam[1]]
 	taskArnSplit := strings.Split(cs.taskARN, "/")
 	length := len(taskArnSplit)
 	if length < 2 {
 		return errors.New("Failed to retrieve taskId from taskArn.")
 	}
-	localCredSpecFilePath := fmt.Sprintf("%s\\ssm_%v_%s", cs.credentialSpecResourceLocation, taskArnSplit[length-1], ssmParam)
+
+	taskId := taskArnSplit[length-1]
+	containerName := cs.credentialSpecContainerMap[originalCredentialspec]
+
+	// We compose a string that is a concatenation of the task_id, container name and the ARN of the credential spec
+	// SSM parameter. This concatenated string is hashed using the SHA-256 hashing scheme to generate a fixed length
+	// checksum string of 64 characters. This helps with resolving collisions within a host or a task using the same SSM
+	// parameter.
+	credSpecFileNameHashFormat := fmt.Sprintf("%s%s%s", taskId, containerName, credentialspecSSMARN)
+	hashFunction := sha256.New()
+	hashFunction.Write([]byte(credSpecFileNameHashFormat))
+	customCredSpecFileName := fmt.Sprintf("%x", hashFunction.Sum(nil))
+
+	localCredSpecFilePath := filepath.Join(cs.credentialSpecResourceLocation, customCredSpecFileName)
 	err = cs.writeSSMFile(ssmParamData, localCredSpecFilePath)
 	if err != nil {
 		cs.setTerminalReason(err.Error())
 		return err
 	}
-
-	dockerHostconfigSecOptCredSpec := fmt.Sprintf("credentialspec=file://%s", filepath.Base(localCredSpecFilePath))
+	dockerHostconfigSecOptCredSpec := fmt.Sprintf("credentialspec=file://%s", customCredSpecFileName)
 	cs.updateCredSpecMapping(originalCredentialspec, dockerHostconfigSecOptCredSpec)
 
 	return nil
@@ -502,25 +302,6 @@ func (cs *CredentialSpecResource) writeS3File(writeFunc func(file oswrapper.File
 
 func (cs *CredentialSpecResource) writeSSMFile(ssmParamData, filePath string) error {
 	return cs.ioutil.WriteFile(filePath, []byte(ssmParamData), filePerm)
-}
-
-func (cs *CredentialSpecResource) getCredSpecMap() map[string]string {
-	cs.lock.RLock()
-	defer cs.lock.RUnlock()
-
-	return cs.CredSpecMap
-}
-
-func (cs *CredentialSpecResource) GetTargetMapping(credSpecInput string) (string, error) {
-	cs.lock.RLock()
-	defer cs.lock.RUnlock()
-
-	targetCredSpecMapping, ok := cs.CredSpecMap[credSpecInput]
-	if !ok {
-		return "", errors.New("unable to obtain credentialspec mapping")
-	}
-
-	return targetCredSpecMapping, nil
 }
 
 func (cs *CredentialSpecResource) updateCredSpecMapping(credSpecInput, targetCredSpec string) {
@@ -562,73 +343,9 @@ func (cs *CredentialSpecResource) clearCredentialSpec() {
 		if err != nil {
 			seelog.Warnf("Unable to clear local credential spec file %s for task %s", localCredentialSpecFile, cs.taskARN)
 		}
+
 		delete(cs.CredSpecMap, key)
 	}
-}
-
-// CredentialSpecResourceJSON is the json representation of the credentialspec resource
-type CredentialSpecResourceJSON struct {
-	TaskARN                 string                `json:"taskARN"`
-	CreatedAt               *time.Time            `json:"createdAt,omitempty"`
-	DesiredStatus           *CredentialSpecStatus `json:"desiredStatus"`
-	KnownStatus             *CredentialSpecStatus `json:"knownStatus"`
-	RequiredCredentialSpecs []string              `json:"credentialSpecResources"`
-	CredSpecMap             map[string]string     `json:"CredSpecMap"`
-	ExecutionCredentialsID  string                `json:"executionCredentialsID"`
-}
-
-// MarshalJSON serialises the CredentialSpecResourceJSON struct to JSON
-func (cs *CredentialSpecResource) MarshalJSON() ([]byte, error) {
-	if cs == nil {
-		return nil, errors.New("credential specresource is nil")
-	}
-	createdAt := cs.GetCreatedAt()
-	return json.Marshal(CredentialSpecResourceJSON{
-		TaskARN:   cs.taskARN,
-		CreatedAt: &createdAt,
-		DesiredStatus: func() *CredentialSpecStatus {
-			desiredState := cs.GetDesiredStatus()
-			s := CredentialSpecStatus(desiredState)
-			return &s
-		}(),
-		KnownStatus: func() *CredentialSpecStatus {
-			knownState := cs.GetKnownStatus()
-			s := CredentialSpecStatus(knownState)
-			return &s
-		}(),
-		RequiredCredentialSpecs: cs.getRequiredCredentialSpecs(),
-		CredSpecMap:             cs.getCredSpecMap(),
-		ExecutionCredentialsID:  cs.getExecutionCredentialsID(),
-	})
-}
-
-// UnmarshalJSON deserialises the raw JSON to a CredentialSpecResourceJSON struct
-func (cs *CredentialSpecResource) UnmarshalJSON(b []byte) error {
-	temp := CredentialSpecResourceJSON{}
-
-	if err := json.Unmarshal(b, &temp); err != nil {
-		return err
-	}
-
-	if temp.DesiredStatus != nil {
-		cs.SetDesiredStatus(resourcestatus.ResourceStatus(*temp.DesiredStatus))
-	}
-	if temp.KnownStatus != nil {
-		cs.SetKnownStatus(resourcestatus.ResourceStatus(*temp.KnownStatus))
-	}
-	if temp.CreatedAt != nil && !temp.CreatedAt.IsZero() {
-		cs.SetCreatedAt(*temp.CreatedAt)
-	}
-	if temp.RequiredCredentialSpecs != nil {
-		cs.requiredCredentialSpecs = temp.RequiredCredentialSpecs
-	}
-	if temp.CredSpecMap != nil {
-		cs.CredSpecMap = temp.CredSpecMap
-	}
-	cs.taskARN = temp.TaskARN
-	cs.executionCredentialsID = temp.ExecutionCredentialsID
-
-	return nil
 }
 
 func (cs *CredentialSpecResource) setCredentialSpecResourceLocation() error {
@@ -647,19 +364,15 @@ func (cs *CredentialSpecResource) setCredentialSpecResourceLocation() error {
 	return nil
 }
 
-// GetAppliedStatus safely returns the currently applied status of the resource
-func (cs *CredentialSpecResource) GetAppliedStatus() resourcestatus.ResourceStatus {
-	return resourcestatus.ResourceStatusNone
+// CredentialSpecResourceJSON is the json representation of the credentialspec resource
+type CredentialSpecResourceJSON struct {
+	*CredentialSpecResourceJSONCommon
 }
 
-func (cs *CredentialSpecResource) DependOnTaskNetwork() bool {
-	return false
+func (cs *CredentialSpecResource) MarshallPlatformSpecificFields(credentialSpecResourceJSON *CredentialSpecResourceJSON) {
+	return
 }
 
-func (cs *CredentialSpecResource) BuildContainerDependency(containerName string, satisfied apicontainerstatus.ContainerStatus,
-	dependent resourcestatus.ResourceStatus) {
-}
-
-func (cs *CredentialSpecResource) GetContainerDependencies(dependent resourcestatus.ResourceStatus) []apicontainer.ContainerDependency {
-	return nil
+func (cs *CredentialSpecResource) UnmarshallPlatformSpecificFields(credentialSpecResourceJSON CredentialSpecResourceJSON) {
+	return
 }

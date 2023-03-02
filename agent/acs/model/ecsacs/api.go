@@ -285,6 +285,44 @@ func (s AttachTaskNetworkInterfacesOutput) GoString() string {
 	return s.String()
 }
 
+type Attachment struct {
+	_ struct{} `type:"structure"`
+
+	AttachmentArn *string `locationName:"attachmentArn" type:"string"`
+
+	AttachmentProperties []*AttachmentProperty `locationName:"attachmentProperties" type:"list"`
+
+	AttachmentType *string `locationName:"attachmentType" type:"string"`
+}
+
+// String returns the string representation
+func (s Attachment) String() string {
+	return awsutil.Prettify(s)
+}
+
+// GoString returns the string representation
+func (s Attachment) GoString() string {
+	return s.String()
+}
+
+type AttachmentProperty struct {
+	_ struct{} `type:"structure"`
+
+	Name *string `locationName:"name" type:"string"`
+
+	Value *string `locationName:"value" type:"string"`
+}
+
+// String returns the string representation
+func (s AttachmentProperty) String() string {
+	return awsutil.Prettify(s)
+}
+
+// GoString returns the string representation
+func (s AttachmentProperty) GoString() string {
+	return s.String()
+}
+
 type BadRequestException struct {
 	_            struct{}                  `type:"structure"`
 	RespMetadata protocol.ResponseMetadata `json:"-" xml:"-"`
@@ -720,10 +758,28 @@ func (s FirelensConfiguration) GoString() string {
 	return s.String()
 }
 
+type HeartbeatAckRequest struct {
+	_ struct{} `type:"structure"`
+
+	MessageId *string `locationName:"messageId" type:"string"`
+}
+
+// String returns the string representation
+func (s HeartbeatAckRequest) String() string {
+	return awsutil.Prettify(s)
+}
+
+// GoString returns the string representation
+func (s HeartbeatAckRequest) GoString() string {
+	return s.String()
+}
+
 type HeartbeatInput struct {
 	_ struct{} `type:"structure"`
 
 	Healthy *bool `locationName:"healthy" type:"boolean"`
+
+	MessageId *string `locationName:"messageId" type:"string"`
 }
 
 // String returns the string representation
@@ -740,6 +796,8 @@ type HeartbeatMessage struct {
 	_ struct{} `type:"structure"`
 
 	Healthy *bool `locationName:"healthy" type:"boolean"`
+
+	MessageId *string `locationName:"messageId" type:"string"`
 }
 
 // String returns the string representation
@@ -754,6 +812,8 @@ func (s HeartbeatMessage) GoString() string {
 
 type HeartbeatOutput struct {
 	_ struct{} `type:"structure"`
+
+	MessageId *string `locationName:"messageId" type:"string"`
 }
 
 // String returns the string representation
@@ -1332,6 +1392,8 @@ type PortMapping struct {
 
 	ContainerPort *int64 `locationName:"containerPort" type:"integer"`
 
+	ContainerPortRange *string `locationName:"containerPortRange" type:"string"`
+
 	HostPort *int64 `locationName:"hostPort" type:"integer"`
 
 	Protocol *string `locationName:"protocol" type:"string" enum:"TransportProtocol"`
@@ -1583,6 +1645,8 @@ type Task struct {
 
 	Associations []*Association `locationName:"associations" type:"list"`
 
+	Attachments []*Attachment `locationName:"attachments" type:"list"`
+
 	Containers []*Container `locationName:"containers" type:"list"`
 
 	Cpu *float64 `locationName:"cpu" type:"double"`
@@ -1601,6 +1665,8 @@ type Task struct {
 
 	Memory *int64 `locationName:"memory" type:"integer"`
 
+	NetworkMode *string `locationName:"networkMode" type:"string"`
+
 	Overrides *string `locationName:"overrides" type:"string"`
 
 	PidMode *string `locationName:"pidMode" type:"string"`
@@ -1608,6 +1674,8 @@ type Task struct {
 	ProxyConfiguration *ProxyConfiguration `locationName:"proxyConfiguration" type:"structure"`
 
 	RoleCredentials *IAMRoleCredentials `locationName:"roleCredentials" type:"structure"`
+
+	ServiceName *string `locationName:"serviceName" type:"string"`
 
 	TaskDefinitionAccountId *string `locationName:"taskDefinitionAccountId" type:"string"`
 

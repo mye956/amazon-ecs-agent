@@ -23,8 +23,8 @@ import (
 	"github.com/aws/amazon-ecs-agent/agent/config"
 	"github.com/aws/amazon-ecs-agent/agent/dockerclient"
 	"github.com/aws/amazon-ecs-agent/agent/ecs_client/model/ecs"
-	"github.com/aws/amazon-ecs-agent/agent/ecscni"
-
+	"github.com/aws/amazon-ecs-agent/agent/logger"
+	"github.com/aws/amazon-ecs-agent/agent/logger/field"
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/cihub/seelog"
 	"github.com/pkg/errors"
@@ -32,47 +32,54 @@ import (
 
 const (
 	// capabilityPrefix is deprecated. For new capabilities, use attributePrefix.
-	capabilityPrefix                            = "com.amazonaws.ecs.capability."
-	attributePrefix                             = "ecs.capability."
-	capabilityTaskIAMRole                       = "task-iam-role"
-	capabilityTaskIAMRoleNetHost                = "task-iam-role-network-host"
-	taskENIAttributeSuffix                      = "task-eni"
-	taskENIIPv6AttributeSuffix                  = "task-eni.ipv6"
-	taskENIBlockInstanceMetadataAttributeSuffix = "task-eni-block-instance-metadata"
-	appMeshAttributeSuffix                      = "aws-appmesh"
-	cniPluginVersionSuffix                      = "cni-plugin-version"
-	capabilityTaskCPUMemLimit                   = "task-cpu-mem-limit"
-	capabilityDockerPluginInfix                 = "docker-plugin."
-	attributeSeparator                          = "."
-	capabilityPrivateRegistryAuthASM            = "private-registry-authentication.secretsmanager"
-	capabilitySecretEnvSSM                      = "secrets.ssm.environment-variables"
-	capabilitySecretEnvASM                      = "secrets.asm.environment-variables"
-	capabilitySecretLogDriverSSM                = "secrets.ssm.bootstrap.log-driver"
-	capabilitySecretLogDriverASM                = "secrets.asm.bootstrap.log-driver"
-	capabiltyPIDAndIPCNamespaceSharing          = "pid-ipc-namespace-sharing"
-	capabilityNvidiaDriverVersionInfix          = "nvidia-driver-version."
-	capabilityECREndpoint                       = "ecr-endpoint"
-	capabilityContainerOrdering                 = "container-ordering"
-	taskEIAAttributeSuffix                      = "task-eia"
-	taskEIAWithOptimizedCPU                     = "task-eia.optimized-cpu"
-	taskENITrunkingAttributeSuffix              = "task-eni-trunking"
-	branchCNIPluginVersionSuffix                = "branch-cni-plugin-version"
-	capabilityFirelensFluentd                   = "firelens.fluentd"
-	capabilityFirelensFluentbit                 = "firelens.fluentbit"
-	capabilityFirelensLoggingDriver             = "logging-driver.awsfirelens"
-	capabilityFirelensConfigFile                = "firelens.options.config.file"
-	capabilityFirelensConfigS3                  = "firelens.options.config.s3"
-	capabilityFullTaskSync                      = "full-sync"
-	capabilityGMSA                              = "gmsa"
-	capabilityEFS                               = "efs"
-	capabilityEFSAuth                           = "efsAuth"
-	capabilityEnvFilesS3                        = "env-files.s3"
-	capabilityFSxWindowsFileServer              = "fsxWindowsFileServer"
-	capabilityExec                              = "execute-command"
-	capabilityDepsRootDir                       = "/managed-agents"
-	capabilityExecBinRelativePath               = "bin"
-	capabilityExecConfigRelativePath            = "config"
-	capabilityExecCertsRelativePath             = "certs"
+	capabilityPrefix                                       = "com.amazonaws.ecs.capability."
+	attributePrefix                                        = "ecs.capability."
+	capabilityTaskIAMRole                                  = "task-iam-role"
+	capabilityTaskIAMRoleNetHost                           = "task-iam-role-network-host"
+	taskENIAttributeSuffix                                 = "task-eni"
+	taskENIIPv6AttributeSuffix                             = "task-eni.ipv6"
+	taskENIBlockInstanceMetadataAttributeSuffix            = "task-eni-block-instance-metadata"
+	appMeshAttributeSuffix                                 = "aws-appmesh"
+	cniPluginVersionSuffix                                 = "cni-plugin-version"
+	capabilityTaskCPUMemLimit                              = "task-cpu-mem-limit"
+	capabilityIncreasedTaskCPULimit                        = "increased-task-cpu-limit"
+	capabilityDockerPluginInfix                            = "docker-plugin."
+	attributeSeparator                                     = "."
+	capabilityPrivateRegistryAuthASM                       = "private-registry-authentication.secretsmanager"
+	capabilitySecretEnvSSM                                 = "secrets.ssm.environment-variables"
+	capabilitySecretEnvASM                                 = "secrets.asm.environment-variables"
+	capabilitySecretLogDriverSSM                           = "secrets.ssm.bootstrap.log-driver"
+	capabilitySecretLogDriverASM                           = "secrets.asm.bootstrap.log-driver"
+	capabiltyPIDAndIPCNamespaceSharing                     = "pid-ipc-namespace-sharing"
+	capabilityNvidiaDriverVersionInfix                     = "nvidia-driver-version."
+	capabilityECREndpoint                                  = "ecr-endpoint"
+	capabilityContainerOrdering                            = "container-ordering"
+	taskEIAAttributeSuffix                                 = "task-eia"
+	taskEIAWithOptimizedCPU                                = "task-eia.optimized-cpu"
+	taskENITrunkingAttributeSuffix                         = "task-eni-trunking"
+	branchCNIPluginVersionSuffix                           = "branch-cni-plugin-version"
+	capabilityFirelensFluentd                              = "firelens.fluentd"
+	capabilityFirelensFluentbit                            = "firelens.fluentbit"
+	capabilityFirelensLoggingDriver                        = "logging-driver.awsfirelens"
+	capabilityFireLensLoggingDriverConfigBufferLimitSuffix = ".log-driver-buffer-limit"
+	capabilityFirelensConfigFile                           = "firelens.options.config.file"
+	capabilityFirelensConfigS3                             = "firelens.options.config.s3"
+	capabilityFullTaskSync                                 = "full-sync"
+	capabilityGMSA                                         = "gmsa"
+	capabilityEFS                                          = "efs"
+	capabilityEFSAuth                                      = "efsAuth"
+	capabilityEnvFilesS3                                   = "env-files.s3"
+	capabilityFSxWindowsFileServer                         = "fsxWindowsFileServer"
+	capabilityExec                                         = "execute-command"
+	capabilityExecBinRelativePath                          = "bin"
+	capabilityExecConfigRelativePath                       = "config"
+	capabilityExecCertsRelativePath                        = "certs"
+	capabilityExternal                                     = "external"
+	capabilityServiceConnect                               = "service-connect-v1"
+
+	// network capabilities, going forward, please append "network." prefix to any new networking capability we introduce
+	networkCapabilityPrefix      = "network."
+	capabilityContainerPortRange = networkCapabilityPrefix + "container-port-range"
 )
 
 var (
@@ -96,70 +103,91 @@ var (
 		capabilityFullTaskSync,
 		// ecs agent version 1.39.0 supports bulk loading env vars through environmentFiles in S3
 		capabilityEnvFilesS3,
-	}
-	capabilityExecRequiredBinaries = []string{
-		"amazon-ssm-agent",
-		"ssm-agent-worker",
-		"ssm-session-worker",
-	}
-	capabilityExecRequiredCerts = []string{
-		"tls-ca-bundle.pem",
+		// support container port range in container definition - port mapping field
+		capabilityContainerPortRange,
 	}
 	// use empty struct as value type to simulate set
 	capabilityExecInvalidSsmVersions = map[string]struct{}{}
 
-	pathExists        = defaultPathExists
-	getSubDirectories = defaultGetSubDirectories
+	pathExists              = defaultPathExists
+	getSubDirectories       = defaultGetSubDirectories
+	isPlatformExecSupported = defaultIsPlatformExecSupported
+
+	// List of capabilities that are not supported on external capacity.
+	externalUnsupportedCapabilities = []string{
+		attributePrefix + taskENIAttributeSuffix,
+		attributePrefix + cniPluginVersionSuffix,
+		attributePrefix + taskENIIPv6AttributeSuffix,
+		attributePrefix + taskENIBlockInstanceMetadataAttributeSuffix,
+		attributePrefix + taskENITrunkingAttributeSuffix,
+		attributePrefix + appMeshAttributeSuffix,
+		attributePrefix + taskEIAAttributeSuffix,
+		attributePrefix + taskEIAWithOptimizedCPU,
+		attributePrefix + capabilityServiceConnect,
+	}
+	// List of capabilities that are only supported on external capaciity. Currently only one but keep as a list
+	// for future proof and also align with externalUnsupportedCapabilities.
+	externalSpecificCapabilities = []string{
+		attributePrefix + capabilityExternal,
+	}
+
+	capabilityExecRootDir = filepath.Join(capabilityDepsRootDir, capabilityExec)
+	binDir                = filepath.Join(capabilityExecRootDir, capabilityExecBinRelativePath)
+	configDir             = filepath.Join(capabilityExecRootDir, capabilityExecConfigRelativePath)
 )
 
 // capabilities returns the supported capabilities of this agent / docker-client pair.
 // Currently, the following capabilities are possible:
 //
-//    com.amazonaws.ecs.capability.privileged-container
-//    com.amazonaws.ecs.capability.docker-remote-api.1.17
-//    com.amazonaws.ecs.capability.docker-remote-api.1.18
-//    com.amazonaws.ecs.capability.docker-remote-api.1.19
-//    com.amazonaws.ecs.capability.docker-remote-api.1.20
-//    com.amazonaws.ecs.capability.logging-driver.json-file
-//    com.amazonaws.ecs.capability.logging-driver.syslog
-//    com.amazonaws.ecs.capability.logging-driver.fluentd
-//    com.amazonaws.ecs.capability.logging-driver.journald
-//    com.amazonaws.ecs.capability.logging-driver.gelf
-//    com.amazonaws.ecs.capability.logging-driver.none
-//    com.amazonaws.ecs.capability.selinux
-//    com.amazonaws.ecs.capability.apparmor
-//    com.amazonaws.ecs.capability.ecr-auth
-//    com.amazonaws.ecs.capability.task-iam-role
-//    com.amazonaws.ecs.capability.task-iam-role-network-host
-//    ecs.capability.docker-volume-driver.${driverName}
-//    ecs.capability.task-eni
-//    ecs.capability.task-eni-block-instance-metadata
-//    ecs.capability.execution-role-ecr-pull
-//    ecs.capability.execution-role-awslogs
-//    ecs.capability.container-health-check
-//    ecs.capability.private-registry-authentication.secretsmanager
-//    ecs.capability.secrets.ssm.environment-variables
-//    ecs.capability.secrets.ssm.bootstrap.log-driver
-//    ecs.capability.pid-ipc-namespace-sharing
-//    ecs.capability.ecr-endpoint
-//    ecs.capability.secrets.asm.environment-variables
-//    ecs.capability.secrets.asm.bootstrap.log-driver
-//    ecs.capability.aws-appmesh
-//    ecs.capability.task-eia
-//    ecs.capability.task-eni-trunking
-//    ecs.capability.task-eia.optimized-cpu
-//    ecs.capability.firelens.fluentd
-//    ecs.capability.firelens.fluentbit
-//    ecs.capability.efs
-//    com.amazonaws.ecs.capability.logging-driver.awsfirelens
-//    ecs.capability.firelens.options.config.file
-//    ecs.capability.firelens.options.config.s3
-//    ecs.capability.full-sync
-//    ecs.capability.gmsa
-//    ecs.capability.efsAuth
-//    ecs.capability.env-files.s3
-//    ecs.capability.fsxWindowsFileServer
-//    ecs.capability.execute-command
+//	com.amazonaws.ecs.capability.privileged-container
+//	com.amazonaws.ecs.capability.docker-remote-api.1.17
+//	com.amazonaws.ecs.capability.docker-remote-api.1.18
+//	com.amazonaws.ecs.capability.docker-remote-api.1.19
+//	com.amazonaws.ecs.capability.docker-remote-api.1.20
+//	com.amazonaws.ecs.capability.logging-driver.json-file
+//	com.amazonaws.ecs.capability.logging-driver.syslog
+//	com.amazonaws.ecs.capability.logging-driver.fluentd
+//	com.amazonaws.ecs.capability.logging-driver.journald
+//	com.amazonaws.ecs.capability.logging-driver.gelf
+//	com.amazonaws.ecs.capability.logging-driver.none
+//	com.amazonaws.ecs.capability.selinux
+//	com.amazonaws.ecs.capability.apparmor
+//	com.amazonaws.ecs.capability.ecr-auth
+//	com.amazonaws.ecs.capability.task-iam-role
+//	com.amazonaws.ecs.capability.task-iam-role-network-host
+//	ecs.capability.docker-volume-driver.${driverName}
+//	ecs.capability.task-eni
+//	ecs.capability.task-eni-block-instance-metadata
+//	ecs.capability.execution-role-ecr-pull
+//	ecs.capability.execution-role-awslogs
+//	ecs.capability.container-health-check
+//	ecs.capability.private-registry-authentication.secretsmanager
+//	ecs.capability.secrets.ssm.environment-variables
+//	ecs.capability.secrets.ssm.bootstrap.log-driver
+//	ecs.capability.pid-ipc-namespace-sharing
+//	ecs.capability.ecr-endpoint
+//	ecs.capability.secrets.asm.environment-variables
+//	ecs.capability.secrets.asm.bootstrap.log-driver
+//	ecs.capability.aws-appmesh
+//	ecs.capability.task-eia
+//	ecs.capability.task-eni-trunking
+//	ecs.capability.task-eia.optimized-cpu
+//	ecs.capability.firelens.fluentd
+//	ecs.capability.firelens.fluentbit
+//	ecs.capability.efs
+//	com.amazonaws.ecs.capability.logging-driver.awsfirelens
+//	ecs.capability.logging-driver.awsfirelens.log-driver-buffer-limit
+//	ecs.capability.firelens.options.config.file
+//	ecs.capability.firelens.options.config.s3
+//	ecs.capability.full-sync
+//	ecs.capability.gmsa
+//	ecs.capability.efsAuth
+//	ecs.capability.env-files.s3
+//	ecs.capability.fsxWindowsFileServer
+//	ecs.capability.execute-command
+//	ecs.capability.external
+//	ecs.capability.service-connect-v1
+//	ecs.capability.network.container-port-range
 func (agent *ecsAgent) capabilities() ([]*ecs.Attribute, error) {
 	var capabilities []*ecs.Attribute
 
@@ -195,6 +223,7 @@ func (agent *ecsAgent) capabilities() ([]*ecs.Attribute, error) {
 		return nil, err
 	}
 
+	capabilities = agent.appendIncreasedTaskCPULimitCapability(capabilities)
 	capabilities = agent.appendTaskENICapabilities(capabilities)
 	capabilities = agent.appendENITrunkingCapabilities(capabilities)
 	capabilities = agent.appendDockerDependentCapabilities(capabilities, supportedVersions)
@@ -230,6 +259,9 @@ func (agent *ecsAgent) capabilities() ([]*ecs.Attribute, error) {
 	// support aws router capabilities for log driver router
 	capabilities = agent.appendFirelensLoggingDriverCapabilities(capabilities)
 
+	// support aws router capabilities for log driver router config
+	capabilities = agent.appendFirelensLoggingDriverConfigCapabilities(capabilities)
+
 	// support efs on ecs capabilities
 	capabilities = agent.appendEFSCapabilities(capabilities)
 
@@ -251,6 +283,16 @@ func (agent *ecsAgent) capabilities() ([]*ecs.Attribute, error) {
 	if err != nil {
 		return nil, err
 	}
+	// add service-connect capabilities if applicable
+	capabilities = agent.appendServiceConnectCapabilities(capabilities)
+
+	if agent.cfg.External.Enabled() {
+		// Add external specific capability; remove external unsupported capabilities.
+		for _, cap := range externalSpecificCapabilities {
+			capabilities = appendNameOnlyAttribute(capabilities, cap)
+		}
+		capabilities = removeAttributesByNames(capabilities, externalUnsupportedCapabilities)
+	}
 
 	return capabilities, nil
 }
@@ -266,6 +308,14 @@ func (agent *ecsAgent) appendDockerDependentCapabilities(capabilities []*ecs.Att
 		// Docker health check was added in API 1.24
 		capabilities = appendNameOnlyAttribute(capabilities, attributePrefix+"container-health-check")
 	}
+	return capabilities
+}
+
+func (agent *ecsAgent) appendGMSACapabilities(capabilities []*ecs.Attribute) []*ecs.Attribute {
+	if agent.cfg.GMSACapable.Enabled() {
+		return appendNameOnlyAttribute(capabilities, attributePrefix+capabilityGMSA)
+	}
+
 	return capabilities
 }
 
@@ -325,6 +375,17 @@ func (agent *ecsAgent) appendTaskCPUMemLimitCapabilities(capabilities []*ecs.Att
 	return capabilities, nil
 }
 
+func (agent *ecsAgent) appendIncreasedTaskCPULimitCapability(capabilities []*ecs.Attribute) []*ecs.Attribute {
+	if !agent.cfg.TaskCPUMemLimit.Enabled() {
+		// don't register the "increased-task-cpu-limit" capability if the "task-cpu-mem-limit" capability is disabled.
+		// "task-cpu-mem-limit" capability may be explicitly disabled or disabled due to unsupported docker version.
+		seelog.Warn("Increased Task CPU Limit capability is disabled since the Task CPU + Mem Limit capability is disabled.")
+	} else {
+		capabilities = appendNameOnlyAttribute(capabilities, attributePrefix+capabilityIncreasedTaskCPULimit)
+	}
+	return capabilities
+}
+
 func (agent *ecsAgent) appendTaskENICapabilities(capabilities []*ecs.Attribute) []*ecs.Attribute {
 	if agent.cfg.TaskENIEnabled.Enabled() {
 		// The assumption here is that all of the dependencies for supporting the
@@ -354,20 +415,15 @@ func (agent *ecsAgent) appendTaskENICapabilities(capabilities []*ecs.Attribute) 
 }
 
 func (agent *ecsAgent) appendExecCapabilities(capabilities []*ecs.Attribute) ([]*ecs.Attribute, error) {
+
+	// Only Windows 2019 and above are supported, all Linux supported
+	if platformSupported, err := isPlatformExecSupported(); err != nil || !platformSupported {
+		return capabilities, err
+	}
+
 	// for an instance to be exec-enabled, it needs resources needed by SSM (binaries, configuration files and certs)
 	// the following bind mounts are defined in ecs-init and added to the ecs-agent container
 
-	capabilityExecRootDir := filepath.Join(capabilityDepsRootDir, capabilityExec)
-	binDir := filepath.Join(capabilityExecRootDir, capabilityExecBinRelativePath)
-	configDir := filepath.Join(capabilityExecRootDir, capabilityExecConfigRelativePath)
-	certsDir := filepath.Join(capabilityExecRootDir, capabilityExecCertsRelativePath)
-
-	// top-level folders, /bin, /config, /certs
-	dependencies := map[string][]string{
-		binDir:    []string{},
-		configDir: []string{},
-		certsDir:  capabilityExecRequiredCerts,
-	}
 	if exists, err := dependenciesExist(dependencies); err != nil || !exists {
 		return capabilities, err
 	}
@@ -402,6 +458,32 @@ func (agent *ecsAgent) appendExecCapabilities(capabilities []*ecs.Attribute) ([]
 	}
 
 	return appendNameOnlyAttribute(capabilities, attributePrefix+capabilityExec), nil
+}
+
+func (agent *ecsAgent) appendServiceConnectCapabilities(capabilities []*ecs.Attribute) []*ecs.Attribute {
+	if loaded, _ := agent.serviceconnectManager.IsLoaded(agent.dockerClient); !loaded {
+		_, err := agent.serviceconnectManager.LoadImage(agent.ctx, agent.cfg, agent.dockerClient)
+		if err != nil {
+			logger.Error("ServiceConnect Capability: Failed to load appnet Agent container. This container instance will not be able to support ServiceConnect tasks",
+				logger.Fields{
+					field.Error: err,
+				},
+			)
+			return capabilities
+		}
+	}
+	loadedVer, _ := agent.serviceconnectManager.GetLoadedAppnetVersion()
+	supportedAppnetInterfaceVerToCapabilities, _ := agent.serviceconnectManager.GetCapabilitiesForAppnetInterfaceVersion(loadedVer)
+	if supportedAppnetInterfaceVerToCapabilities == nil {
+		logger.Warn("ServiceConnect Capability: No service connect capabilities were found for Appnet version:", logger.Fields{
+			field.Image: loadedVer,
+		},
+		)
+	}
+	for _, serviceConnectCapability := range supportedAppnetInterfaceVerToCapabilities {
+		capabilities = appendNameOnlyAttribute(capabilities, serviceConnectCapability)
+	}
+	return capabilities
 }
 
 func defaultGetSubDirectories(path string) ([]string, error) {
@@ -473,29 +555,23 @@ func defaultPathExists(path string, shouldBeDirectory bool) (bool, error) {
 	return (isDirectory && shouldBeDirectory) || (!isDirectory && !shouldBeDirectory), nil
 }
 
-// getTaskENIPluginVersionAttribute returns the version information of the ECS
-// CNI plugins. It just executes the ENI plugin as the assumption is that these
-// plugins are packaged with the ECS Agent, which means all of the other plugins
-// should also emit the same version information. Also, the version information
-// doesn't contribute to placement decisions and just serves as additional
-// debugging information
-func (agent *ecsAgent) getTaskENIPluginVersionAttribute() (*ecs.Attribute, error) {
-	version, err := agent.cniClient.Version(ecscni.ECSENIPluginName)
-	if err != nil {
-		seelog.Warnf(
-			"Unable to determine the version of the plugin '%s': %v",
-			ecscni.ECSENIPluginName, err)
-		return nil, err
-	}
-
-	return &ecs.Attribute{
-		Name:  aws.String(attributePrefix + cniPluginVersionSuffix),
-		Value: aws.String(version),
-	}, nil
-}
-
 func appendNameOnlyAttribute(attributes []*ecs.Attribute, name string) []*ecs.Attribute {
 	return append(attributes, &ecs.Attribute{
 		Name: aws.String(name),
 	})
+}
+
+func removeAttributesByNames(attributes []*ecs.Attribute, names []string) []*ecs.Attribute {
+	nameMap := make(map[string]struct{})
+	for _, name := range names {
+		nameMap[name] = struct{}{}
+	}
+
+	var ret []*ecs.Attribute
+	for _, attr := range attributes {
+		if _, ok := nameMap[aws.StringValue(attr.Name)]; !ok {
+			ret = append(ret, attr)
+		}
+	}
+	return ret
 }

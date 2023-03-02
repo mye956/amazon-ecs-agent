@@ -1,3 +1,4 @@
+//go:build unit
 // +build unit
 
 // Copyright Amazon.com Inc. or its affiliates. All Rights Reserved.
@@ -45,8 +46,7 @@ func testENIAckTimeout(t *testing.T, attachmentType string) {
 	defer ctrl.Finish()
 
 	taskEngineState := dockerstate.NewTaskEngineState()
-	dataClient, cleanup := newTestDataClient(t)
-	defer cleanup()
+	dataClient := newTestDataClient(t)
 
 	expiresAt := time.Now().Add(time.Millisecond * waitTimeoutMillis)
 	err := addENIAttachmentToState(attachmentType, attachmentArn, taskArn, randomMAC, expiresAt, taskEngineState, dataClient)
@@ -109,8 +109,7 @@ func testHandleENIAttachment(t *testing.T, attachmentType, taskArn string) {
 	ctrl := gomock.NewController(t)
 	defer ctrl.Finish()
 
-	dataClient, cleanup := newTestDataClient(t)
-	defer cleanup()
+	dataClient := newTestDataClient(t)
 
 	taskEngineState := dockerstate.NewTaskEngineState()
 	expiresAt := time.Now().Add(time.Millisecond * waitTimeoutMillis)

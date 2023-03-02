@@ -1,3 +1,4 @@
+//go:build unit
 // +build unit
 
 // Copyright Amazon.com Inc. or its affiliates. All Rights Reserved.
@@ -25,6 +26,7 @@ import (
 
 	"github.com/golang/mock/gomock"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 
 	"github.com/aws/amazon-ecs-agent/agent/api"
 	apicontainer "github.com/aws/amazon-ecs-agent/agent/api/container"
@@ -48,6 +50,7 @@ const (
 	iid               = "instanceIdentityDocument"
 	iidSignature      = "signature"
 	registrationToken = "clientToken"
+	testNetworkName   = "bridge"
 )
 
 var (
@@ -83,9 +86,10 @@ func NewMockClient(ctrl *gomock.Controller,
 
 	return NewMockClientWithConfig(ctrl, ec2Metadata, additionalAttributes,
 		&config.Config{
-			Cluster:            configuredCluster,
-			AWSRegion:          "us-east-1",
-			InstanceAttributes: additionalAttributes,
+			Cluster:                      configuredCluster,
+			AWSRegion:                    "us-east-1",
+			InstanceAttributes:           additionalAttributes,
+			ShouldExcludeIPv6PortBinding: config.BooleanDefaultTrue{Value: config.ExplicitlyEnabled},
 		})
 }
 
@@ -193,6 +197,12 @@ func TestSubmitContainerStateChange(t *testing.T) {
 					HostPort:      int64ptr(intptr(4)),
 					Protocol:      strptr("udp"),
 				},
+				{
+					BindIP:             strptr("5.6.7.8"),
+					ContainerPortRange: strptr("11-12"),
+					HostPortRange:      strptr("11-12"),
+					Protocol:           strptr("udp"),
+				},
 			},
 		},
 	})
@@ -201,6 +211,18 @@ func TestSubmitContainerStateChange(t *testing.T) {
 		ContainerName: "cont",
 		RuntimeID:     "runtime id",
 		Status:        apicontainerstatus.ContainerRunning,
+		Container: &apicontainer.Container{
+			ContainerArn:          "arn",
+			NetworkModeUnsafe:     testNetworkName,
+			ContainerHasPortRange: true,
+			ContainerPortSet: map[int]struct{}{
+				1: {},
+				3: {},
+			},
+			ContainerPortRangeMap: map[string]string{
+				"11-12": "11-12",
+			},
+		},
 		PortBindings: []apicontainer.PortBinding{
 			{
 				BindIP:        "1.2.3.4",
@@ -211,6 +233,18 @@ func TestSubmitContainerStateChange(t *testing.T) {
 				BindIP:        "2.2.3.4",
 				ContainerPort: 3,
 				HostPort:      4,
+				Protocol:      apicontainer.TransportProtocolUDP,
+			},
+			{
+				BindIP:        "5.6.7.8",
+				ContainerPort: 11,
+				HostPort:      11,
+				Protocol:      apicontainer.TransportProtocolUDP,
+			},
+			{
+				BindIP:        "5.6.7.8",
+				ContainerPort: 12,
+				HostPort:      12,
 				Protocol:      apicontainer.TransportProtocolUDP,
 			},
 		},
@@ -229,21 +263,14 @@ func TestSubmitContainerStateChangeFull(t *testing.T) {
 
 	mockSubmitStateClient.EXPECT().SubmitContainerStateChange(&containerSubmitInputMatcher{
 		ecs.SubmitContainerStateChangeInput{
-			Cluster:       strptr(configuredCluster),
-			Task:          strptr("arn"),
-			ContainerName: strptr("cont"),
-			RuntimeId:     strptr("runtime id"),
-			Status:        strptr("STOPPED"),
-			ExitCode:      int64ptr(&exitCode),
-			Reason:        strptr(reason),
-			NetworkBindings: []*ecs.NetworkBinding{
-				{
-					BindIP:        strptr(""),
-					ContainerPort: int64ptr(intptr(0)),
-					HostPort:      int64ptr(intptr(0)),
-					Protocol:      strptr("tcp"),
-				},
-			},
+			Cluster:         strptr(configuredCluster),
+			Task:            strptr("arn"),
+			ContainerName:   strptr("cont"),
+			RuntimeId:       strptr("runtime id"),
+			Status:          strptr("STOPPED"),
+			ExitCode:        int64ptr(&exitCode),
+			Reason:          strptr(reason),
+			NetworkBindings: []*ecs.NetworkBinding{},
 		},
 	})
 	err := client.SubmitContainerStateChange(api.ContainerStateChange{
@@ -253,6 +280,9 @@ func TestSubmitContainerStateChangeFull(t *testing.T) {
 		Status:        apicontainerstatus.ContainerStopped,
 		ExitCode:      &exitCode,
 		Reason:        reason,
+		Container: &apicontainer.Container{
+			NetworkModeUnsafe: testNetworkName,
+		},
 		PortBindings: []apicontainer.PortBinding{
 			{},
 		},
@@ -267,7 +297,7 @@ func TestSubmitContainerStateChangeReason(t *testing.T) {
 	defer mockCtrl.Finish()
 	client, _, mockSubmitStateClient := NewMockClient(mockCtrl, ec2.NewBlackholeEC2MetadataClient(), nil)
 	exitCode := 20
-	reason := strings.Repeat("a", ecsMaxReasonLength)
+	reason := strings.Repeat("a", ecsMaxContainerReasonLength)
 
 	mockSubmitStateClient.EXPECT().SubmitContainerStateChange(&containerSubmitInputMatcher{
 		ecs.SubmitContainerStateChangeInput{
@@ -283,9 +313,12 @@ func TestSubmitContainerStateChangeReason(t *testing.T) {
 	err := client.SubmitContainerStateChange(api.ContainerStateChange{
 		TaskArn:       "arn",
 		ContainerName: "cont",
-		Status:        apicontainerstatus.ContainerStopped,
-		ExitCode:      &exitCode,
-		Reason:        reason,
+		Container: &apicontainer.Container{
+			NetworkModeUnsafe: testNetworkName,
+		},
+		Status:   apicontainerstatus.ContainerStopped,
+		ExitCode: &exitCode,
+		Reason:   reason,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -297,8 +330,8 @@ func TestSubmitContainerStateChangeLongReason(t *testing.T) {
 	defer mockCtrl.Finish()
 	client, _, mockSubmitStateClient := NewMockClient(mockCtrl, ec2.NewBlackholeEC2MetadataClient(), nil)
 	exitCode := 20
-	trimmedReason := strings.Repeat("a", ecsMaxReasonLength)
-	reason := strings.Repeat("a", ecsMaxReasonLength+1)
+	trimmedReason := strings.Repeat("a", ecsMaxContainerReasonLength)
+	reason := strings.Repeat("a", ecsMaxContainerReasonLength+1)
 
 	mockSubmitStateClient.EXPECT().SubmitContainerStateChange(&containerSubmitInputMatcher{
 		ecs.SubmitContainerStateChangeInput{
@@ -314,9 +347,12 @@ func TestSubmitContainerStateChangeLongReason(t *testing.T) {
 	err := client.SubmitContainerStateChange(api.ContainerStateChange{
 		TaskArn:       "arn",
 		ContainerName: "cont",
-		Status:        apicontainerstatus.ContainerStopped,
-		ExitCode:      &exitCode,
-		Reason:        reason,
+		Container: &apicontainer.Container{
+			NetworkModeUnsafe: testNetworkName,
+		},
+		Status:   apicontainerstatus.ContainerStopped,
+		ExitCode: &exitCode,
+		Reason:   reason,
 	})
 	if err != nil {
 		t.Errorf("Unable to submit container state change: %v", err)
@@ -334,6 +370,139 @@ func buildAttributeList(capabilities []string, attributes map[string]string) []*
 	return rv
 }
 
+func TestRegisterContainerInstance(t *testing.T) {
+	testCases := []struct {
+		name string
+		cfg  *config.Config
+	}{
+		{
+			name: "basic case",
+			cfg: &config.Config{
+				Cluster:   configuredCluster,
+				AWSRegion: "us-west-2",
+			},
+		},
+		{
+			name: "no instance identity doc",
+			cfg: &config.Config{
+				Cluster:   configuredCluster,
+				AWSRegion: "us-west-2",
+				NoIID:     true,
+			},
+		},
+		{
+			name: "on prem",
+			cfg: &config.Config{
+				Cluster:   configuredCluster,
+				AWSRegion: "us-west-2",
+				NoIID:     true,
+				External:  config.BooleanDefaultFalse{Value: config.ExplicitlyEnabled},
+			},
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			mockCtrl := gomock.NewController(t)
+			defer mockCtrl.Finish()
+			mockEC2Metadata := mock_ec2.NewMockEC2MetadataClient(mockCtrl)
+			additionalAttributes := map[string]string{"my_custom_attribute": "Custom_Value1",
+				"my_other_custom_attribute": "Custom_Value2",
+			}
+			tc.cfg.InstanceAttributes = additionalAttributes
+			client, mc, _ := NewMockClientWithConfig(mockCtrl, mockEC2Metadata, additionalAttributes, tc.cfg)
+
+			fakeCapabilities := []string{"capability1", "capability2"}
+			expectedAttributes := map[string]string{
+				"ecs.os-type":               config.OSType,
+				"ecs.os-family":             config.GetOSFamily(),
+				"my_custom_attribute":       "Custom_Value1",
+				"my_other_custom_attribute": "Custom_Value2",
+				"ecs.availability-zone":     "us-west-2b",
+				"ecs.outpost-arn":           "test:arn:outpost",
+				cpuArchAttrName:             getCPUArch(),
+			}
+			capabilities := buildAttributeList(fakeCapabilities, nil)
+			platformDevices := []*ecs.PlatformDevice{
+				{
+					Id:   aws.String("id1"),
+					Type: aws.String(ecs.PlatformDeviceTypeGpu),
+				},
+				{
+					Id:   aws.String("id2"),
+					Type: aws.String(ecs.PlatformDeviceTypeGpu),
+				},
+				{
+					Id:   aws.String("id3"),
+					Type: aws.String(ecs.PlatformDeviceTypeGpu),
+				},
+			}
+
+			expectedIID := iid
+			expectedIIDSig := iidSignature
+			if tc.cfg.NoIID {
+				expectedIID = ""
+				expectedIIDSig = ""
+			} else {
+				gomock.InOrder(
+					mockEC2Metadata.EXPECT().GetDynamicData(ec2.InstanceIdentityDocumentResource).Return(expectedIID, nil),
+					mockEC2Metadata.EXPECT().GetDynamicData(ec2.InstanceIdentityDocumentSignatureResource).Return(expectedIIDSig, nil),
+				)
+			}
+
+			var expectedNumOfAttributes int
+			if !tc.cfg.External.Enabled() {
+				// 2 capability attributes: capability1, capability2
+				// and 5 other attributes: ecs.os-type, ecs.os-family, ecs.outpost-arn, my_custom_attribute, my_other_custom_attribute.
+				expectedNumOfAttributes = 7
+			} else {
+				// One more attribute for external case: ecs.cpu-architecture
+				expectedNumOfAttributes = 8
+			}
+
+			gomock.InOrder(
+				mc.EXPECT().RegisterContainerInstance(gomock.Any()).Do(func(req *ecs.RegisterContainerInstanceInput) {
+					assert.Nil(t, req.ContainerInstanceArn)
+					assert.Equal(t, configuredCluster, *req.Cluster, "Wrong cluster")
+					assert.Equal(t, registrationToken, *req.ClientToken, "Wrong client token")
+					assert.Equal(t, expectedIID, *req.InstanceIdentityDocument, "Wrong IID")
+					assert.Equal(t, expectedIIDSig, *req.InstanceIdentityDocumentSignature, "Wrong IID sig")
+					assert.Equal(t, 4, len(req.TotalResources), "Wrong length of TotalResources")
+					resource, ok := findResource(req.TotalResources, "PORTS_UDP")
+					require.True(t, ok, `Could not find resource "PORTS_UDP"`)
+					assert.Equal(t, "STRINGSET", *resource.Type, `Wrong type for resource "PORTS_UDP"`)
+					assert.Equal(t, expectedNumOfAttributes, len(req.Attributes), "Wrong number of Attributes")
+					attrs := attributesToMap(req.Attributes)
+					for name, value := range attrs {
+						if strings.Contains(name, "capability") {
+							assert.Contains(t, fakeCapabilities, name)
+						} else {
+							assert.Equal(t, expectedAttributes[name], value)
+						}
+					}
+					assert.Equal(t, len(containerInstanceTags), len(req.Tags), "Wrong number of tags")
+					assert.Equal(t, len(platformDevices), len(req.PlatformDevices), "Wrong number of devices")
+					reqTags := extractTagsMapFromRegisterContainerInstanceInput(req)
+					for k, v := range reqTags {
+						assert.Contains(t, containerInstanceTagsMap, k)
+						assert.Equal(t, containerInstanceTagsMap[k], v)
+					}
+				}).Return(&ecs.RegisterContainerInstanceOutput{
+					ContainerInstance: &ecs.ContainerInstance{
+						ContainerInstanceArn: aws.String("registerArn"),
+						Attributes:           buildAttributeList(fakeCapabilities, expectedAttributes)}},
+					nil),
+			)
+
+			arn, availabilityzone, err := client.RegisterContainerInstance("", capabilities,
+				containerInstanceTags, registrationToken, platformDevices, "test:arn:outpost")
+			require.NoError(t, err)
+			assert.Equal(t, "registerArn", arn)
+			assert.Equal(t, "us-west-2b", availabilityzone)
+		})
+	}
+}
+
 func TestReRegisterContainerInstance(t *testing.T) {
 	additionalAttributes := map[string]string{"my_custom_attribute": "Custom_Value1",
 		"my_other_custom_attribute":    "Custom_Value2",
@@ -348,6 +517,7 @@ func TestReRegisterContainerInstance(t *testing.T) {
 	fakeCapabilities := []string{"capability1", "capability2"}
 	expectedAttributes := map[string]string{
 		"ecs.os-type":           config.OSType,
+		"ecs.os-family":         config.GetOSFamily(),
 		"ecs.availability-zone": "us-west-2b",
 		"ecs.outpost-arn":       "test:arn:outpost",
 	}
@@ -369,8 +539,8 @@ func TestReRegisterContainerInstance(t *testing.T) {
 			resource, ok := findResource(req.TotalResources, "PORTS_UDP")
 			assert.True(t, ok, `Could not find resource "PORTS_UDP"`)
 			assert.Equal(t, "STRINGSET", *resource.Type, `Wrong type for resource "PORTS_UDP"`)
-			// "ecs.os-type", ecs.outpost-arn and the 2 that we specified as additionalAttributes
-			assert.Equal(t, 4, len(req.Attributes), "Wrong number of Attributes")
+			// "ecs.os-type", ecs.os-family, ecs.outpost-arn and the 2 that we specified as additionalAttributes
+			assert.Equal(t, 5, len(req.Attributes), "Wrong number of Attributes")
 			reqAttributes := func() map[string]string {
 				rv := make(map[string]string, len(req.Attributes))
 				for i := range req.Attributes {
@@ -402,147 +572,6 @@ func TestReRegisterContainerInstance(t *testing.T) {
 	assert.NoError(t, err)
 	assert.Equal(t, "registerArn", arn)
 	assert.Equal(t, "us-west-2b", availabilityzone, "availabilityZone is incorrect")
-}
-
-func TestRegisterContainerInstance(t *testing.T) {
-	mockCtrl := gomock.NewController(t)
-	defer mockCtrl.Finish()
-	mockEC2Metadata := mock_ec2.NewMockEC2MetadataClient(mockCtrl)
-	additionalAttributes := map[string]string{"my_custom_attribute": "Custom_Value1",
-		"my_other_custom_attribute": "Custom_Value2",
-	}
-	client, mc, _ := NewMockClient(mockCtrl, mockEC2Metadata, additionalAttributes)
-
-	fakeCapabilities := []string{"capability1", "capability2"}
-	expectedAttributes := map[string]string{
-		"ecs.os-type":               config.OSType,
-		"my_custom_attribute":       "Custom_Value1",
-		"my_other_custom_attribute": "Custom_Value2",
-		"ecs.availability-zone":     "us-west-2b",
-		"ecs.outpost-arn":           "test:arn:outpost",
-	}
-	capabilities := buildAttributeList(fakeCapabilities, nil)
-	platformDevices := []*ecs.PlatformDevice{
-		{
-			Id:   aws.String("id1"),
-			Type: aws.String(ecs.PlatformDeviceTypeGpu),
-		},
-		{
-			Id:   aws.String("id2"),
-			Type: aws.String(ecs.PlatformDeviceTypeGpu),
-		},
-		{
-			Id:   aws.String("id3"),
-			Type: aws.String(ecs.PlatformDeviceTypeGpu),
-		},
-	}
-
-	gomock.InOrder(
-		mockEC2Metadata.EXPECT().GetDynamicData(ec2.InstanceIdentityDocumentResource).Return("instanceIdentityDocument", nil),
-		mockEC2Metadata.EXPECT().GetDynamicData(ec2.InstanceIdentityDocumentSignatureResource).Return("signature", nil),
-		mc.EXPECT().RegisterContainerInstance(gomock.Any()).Do(func(req *ecs.RegisterContainerInstanceInput) {
-			assert.Nil(t, req.ContainerInstanceArn)
-			assert.Equal(t, configuredCluster, *req.Cluster, "Wrong cluster")
-			assert.Equal(t, registrationToken, *req.ClientToken, "Wrong client token")
-			assert.Equal(t, iid, *req.InstanceIdentityDocument, "Wrong IID")
-			assert.Equal(t, iidSignature, *req.InstanceIdentityDocumentSignature, "Wrong IID sig")
-			assert.Equal(t, 4, len(req.TotalResources), "Wrong length of TotalResources")
-			resource, ok := findResource(req.TotalResources, "PORTS_UDP")
-			assert.True(t, ok, `Could not find resource "PORTS_UDP"`)
-			assert.Equal(t, "STRINGSET", *resource.Type, `Wrong type for resource "PORTS_UDP"`)
-			// 3 from expectedAttributes and 3 from additionalAttributes
-			assert.Equal(t, 6, len(req.Attributes), "Wrong number of Attributes")
-			for i := range req.Attributes {
-				if strings.Contains(*req.Attributes[i].Name, "capability") {
-					assert.Contains(t, fakeCapabilities, *req.Attributes[i].Name)
-				} else {
-					assert.Equal(t, expectedAttributes[*req.Attributes[i].Name], *req.Attributes[i].Value)
-				}
-			}
-			assert.Equal(t, len(containerInstanceTags), len(req.Tags), "Wrong number of tags")
-			assert.Equal(t, len(platformDevices), len(req.PlatformDevices), "Wrong number of devices")
-			reqTags := extractTagsMapFromRegisterContainerInstanceInput(req)
-			for k, v := range reqTags {
-				assert.Contains(t, containerInstanceTagsMap, k)
-				assert.Equal(t, containerInstanceTagsMap[k], v)
-			}
-		}).Return(&ecs.RegisterContainerInstanceOutput{
-			ContainerInstance: &ecs.ContainerInstance{
-				ContainerInstanceArn: aws.String("registerArn"),
-				Attributes:           buildAttributeList(fakeCapabilities, expectedAttributes)}},
-			nil),
-	)
-
-	arn, availabilityzone, err := client.RegisterContainerInstance("", capabilities,
-		containerInstanceTags, registrationToken, platformDevices, "test:arn:outpost")
-	assert.NoError(t, err)
-	assert.Equal(t, "registerArn", arn)
-	assert.Equal(t, "us-west-2b", availabilityzone)
-}
-
-func TestRegisterContainerInstanceNoIID(t *testing.T) {
-	mockCtrl := gomock.NewController(t)
-	defer mockCtrl.Finish()
-	mockEC2Metadata := mock_ec2.NewMockEC2MetadataClient(mockCtrl)
-	additionalAttributes := map[string]string{"my_custom_attribute": "Custom_Value1",
-		"my_other_custom_attribute": "Custom_Value2",
-	}
-	client, mc, _ := NewMockClientWithConfig(mockCtrl, mockEC2Metadata, additionalAttributes,
-		&config.Config{
-			Cluster:            configuredCluster,
-			AWSRegion:          "us-east-1",
-			InstanceAttributes: additionalAttributes,
-			NoIID:              true,
-		})
-
-	fakeCapabilities := []string{"capability1", "capability2"}
-	expectedAttributes := map[string]string{
-		"ecs.os-type":               config.OSType,
-		"my_custom_attribute":       "Custom_Value1",
-		"my_other_custom_attribute": "Custom_Value2",
-		"ecs.availability-zone":     "us-west-2b",
-		"ecs.outpost-arn":           "test:arn:outpost",
-	}
-	capabilities := buildAttributeList(fakeCapabilities, nil)
-
-	gomock.InOrder(
-		mc.EXPECT().RegisterContainerInstance(gomock.Any()).Do(func(req *ecs.RegisterContainerInstanceInput) {
-			assert.Nil(t, req.ContainerInstanceArn)
-			assert.Equal(t, configuredCluster, *req.Cluster, "Wrong cluster")
-			assert.Equal(t, registrationToken, *req.ClientToken, "Wrong client token")
-			assert.Equal(t, "", *req.InstanceIdentityDocument, "Wrong IID")
-			assert.Equal(t, "", *req.InstanceIdentityDocumentSignature, "Wrong IID sig")
-			assert.Equal(t, 4, len(req.TotalResources), "Wrong length of TotalResources")
-			resource, ok := findResource(req.TotalResources, "PORTS_UDP")
-			assert.True(t, ok, `Could not find resource "PORTS_UDP"`)
-			assert.Equal(t, "STRINGSET", *resource.Type, `Wrong type for resource "PORTS_UDP"`)
-			// 3 from expectedAttributes and 3 from additionalAttributes
-			assert.Equal(t, 6, len(req.Attributes), "Wrong number of Attributes")
-			for i := range req.Attributes {
-				if strings.Contains(*req.Attributes[i].Name, "capability") {
-					assert.Contains(t, fakeCapabilities, *req.Attributes[i].Name)
-				} else {
-					assert.Equal(t, expectedAttributes[*req.Attributes[i].Name], *req.Attributes[i].Value)
-				}
-			}
-			assert.Equal(t, len(containerInstanceTags), len(req.Tags), "Wrong number of tags")
-			reqTags := extractTagsMapFromRegisterContainerInstanceInput(req)
-			for k, v := range reqTags {
-				assert.Contains(t, containerInstanceTagsMap, k)
-				assert.Equal(t, containerInstanceTagsMap[k], v)
-			}
-		}).Return(&ecs.RegisterContainerInstanceOutput{
-			ContainerInstance: &ecs.ContainerInstance{
-				ContainerInstanceArn: aws.String("registerArn"),
-				Attributes:           buildAttributeList(fakeCapabilities, expectedAttributes)}},
-			nil),
-	)
-
-	arn, availabilityzone, err := client.RegisterContainerInstance("", capabilities,
-		containerInstanceTags, registrationToken, nil, "test:arn:outpost")
-	assert.NoError(t, err)
-	assert.Equal(t, "registerArn", arn)
-	assert.Equal(t, "us-west-2b", availabilityzone)
 }
 
 // TestRegisterContainerInstanceWithNegativeResource tests the registeration should fail with negative resource
@@ -579,6 +608,7 @@ func TestRegisterContainerInstanceWithEmptyTags(t *testing.T) {
 
 	expectedAttributes := map[string]string{
 		"ecs.os-type":               config.OSType,
+		"ecs.os-family":             config.GetOSFamily(),
 		"my_custom_attribute":       "Custom_Value1",
 		"my_other_custom_attribute": "Custom_Value2",
 	}
@@ -645,7 +675,8 @@ func TestRegisterBlankCluster(t *testing.T) {
 	client.(*APIECSClient).SetSDK(mc)
 
 	expectedAttributes := map[string]string{
-		"ecs.os-type": config.OSType,
+		"ecs.os-type":   config.OSType,
+		"ecs.os-family": config.GetOSFamily(),
 	}
 	defaultCluster := config.DefaultClusterName
 	gomock.InOrder(
@@ -701,7 +732,8 @@ func TestRegisterBlankClusterNotCreatingClusterWhenErrorNotClusterNotFound(t *te
 	client.(*APIECSClient).SetSDK(mc)
 
 	expectedAttributes := map[string]string{
-		"ecs.os-type": config.OSType,
+		"ecs.os-type":   config.OSType,
+		"ecs.os-family": config.GetOSFamily(),
 	}
 
 	gomock.InOrder(
@@ -768,6 +800,44 @@ func TestDiscoverNilTelemetryEndpoint(t *testing.T) {
 	_, err := client.DiscoverTelemetryEndpoint("containerInstance")
 	if err == nil {
 		t.Error("Expected error getting telemetry endpoint with old response")
+	}
+}
+
+func TestDiscoverServiceConnectEndpoint(t *testing.T) {
+	mockCtrl := gomock.NewController(t)
+	defer mockCtrl.Finish()
+	client, mc, _ := NewMockClient(mockCtrl, ec2.NewBlackholeEC2MetadataClient(), nil)
+	expectedEndpoint := "http://127.0.0.1"
+	mc.EXPECT().DiscoverPollEndpoint(gomock.Any()).Return(&ecs.DiscoverPollEndpointOutput{ServiceConnectEndpoint: &expectedEndpoint}, nil)
+	endpoint, err := client.DiscoverServiceConnectEndpoint("containerInstance")
+	if err != nil {
+		t.Error("Error getting service connect endpoint: ", err)
+	}
+	if expectedEndpoint != endpoint {
+		t.Errorf("Expected telemetry endpoint(%s) != endpoint(%s)", expectedEndpoint, endpoint)
+	}
+}
+
+func TestDiscoverServiceConnectEndpointError(t *testing.T) {
+	mockCtrl := gomock.NewController(t)
+	defer mockCtrl.Finish()
+	client, mc, _ := NewMockClient(mockCtrl, ec2.NewBlackholeEC2MetadataClient(), nil)
+	mc.EXPECT().DiscoverPollEndpoint(gomock.Any()).Return(nil, fmt.Errorf("Error getting endpoint"))
+	_, err := client.DiscoverServiceConnectEndpoint("containerInstance")
+	if err == nil {
+		t.Error("Expected error getting service connect endpoint, didn't get any")
+	}
+}
+
+func TestDiscoverNilServiceConnectEndpoint(t *testing.T) {
+	mockCtrl := gomock.NewController(t)
+	defer mockCtrl.Finish()
+	client, mc, _ := NewMockClient(mockCtrl, ec2.NewBlackholeEC2MetadataClient(), nil)
+	pollEndpoint := "http://127.0.0.1"
+	mc.EXPECT().DiscoverPollEndpoint(gomock.Any()).Return(&ecs.DiscoverPollEndpointOutput{Endpoint: &pollEndpoint}, nil)
+	_, err := client.DiscoverServiceConnectEndpoint("containerInstance")
+	if err == nil {
+		t.Error("Expected error getting service connect endpoint with old response")
 	}
 }
 
@@ -840,23 +910,23 @@ func TestDiscoverPollEndpointCacheHit(t *testing.T) {
 	defer mockCtrl.Finish()
 
 	mockSDK := mock_api.NewMockECSSDK(mockCtrl)
-	pollEndpoinCache := mock_async.NewMockCache(mockCtrl)
+	pollEndpointCache := mock_async.NewMockTTLCache(mockCtrl)
 	client := &APIECSClient{
 		credentialProvider: credentials.AnonymousCredentials,
 		config: &config.Config{
 			Cluster:   configuredCluster,
 			AWSRegion: "us-east-1",
 		},
-		standardClient:   mockSDK,
-		ec2metadata:      ec2.NewBlackholeEC2MetadataClient(),
-		pollEndpoinCache: pollEndpoinCache,
+		standardClient:    mockSDK,
+		ec2metadata:       ec2.NewBlackholeEC2MetadataClient(),
+		pollEndpointCache: pollEndpointCache,
 	}
 
 	pollEndpoint := "http://127.0.0.1"
-	pollEndpoinCache.EXPECT().Get("containerInstance").Return(
+	pollEndpointCache.EXPECT().Get("containerInstance").Return(
 		&ecs.DiscoverPollEndpointOutput{
 			Endpoint: aws.String(pollEndpoint),
-		}, true)
+		}, false, true)
 	output, err := client.discoverPollEndpoint("containerInstance")
 	if err != nil {
 		t.Fatalf("Error in discoverPollEndpoint: %v", err)
@@ -871,16 +941,16 @@ func TestDiscoverPollEndpointCacheMiss(t *testing.T) {
 	defer mockCtrl.Finish()
 
 	mockSDK := mock_api.NewMockECSSDK(mockCtrl)
-	pollEndpoinCache := mock_async.NewMockCache(mockCtrl)
+	pollEndpointCache := mock_async.NewMockTTLCache(mockCtrl)
 	client := &APIECSClient{
 		credentialProvider: credentials.AnonymousCredentials,
 		config: &config.Config{
 			Cluster:   configuredCluster,
 			AWSRegion: "us-east-1",
 		},
-		standardClient:   mockSDK,
-		ec2metadata:      ec2.NewBlackholeEC2MetadataClient(),
-		pollEndpoinCache: pollEndpoinCache,
+		standardClient:    mockSDK,
+		ec2metadata:       ec2.NewBlackholeEC2MetadataClient(),
+		pollEndpointCache: pollEndpointCache,
 	}
 	pollEndpoint := "http://127.0.0.1"
 	pollEndpointOutput := &ecs.DiscoverPollEndpointOutput{
@@ -888,9 +958,44 @@ func TestDiscoverPollEndpointCacheMiss(t *testing.T) {
 	}
 
 	gomock.InOrder(
-		pollEndpoinCache.EXPECT().Get("containerInstance").Return(nil, false),
+		pollEndpointCache.EXPECT().Get("containerInstance").Return(nil, false, false),
 		mockSDK.EXPECT().DiscoverPollEndpoint(gomock.Any()).Return(pollEndpointOutput, nil),
-		pollEndpoinCache.EXPECT().Set("containerInstance", pollEndpointOutput),
+		pollEndpointCache.EXPECT().Set("containerInstance", pollEndpointOutput),
+	)
+
+	output, err := client.discoverPollEndpoint("containerInstance")
+	if err != nil {
+		t.Fatalf("Error in discoverPollEndpoint: %v", err)
+	}
+	if aws.StringValue(output.Endpoint) != pollEndpoint {
+		t.Errorf("Mismatch in poll endpoint: %s != %s", aws.StringValue(output.Endpoint), pollEndpoint)
+	}
+}
+
+func TestDiscoverPollEndpointExpiredButDPEFailed(t *testing.T) {
+	mockCtrl := gomock.NewController(t)
+	defer mockCtrl.Finish()
+
+	mockSDK := mock_api.NewMockECSSDK(mockCtrl)
+	pollEndpointCache := mock_async.NewMockTTLCache(mockCtrl)
+	client := &APIECSClient{
+		credentialProvider: credentials.AnonymousCredentials,
+		config: &config.Config{
+			Cluster:   configuredCluster,
+			AWSRegion: "us-east-1",
+		},
+		standardClient:    mockSDK,
+		ec2metadata:       ec2.NewBlackholeEC2MetadataClient(),
+		pollEndpointCache: pollEndpointCache,
+	}
+	pollEndpoint := "http://127.0.0.1"
+	pollEndpointOutput := &ecs.DiscoverPollEndpointOutput{
+		Endpoint: &pollEndpoint,
+	}
+
+	gomock.InOrder(
+		pollEndpointCache.EXPECT().Get("containerInstance").Return(pollEndpointOutput, true, false),
+		mockSDK.EXPECT().DiscoverPollEndpoint(gomock.Any()).Return(nil, fmt.Errorf("error!")),
 	)
 
 	output, err := client.discoverPollEndpoint("containerInstance")
@@ -907,16 +1012,16 @@ func TestDiscoverTelemetryEndpointAfterPollEndpointCacheHit(t *testing.T) {
 	defer mockCtrl.Finish()
 
 	mockSDK := mock_api.NewMockECSSDK(mockCtrl)
-	pollEndpoinCache := async.NewLRUCache(1, 10*time.Minute)
+	pollEndpointCache := async.NewTTLCache(10 * time.Minute)
 	client := &APIECSClient{
 		credentialProvider: credentials.AnonymousCredentials,
 		config: &config.Config{
 			Cluster:   configuredCluster,
 			AWSRegion: "us-east-1",
 		},
-		standardClient:   mockSDK,
-		ec2metadata:      ec2.NewBlackholeEC2MetadataClient(),
-		pollEndpoinCache: pollEndpoinCache,
+		standardClient:    mockSDK,
+		ec2metadata:       ec2.NewBlackholeEC2MetadataClient(),
+		pollEndpointCache: pollEndpointCache,
 	}
 
 	pollEndpoint := "http://127.0.0.1"
@@ -1042,7 +1147,10 @@ func TestSubmitContainerStateChangeWhileTaskInPending(t *testing.T) {
 				TaskArn:       "arn",
 				ContainerName: "container",
 				RuntimeID:     "runtimeid",
-				Status:        apicontainerstatus.ContainerRunning,
+				Container: &apicontainer.Container{
+					NetworkModeUnsafe: testNetworkName,
+				},
+				Status: apicontainerstatus.ContainerRunning,
 			},
 		},
 	}
@@ -1079,4 +1187,137 @@ func extractTagsMapFromRegisterContainerInstanceInput(req *ecs.RegisterContainer
 		tagsMap[aws.StringValue(req.Tags[i].Key)] = aws.StringValue(req.Tags[i].Value)
 	}
 	return tagsMap
+}
+
+func getTestContainerStateChange() api.ContainerStateChange {
+	testContainer := &apicontainer.Container{
+		Name:              "cont",
+		NetworkModeUnsafe: testNetworkName,
+		Ports: []apicontainer.PortBinding{
+			{
+				ContainerPort: 10,
+				HostPort:      10,
+				Protocol:      apicontainer.TransportProtocolTCP,
+			},
+			{
+				ContainerPort: 12,
+				HostPort:      12,
+				Protocol:      apicontainer.TransportProtocolUDP,
+			},
+			{
+				ContainerPort: 15,
+				Protocol:      apicontainer.TransportProtocolTCP,
+			},
+			{
+				ContainerPortRange: "21-22",
+				Protocol:           apicontainer.TransportProtocolUDP,
+			},
+			{
+				ContainerPortRange: "96-97",
+				Protocol:           apicontainer.TransportProtocolTCP,
+			},
+		},
+		ContainerHasPortRange: true,
+		ContainerPortSet: map[int]struct{}{
+			10: {},
+			12: {},
+			15: {},
+		},
+		ContainerPortRangeMap: map[string]string{
+			"21-22": "60001-60002",
+			"96-97": "47001-47002",
+		},
+	}
+
+	testContainerStateChange := api.ContainerStateChange{
+		TaskArn:       "arn",
+		ContainerName: "cont",
+		Status:        apicontainerstatus.ContainerRunning,
+		Container:     testContainer,
+		PortBindings: []apicontainer.PortBinding{
+			{
+				ContainerPort: 10,
+				HostPort:      10,
+				BindIP:        "0.0.0.0",
+				Protocol:      apicontainer.TransportProtocolTCP,
+			},
+			{
+				ContainerPort: 12,
+				HostPort:      12,
+				BindIP:        "1.2.3.4",
+				Protocol:      apicontainer.TransportProtocolUDP,
+			},
+			{
+				ContainerPort: 15,
+				HostPort:      20,
+				BindIP:        "5.6.7.8",
+				Protocol:      apicontainer.TransportProtocolTCP,
+			},
+			{
+				ContainerPort: 21,
+				HostPort:      60001,
+				BindIP:        "::",
+				Protocol:      apicontainer.TransportProtocolUDP,
+			},
+			{
+				ContainerPort: 22,
+				HostPort:      60002,
+				BindIP:        "::",
+				Protocol:      apicontainer.TransportProtocolUDP,
+			},
+			{
+				ContainerPort: 96,
+				HostPort:      47001,
+				BindIP:        "0.0.0.0",
+				Protocol:      apicontainer.TransportProtocolTCP,
+			},
+			{
+				ContainerPort: 97,
+				HostPort:      47002,
+				BindIP:        "0.0.0.0",
+				Protocol:      apicontainer.TransportProtocolTCP,
+			},
+		},
+	}
+
+	return testContainerStateChange
+}
+
+func TestGetNetworkBindings(t *testing.T) {
+	testContainerStateChange := getTestContainerStateChange()
+	expectedNetworkBindings := []*ecs.NetworkBinding{
+		{
+			BindIP:        strptr("0.0.0.0"),
+			ContainerPort: int64ptr(intptr(10)),
+			HostPort:      int64ptr(intptr(10)),
+			Protocol:      strptr("tcp"),
+		},
+		{
+			BindIP:        strptr("1.2.3.4"),
+			ContainerPort: int64ptr(intptr(12)),
+			HostPort:      int64ptr(intptr(12)),
+			Protocol:      strptr("udp"),
+		},
+		{
+			BindIP:        strptr("5.6.7.8"),
+			ContainerPort: int64ptr(intptr(15)),
+			HostPort:      int64ptr(intptr(20)),
+			Protocol:      strptr("tcp"),
+		},
+		{
+			BindIP:             strptr("::"),
+			ContainerPortRange: strptr("21-22"),
+			HostPortRange:      strptr("60001-60002"),
+			Protocol:           strptr("udp"),
+		},
+		{
+			BindIP:             strptr("0.0.0.0"),
+			ContainerPortRange: strptr("96-97"),
+			HostPortRange:      strptr("47001-47002"),
+			Protocol:           strptr("tcp"),
+		},
+	}
+
+	networkBindings := getNetworkBindings(testContainerStateChange, false)
+	assert.ElementsMatch(t, expectedNetworkBindings, networkBindings)
 }

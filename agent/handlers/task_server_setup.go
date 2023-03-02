@@ -23,6 +23,7 @@ import (
 	"github.com/aws/amazon-ecs-agent/agent/config"
 	"github.com/aws/amazon-ecs-agent/agent/credentials"
 	"github.com/aws/amazon-ecs-agent/agent/engine/dockerstate"
+	agentAPITaskProtectionV1 "github.com/aws/amazon-ecs-agent/agent/handlers/agentapi/taskprotection/v1/handlers"
 	handlersutils "github.com/aws/amazon-ecs-agent/agent/handlers/utils"
 	v1 "github.com/aws/amazon-ecs-agent/agent/handlers/v1"
 	v2 "github.com/aws/amazon-ecs-agent/agent/handlers/v2"
@@ -51,11 +52,15 @@ func taskServerSetup(credentialsManager credentials.Manager,
 	state dockerstate.TaskEngineState,
 	ecsClient api.ECSClient,
 	cluster string,
+	region string,
 	statsEngine stats.Engine,
 	steadyStateRate int,
 	burstRate int,
 	availabilityZone string,
-	containerInstanceArn string) *http.Server {
+	vpcID string,
+	containerInstanceArn string,
+	apiEndpoint string,
+	acceptInsecureCert bool) *http.Server {
 	muxRouter := mux.NewRouter()
 
 	// Set this to false so that for request like "//v3//metadata/task"
@@ -69,9 +74,11 @@ func taskServerSetup(credentialsManager credentials.Manager,
 
 	v3HandlersSetup(muxRouter, state, ecsClient, statsEngine, cluster, availabilityZone, containerInstanceArn)
 
-	v4HandlersSetup(muxRouter, state, ecsClient, statsEngine, cluster, availabilityZone, containerInstanceArn)
+	v4HandlersSetup(muxRouter, state, ecsClient, statsEngine, cluster, availabilityZone, vpcID, containerInstanceArn)
 
-	limiter := tollbooth.NewLimiter(int64(steadyStateRate), nil)
+	agentAPIV1HandlersSetup(muxRouter, state, credentialsManager, cluster, region, apiEndpoint, acceptInsecureCert)
+
+	limiter := tollbooth.NewLimiter(float64(steadyStateRate), nil)
 	limiter.SetOnLimitReached(handlersutils.LimitReachedHandler(auditLogger))
 	limiter.SetBurst(burstRate)
 
@@ -141,10 +148,11 @@ func v4HandlersSetup(muxRouter *mux.Router,
 	statsEngine stats.Engine,
 	cluster string,
 	availabilityZone string,
+	vpcID string,
 	containerInstanceArn string) {
 	muxRouter.HandleFunc(v4.ContainerMetadataPath, v4.ContainerMetadataHandler(state))
-	muxRouter.HandleFunc(v4.TaskMetadataPath, v4.TaskMetadataHandler(state, ecsClient, cluster, availabilityZone, containerInstanceArn, false))
-	muxRouter.HandleFunc(v4.TaskWithTagsMetadataPath, v4.TaskMetadataHandler(state, ecsClient, cluster, availabilityZone, containerInstanceArn, true))
+	muxRouter.HandleFunc(v4.TaskMetadataPath, v4.TaskMetadataHandler(state, ecsClient, cluster, availabilityZone, vpcID, containerInstanceArn, false))
+	muxRouter.HandleFunc(v4.TaskWithTagsMetadataPath, v4.TaskMetadataHandler(state, ecsClient, cluster, availabilityZone, vpcID, containerInstanceArn, true))
 	muxRouter.HandleFunc(v4.ContainerStatsPath, v4.ContainerStatsHandler(state, statsEngine))
 	muxRouter.HandleFunc(v4.TaskStatsPath, v4.TaskStatsHandler(state, statsEngine))
 	muxRouter.HandleFunc(v4.ContainerAssociationsPath, v4.ContainerAssociationsHandler(state))
@@ -152,7 +160,24 @@ func v4HandlersSetup(muxRouter *mux.Router,
 	muxRouter.HandleFunc(v4.ContainerAssociationPath, v4.ContainerAssociationHandler(state))
 }
 
-// ServeTaskHTTPEndpoint serves task/container metadata, task/container stats, and IAM Role Credentials
+// agentAPIV1HandlersSetup adds handlers for Agent API V1
+func agentAPIV1HandlersSetup(muxRouter *mux.Router, state dockerstate.TaskEngineState, credentialsManager credentials.Manager, cluster string, region string, endpoint string, acceptInsecureCert bool) {
+	factory := agentAPITaskProtectionV1.TaskProtectionClientFactory{
+		Region: region, Endpoint: endpoint, AcceptInsecureCert: acceptInsecureCert,
+	}
+	muxRouter.
+		HandleFunc(
+			agentAPITaskProtectionV1.TaskProtectionPath(),
+			agentAPITaskProtectionV1.UpdateTaskProtectionHandler(state, credentialsManager, factory, cluster)).
+		Methods("PUT")
+	muxRouter.
+		HandleFunc(
+			agentAPITaskProtectionV1.TaskProtectionPath(),
+			agentAPITaskProtectionV1.GetTaskProtectionHandler(state, credentialsManager, factory, cluster)).
+		Methods("GET")
+}
+
+// ServeTaskHTTPEndpoint serves task/container metadata, task/container stats, IAM Role Credentials, and Agent APIs
 // for tasks being managed by the agent.
 func ServeTaskHTTPEndpoint(
 	ctx context.Context,
@@ -162,7 +187,8 @@ func ServeTaskHTTPEndpoint(
 	containerInstanceArn string,
 	cfg *config.Config,
 	statsEngine stats.Engine,
-	availabilityZone string) {
+	availabilityZone string,
+	vpcID string) {
 	// Create and initialize the audit log
 	logger, err := seelog.LoggerFromConfigAsString(audit.AuditLoggerConfig(cfg))
 	if err != nil {
@@ -173,8 +199,9 @@ func ServeTaskHTTPEndpoint(
 
 	auditLogger := audit.NewAuditLog(containerInstanceArn, cfg, logger)
 
-	server := taskServerSetup(credentialsManager, auditLogger, state, ecsClient, cfg.Cluster, statsEngine,
-		cfg.TaskMetadataSteadyStateRate, cfg.TaskMetadataBurstRate, availabilityZone, containerInstanceArn)
+	server := taskServerSetup(credentialsManager, auditLogger, state, ecsClient, cfg.Cluster, cfg.AWSRegion, statsEngine,
+		cfg.TaskMetadataSteadyStateRate, cfg.TaskMetadataBurstRate, availabilityZone, vpcID, containerInstanceArn, cfg.APIEndpoint,
+		cfg.AcceptInsecureCert)
 
 	go func() {
 		<-ctx.Done()

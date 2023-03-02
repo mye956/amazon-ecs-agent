@@ -1,3 +1,4 @@
+//go:build windows && unit
 // +build windows,unit
 
 // Copyright Amazon.com Inc. or its affiliates. All Rights Reserved.
@@ -26,6 +27,7 @@ import (
 	"github.com/aws/amazon-ecs-agent/agent/ecs_client/model/ecs"
 	"github.com/aws/amazon-ecs-agent/agent/ecscni"
 	mock_ecscni "github.com/aws/amazon-ecs-agent/agent/ecscni/mocks"
+	"github.com/aws/amazon-ecs-agent/agent/engine/serviceconnect"
 	mock_mobypkgwrapper "github.com/aws/amazon-ecs-agent/agent/utils/mobypkgwrapper/mocks"
 
 	"github.com/aws/aws-sdk-go/aws"
@@ -72,7 +74,7 @@ func TestVolumeDriverCapabilitiesWindows(t *testing.T) {
 			dockerclient.Version_1_18,
 			dockerclient.Version_1_19,
 		}),
-		cniClient.EXPECT().Version(ecscni.ECSENIPluginName).Return("v1", nil),
+		cniClient.EXPECT().Version(ecscni.ECSVPCENIPluginExecutable).Return("v1", nil),
 	)
 
 	expectedCapabilityNames := []string{
@@ -106,12 +108,13 @@ func TestVolumeDriverCapabilitiesWindows(t *testing.T) {
 	// Cancel the context to cancel async routines
 	defer cancel()
 	agent := &ecsAgent{
-		ctx:                ctx,
-		cfg:                conf,
-		dockerClient:       client,
-		cniClient:          cniClient,
-		credentialProvider: aws_credentials.NewCredentials(mockCredentialsProvider),
-		mobyPlugins:        mockMobyPlugins,
+		ctx:                   ctx,
+		cfg:                   conf,
+		dockerClient:          client,
+		cniClient:             cniClient,
+		credentialProvider:    aws_credentials.NewCredentials(mockCredentialsProvider),
+		mobyPlugins:           mockMobyPlugins,
+		serviceconnectManager: serviceconnect.NewManager(),
 	}
 	capabilities, err := agent.capabilities()
 	assert.NoError(t, err)
@@ -160,7 +163,7 @@ func TestSupportedCapabilitiesWindows(t *testing.T) {
 			dockerclient.Version_1_18,
 			dockerclient.Version_1_19,
 		}),
-		cniClient.EXPECT().Version(ecscni.ECSENIPluginName).Return("v1", nil),
+		cniClient.EXPECT().Version(ecscni.ECSVPCENIPluginExecutable).Return("v1", nil),
 	)
 
 	expectedCapabilityNames := []string{
@@ -183,7 +186,9 @@ func TestSupportedCapabilitiesWindows(t *testing.T) {
 		attributePrefix + capabilityContainerOrdering,
 		attributePrefix + capabilityFullTaskSync,
 		attributePrefix + capabilityEnvFilesS3,
-		attributePrefix + taskENIBlockInstanceMetadataAttributeSuffix}
+		attributePrefix + taskENIBlockInstanceMetadataAttributeSuffix,
+		attributePrefix + capabilityContainerPortRange,
+	}
 
 	var expectedCapabilities []*ecs.Attribute
 	for _, name := range expectedCapabilityNames {
@@ -202,12 +207,13 @@ func TestSupportedCapabilitiesWindows(t *testing.T) {
 	// Cancel the context to cancel async routines
 	defer cancel()
 	agent := &ecsAgent{
-		ctx:                ctx,
-		cfg:                conf,
-		dockerClient:       client,
-		cniClient:          cniClient,
-		credentialProvider: aws_credentials.NewCredentials(mockCredentialsProvider),
-		mobyPlugins:        mockMobyPlugins,
+		ctx:                   ctx,
+		cfg:                   conf,
+		dockerClient:          client,
+		cniClient:             cniClient,
+		credentialProvider:    aws_credentials.NewCredentials(mockCredentialsProvider),
+		mobyPlugins:           mockMobyPlugins,
+		serviceconnectManager: serviceconnect.NewManager(),
 	}
 	capabilities, err := agent.capabilities()
 	assert.NoError(t, err)
@@ -221,32 +227,6 @@ func TestSupportedCapabilitiesWindows(t *testing.T) {
 	}
 }
 
-func TestAppendGMSACapabilities(t *testing.T) {
-	var inputCapabilities []*ecs.Attribute
-	var expectedCapabilities []*ecs.Attribute
-
-	expectedCapabilities = append(expectedCapabilities,
-		[]*ecs.Attribute{
-			{
-				Name: aws.String(attributePrefix + capabilityGMSA),
-			},
-		}...)
-
-	agent := &ecsAgent{
-		cfg: &config.Config{
-			GMSACapable: true,
-		},
-	}
-
-	capabilities := agent.appendGMSACapabilities(inputCapabilities)
-
-	assert.Equal(t, len(expectedCapabilities), len(capabilities))
-	for i, expected := range expectedCapabilities {
-		assert.Equal(t, aws.StringValue(expected.Name), aws.StringValue(capabilities[i].Name))
-		assert.Equal(t, aws.StringValue(expected.Value), aws.StringValue(capabilities[i].Value))
-	}
-}
-
 func TestAppendGMSACapabilitiesFalse(t *testing.T) {
 	var inputCapabilities []*ecs.Attribute
 	var expectedCapabilities []*ecs.Attribute
@@ -256,7 +236,7 @@ func TestAppendGMSACapabilitiesFalse(t *testing.T) {
 
 	agent := &ecsAgent{
 		cfg: &config.Config{
-			GMSACapable: false,
+			GMSACapable: config.BooleanDefaultFalse{Value: config.ExplicitlyDisabled},
 		},
 	}
 
@@ -278,7 +258,7 @@ func TestAppendFSxWindowsFileServerCapabilities(t *testing.T) {
 
 	agent := &ecsAgent{
 		cfg: &config.Config{
-			FSxWindowsFileServerCapable: true,
+			FSxWindowsFileServerCapable: config.BooleanDefaultFalse{Value: config.ExplicitlyEnabled},
 		},
 	}
 
@@ -300,11 +280,71 @@ func TestAppendFSxWindowsFileServerCapabilitiesFalse(t *testing.T) {
 
 	agent := &ecsAgent{
 		cfg: &config.Config{
-			FSxWindowsFileServerCapable: false,
+			FSxWindowsFileServerCapable: config.BooleanDefaultFalse{Value: config.ExplicitlyDisabled},
 		},
 	}
 
 	capabilities := agent.appendFSxWindowsFileServerCapabilities(inputCapabilities)
 
 	assert.Equal(t, len(expectedCapabilities), len(capabilities))
+}
+
+func TestAppendExecCapabilities(t *testing.T) {
+	var inputCapabilities []*ecs.Attribute
+	var expectedCapabilities []*ecs.Attribute
+	execCapability := ecs.Attribute{
+		Name: aws.String(attributePrefix + capabilityExec),
+	}
+
+	expectedCapabilities = append(expectedCapabilities,
+		[]*ecs.Attribute{}...)
+	testCases := []struct {
+		name                     string
+		pathExists               func(string, bool) (bool, error)
+		getSubDirectories        func(path string) ([]string, error)
+		isWindows2016Instance    bool
+		shouldHaveExecCapability bool
+	}{
+		{
+			name:                     "execute-command capability should not be added on Win2016 instances",
+			pathExists:               func(path string, shouldBeDirectory bool) (bool, error) { return true, nil },
+			getSubDirectories:        func(path string) ([]string, error) { return []string{"3.0.236.0"}, nil },
+			isWindows2016Instance:    true,
+			shouldHaveExecCapability: false,
+		},
+		{
+			name:                     "execute-command capability should be added if not a Win2016 instances",
+			pathExists:               func(path string, shouldBeDirectory bool) (bool, error) { return true, nil },
+			getSubDirectories:        func(path string) ([]string, error) { return []string{"3.0.236.0"}, nil },
+			isWindows2016Instance:    false,
+			shouldHaveExecCapability: true,
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			isWindows2016 = func() (bool, error) { return tc.isWindows2016Instance, nil }
+			pathExists = tc.pathExists
+			getSubDirectories = tc.getSubDirectories
+
+			defer func() {
+				isWindows2016 = config.IsWindows2016
+				pathExists = defaultPathExists
+				getSubDirectories = defaultGetSubDirectories
+			}()
+			agent := &ecsAgent{
+				cfg: &config.Config{},
+			}
+
+			capabilities, err := agent.appendExecCapabilities(inputCapabilities)
+
+			assert.NoError(t, err)
+
+			if tc.shouldHaveExecCapability {
+				assert.Contains(t, capabilities, &execCapability)
+			} else {
+				assert.NotContains(t, capabilities, &execCapability)
+			}
+		})
+	}
 }

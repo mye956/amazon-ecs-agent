@@ -33,6 +33,7 @@ type Config struct {
 	// ClusterArn is the Name or full ARN of a Cluster to register into. It has
 	// been deprecated (and will eventually be removed) in favor of Cluster
 	ClusterArn string `deprecated:"Please use Cluster instead"`
+
 	// Cluster can either be the Name or full ARN of a Cluster. This is the
 	// cluster the agent should register this ContainerInstance into. If this
 	// value is not set, it will default to "default"
@@ -101,8 +102,9 @@ type Config struct {
 	// on the instance
 	DisableDockerHealthCheck BooleanDefaultFalse
 
-	// ReservedMemory specifies the amount of memory (in MB) to reserve for things
-	// other than containers managed by ECS
+	// ReservedMemory specifies Reduction, in MiB, of the memory capacity of the instance
+	// that is reported to Amazon ECS. Used by Amazon ECS when placing tasks on container instances.
+	// This doesn't reserve memory usage on the instance
 	ReservedMemory uint16
 
 	// DockerStopTimeout specifies the amount of time before a SIGKILL is issued to
@@ -144,6 +146,12 @@ type Config struct {
 	// TaskCleanupWaitDuration specifies the time to wait after a task is stopped
 	// until cleanup of task resources is started.
 	TaskCleanupWaitDuration time.Duration
+
+	// TaskCleanupWaitDurationJitter specifies a jitter for task cleanup wait duration.
+	// When specified to a non-zero duration (default is zero), the task cleanup wait duration for each task
+	// will be a random duration between [TaskCleanupWaitDuration, TaskCleanupWaitDuration +
+	// TaskCleanupWaitDurationJitter].
+	TaskCleanupWaitDurationJitter time.Duration
 
 	// TaskIAMRoleEnabled specifies if the Agent is capable of launching
 	// tasks with IAM Roles.
@@ -321,12 +329,40 @@ type Config struct {
 
 	// GMSACapable is the config option to indicate if gMSA is supported.
 	// It should be enabled by default only if the container instance is part of a valid active directory domain.
-	GMSACapable bool
+	GMSACapable BooleanDefaultFalse
 
 	// VolumePluginCapabilities specifies the capabilities of the ecs volume plugin.
 	VolumePluginCapabilities []string
 
 	// FSxWindowsFileServerCapable is the config option to indicate if fsxWindowsFileServer is supported.
 	// It should be enabled by default only if the container instance is part of a valid active directory domain.
-	FSxWindowsFileServerCapable bool
+	FSxWindowsFileServerCapable BooleanDefaultFalse
+
+	// External specifies whether agent is running on external compute capacity (i.e. outside of aws).
+	External BooleanDefaultFalse
+
+	// InstanceENIDNSServerList stores the list of DNS servers for the primary instance ENI.
+	// Currently, this field is only populated for Windows and is used during task networking setup.
+	InstanceENIDNSServerList []string
+
+	// RuntimeStatsLogFile stores the path where the golang runtime stats are periodically logged
+	RuntimeStatsLogFile string
+
+	// EnableRuntimeStats specifies if pprof should be enabled through the agent introspection port. By default, this configuration
+	// is set to false and can be overridden by means of the ECS_ENABLE_RUNTIME_STATS environment variable.
+	EnableRuntimeStats BooleanDefaultFalse
+
+	// ShouldExcludeIPv6PortBinding specifies whether agent should exclude IPv6 port bindings reported from docker. This configuration
+	// is set to true by default, and can be overridden by the ECS_EXCLUDE_IPV6_PORTBINDING environment variable. This is a workaround
+	// for docker's bug as detailed in https://github.com/aws/amazon-ecs-agent/issues/2870.
+	ShouldExcludeIPv6PortBinding BooleanDefaultTrue
+
+	// WarmPoolsSupport specifies whether the agent should poll IMDS to check the target lifecycle state for a starting
+	// instance
+	WarmPoolsSupport BooleanDefaultFalse
+
+	// DynamicHostPortRange specifies the dynamic host port range that the agent
+	// uses to assign host ports from, for a container port range mapping.
+	// This defaults to the platform specific ephemeral host port range
+	DynamicHostPortRange string
 }
