@@ -4,6 +4,7 @@ env:
   variables:
     # Github username of the forked repo on which to make builds
     GITHUBUSERNAME: aws
+    # GITHUBUSERNAME: mye956
 
 phases:
   install:
@@ -36,6 +37,7 @@ phases:
         if [[ $GITHUBUSERNAME != "aws" ]] ; then
           mv $GITHUBUSERNAME aws
         fi
+      - ls -al
       - cd aws/amazon-ecs-agent
 
       # Building agent deb

@@ -436,7 +436,7 @@ Resources:
       Stages:
         - Name: Source
           Actions:
-            - Name: Source
+            - Name: Github
               ActionTypeId:
                 Category: Source
                 Owner: AWS
@@ -447,10 +447,11 @@ Resources:
                 # Owner: 'mye956'
                 FullRepositoryId: !Ref GithubFullRepoName
                 BranchName: !Ref GithubBranchName
+                OutputArtifactFormat: CODEBUILD_CLONE_REF
                 # PollForSourceChanges: false
                 # OAuthToken: '{{resolve:secretsmanager:CODEBUILD_GITHUB_ACCESS:SecretString:CODEBUILD_GITHUB_ACCESS_TOKEN}}'
               OutputArtifacts:
-                - Name: SourceCode
+                - Name: SourceArtifact
               RunOrder: 1
               Namespace: SourceVariables
         - Name: Build
@@ -463,8 +464,11 @@ Resources:
                 Version: '1'
               Configuration:
                 ProjectName: !Ref CodeBuildTest
+                EnvironmentVariables: '[{"name":"GIT_COMMIT_SHA","value":"#{SourceVariables.CommitId}","type":"PLAINTEXT"}]'
               OutputArtifacts:
-                - Name: BuildOutput
+                - Name: TestBuildArtifact
               InputArtifacts:
-                - Name: SourceCode
+                - Name: SourceArtifact
+              RunOrder: 1
+              Namespace: TestBuildVariables
               
