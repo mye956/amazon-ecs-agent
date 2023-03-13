@@ -33,9 +33,9 @@ phases:
       # Path readjustment for codebuild testing with fork and setting GOPATH appropriately
       - cd ../../../..
       - cd src/github.com
+      - echo $GITHUBUSERNAME
       - |
         if [[ $GITHUBUSERNAME != "aws" ]] ; then
-          echo $GITHUBUSERNAME
           mv $GITHUBUSERNAME aws
         fi
       - ls -al
