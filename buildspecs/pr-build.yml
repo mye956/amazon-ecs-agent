@@ -3,7 +3,8 @@ version: 0.2
 env:
   variables:
     # Github username of the forked repo on which to make builds
-    GITHUBUSERNAME: aws
+    # GITHUBUSERNAME: aws
+    GITHUBUSERNAME: mye956
 
 phases:
   install:
