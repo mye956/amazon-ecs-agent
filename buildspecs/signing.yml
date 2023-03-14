@@ -54,7 +54,7 @@ phases:
       - ECS_AGENT_ARM_RPM="amazon-ecs-init-${INIT_VERSION}.aarch64.rpm"
       - ECS_AGENT_UBUNTU_ARM_DEB="amazon-ecs-init-${INIT_VERSION}.arm64.deb"
 
-      - ECS_ANYWHERE_SCRIPT="ecs-anywhere-install-${INIT_VERSION}.sh
+      - ECS_ANYWHERE_SCRIPT="ecs-anywhere-install-${INIT_VERSION}.sh"
       - ECS_ANYWHERE_LATEST_SCRIPT="ecs-anywhere-install-latest.sh"
       # Get the private key from secrets manager, jq parse it, turn it into raw output, pipe to file
       - aws secretsmanager get-secret-value --secret-id $PRIVATE_KEY_ARN | jq -r '.SecretString' > private.gpg
