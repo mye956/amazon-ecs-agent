@@ -3,7 +3,8 @@ version: 0.2
 env:
   variables:
     # Github username of the forked repo on which to make builds
-    GITHUBUSERNAME: aws
+    # GITHUBUSERNAME: aws
+    GITHUBUSERNAME: mye956
 
 phases:
   install:
@@ -53,7 +54,7 @@ phases:
       - export GOPATH=$GOPATH:$(pwd)
       - cd src/github.com
       - |
-        if [[ $GITHUBUSERNAME != "aws" ]] ; then
+        if [ $GITHUBUSERNAME != "aws" ] ; then
           mv $GITHUBUSERNAME aws
         fi
       - cd aws/amazon-ecs-agent

@@ -3,7 +3,8 @@ version: 0.2
 env:
   variables:
     # Github username of the forked repo on which to make builds
-    GITHUBUSERNAME: aws
+    # GITHUBUSERNAME: aws
+    GITHUBUSERNAME: mye956
 
 phases:
   install:
@@ -32,10 +33,12 @@ phases:
       # Path readjustment for codebuild testing with fork and setting GOPATH appropriately
       - cd ../../../..
       - cd src/github.com
+      - echo $GITHUBUSERNAME
       - |
-        if [[ $GITHUBUSERNAME != "aws" ]] ; then
+        if [ $GITHUBUSERNAME != "aws" ] ; then
           mv $GITHUBUSERNAME aws
         fi
+      - ls -al
       - cd aws/amazon-ecs-agent
 
       # Building agent deb
