@@ -71,6 +71,12 @@ Resources:
               Pattern: !Sub '^${GithubBranchName}$'
             - Type: ACTOR_ACCOUNT_ID
               Pattern: '3102848' # YashdalfTheGray
+          - - Type: EVENT
+              Pattern: 'PULL_REQUEST_CREATED,PULL_REQUEST_UPDATED,PULL_REQUEST_REOPENED'
+            - Type: BASE_REF
+              Pattern: !Sub '^${GithubBranchName}$'
+            - Type: ACTOR_ACCOUNT_ID
+              Pattern: '38165642' # mye956
         Webhook: true
       Visibility: PRIVATE
   UbuntuArmProject:
@@ -125,6 +131,12 @@ Resources:
               Pattern: !Sub '^${GithubBranchName}$'
             - Type: ACTOR_ACCOUNT_ID
               Pattern: '3102848' # YashdalfTheGray
+          - - Type: EVENT
+              Pattern: 'PULL_REQUEST_CREATED,PULL_REQUEST_UPDATED,PULL_REQUEST_REOPENED'
+            - Type: BASE_REF
+              Pattern: !Sub '^${GithubBranchName}$'
+            - Type: ACTOR_ACCOUNT_ID
+              Pattern: '38165642' # mye956
         Webhook: true
       Visibility: PRIVATE
   ArmProject:
@@ -179,6 +191,12 @@ Resources:
               Pattern: !Sub '^${GithubBranchName}$'
             - Type: ACTOR_ACCOUNT_ID
               Pattern: '3102848' # YashdalfTheGray
+          - - Type: EVENT
+              Pattern: 'PULL_REQUEST_CREATED,PULL_REQUEST_UPDATED,PULL_REQUEST_REOPENED'
+            - Type: BASE_REF
+              Pattern: !Sub '^${GithubBranchName}$'
+            - Type: ACTOR_ACCOUNT_ID
+              Pattern: '38165642' # mye956
         Webhook: true
       Visibility: PRIVATE
   AmdProject:
@@ -233,6 +251,12 @@ Resources:
               Pattern: !Sub '^${GithubBranchName}$'
             - Type: ACTOR_ACCOUNT_ID
               Pattern: '3102848' # YashdalfTheGray
+          - - Type: EVENT
+              Pattern: 'PULL_REQUEST_CREATED,PULL_REQUEST_UPDATED,PULL_REQUEST_REOPENED'
+            - Type: BASE_REF
+              Pattern: !Sub '^${GithubBranchName}$'
+            - Type: ACTOR_ACCOUNT_ID
+              Pattern: '38165642' # mye956
         Webhook: true
       Visibility: PRIVATE
   ServiceRoleAmd:

@@ -116,7 +116,7 @@ Resources:
   BuildAndSignCodePipelineArtifactBucket:
     Type: AWS::S3::Bucket
     Properties:
-      BucketName: !Sub 'codepipeline-${AWS::Region}-${AWS::AccountId}-artifacts'
+      BucketName: !Sub 'yemike-codepipeline-${AWS::Region}-${AWS::AccountId}-artifacts'
       PublicAccessBlockConfiguration:
         BlockPublicAcls: true
         BlockPublicPolicy: true
@@ -151,7 +151,7 @@ Resources:
               - Sid: ArtifactBucketAccess
                 Effect: Allow
                 Resource:
-                  - !Sub 'arn:aws:s3:::codepipeline-${AWS::Region}-*'
+                  - !Sub 'arn:aws:s3:::yemike-codepipeline-${AWS::Region}-*'
                 Action:
                   - s3:PutObject
                   - s3:GetObject
@@ -229,7 +229,7 @@ Resources:
               - Sid: ArtifactBucketAccess
                 Effect: Allow
                 Resource:
-                  - !Sub 'arn:aws:s3:::codepipeline-${AWS::Region}-*'
+                  - !Sub 'arn:aws:s3:::yemike-codepipeline-${AWS::Region}-*'
                 Action:
                   - s3:PutObject
                   - s3:GetObject
@@ -281,7 +281,7 @@ Resources:
               - Sid: ArtifactBucketAccess
                 Effect: Allow
                 Resource:
-                  - !Sub 'arn:aws:s3:::codepipeline-${AWS::Region}-*'
+                  - !Sub 'arn:aws:s3:::yemike-codepipeline-${AWS::Region}-*'
                 Action:
                   - s3:PutObject
                   - s3:GetObject
@@ -333,7 +333,7 @@ Resources:
               - Sid: ArtifactBucketAccess
                 Effect: Allow
                 Resource:
-                  - !Sub 'arn:aws:s3:::codepipeline-${AWS::Region}-*'
+                  - !Sub 'arn:aws:s3:::yemike-codepipeline-${AWS::Region}-*'
                 Action:
                   - s3:PutObject
                   - s3:GetObject
@@ -463,7 +463,7 @@ Resources:
               - Sid: ArtifactBucketAccess
                 Effect: Allow
                 Resource:
-                  - !Sub 'arn:aws:s3:::codepipeline-${AWS::Region}-*'
+                  - !Sub 'arn:aws:s3:::yemike-codepipeline-${AWS::Region}-*'
                 Action:
                   - s3:PutObject
                   - s3:GetObject
@@ -541,7 +541,7 @@ Resources:
               - Sid: ArtifactBucketAccess
                 Effect: Allow
                 Resource:
-                  - !Sub 'arn:aws:s3:::codepipeline-${AWS::Region}-*'
+                  - !Sub 'arn:aws:s3:::yemike-codepipeline-${AWS::Region}-*'
                 Action:
                   - s3:PutObject
                   - s3:GetObject
@@ -660,7 +660,7 @@ Resources:
               - Sid: ArtifactBucketAccess
                 Effect: Allow
                 Resource:
-                  - !Sub 'arn:aws:s3:::codepipeline-${AWS::Region}-*'
+                  - !Sub 'arn:aws:s3:::yemike-codepipeline-${AWS::Region}-*'
                 Action:
                   - s3:PutObject
                   - s3:GetObject
@@ -692,6 +692,13 @@ Resources:
         ComputeType: BUILD_GENERAL1_SMALL
         ImagePullCredentialsType: CODEBUILD
         Image: aws/codebuild/amazonlinux2-x86_64-standard:3.0
+        EnvironmentVariables:
+          - Name: RESULTS_BUCKET_URI
+            Type: PLAINTEXT
+            Value: !Ref ReleaseArtifactsBucketS3Uri
+          - Name: GITHUB_BRANCH_NAME
+            Type: PLAINTEXT
+            Value: !Ref GithubBranchName
       Source:
         BuildSpec: buildspecs/release-config.yml
         Type: CODEPIPELINE
@@ -731,7 +738,7 @@ Resources:
               - Sid: ArtifactBucketAccess
                 Effect: Allow
                 Resource:
-                  - !Sub 'arn:aws:s3:::codepipeline-${AWS::Region}-*'
+                  - !Sub 'arn:aws:s3:::yemike-codepipeline-${AWS::Region}-*'
                 Action:
                   - s3:PutObject
                   - s3:GetObject
@@ -773,6 +780,9 @@ Resources:
           - Name: RESULTS_BUCKET_URI
             Type: PLAINTEXT
             Value: !Ref ReleaseArtifactsBucketS3Uri
+          - Name: GITHUB_BRANCH_NAME
+            Type: PLAINTEXT
+            Value: !Ref GithubBranchName
       Source:
         BuildSpec: buildspecs/copy.yml
         Type: CODEPIPELINE
@@ -818,7 +828,7 @@ Resources:
               - Sid: ArtifactBucketAccess
                 Effect: Allow
                 Resource:
-                  - !Sub 'arn:aws:s3:::codepipeline-${AWS::Region}-*'
+                  - !Sub 'arn:aws:s3:::yemike-codepipeline-${AWS::Region}-*'
                 Action:
                   - s3:PutObject
                   - s3:GetObject
@@ -928,7 +938,7 @@ Resources:
       RoleArn: !GetAtt BuildAndSignCodePipelineServiceRole.Arn
       ArtifactStore:
         Type: S3
-        Location: !Sub 'codepipeline-${AWS::Region}-${AWS::AccountId}-artifacts'
+        Location: !Sub 'yemike-codepipeline-${AWS::Region}-${AWS::AccountId}-artifacts'
       Stages:
         - Name: Source
           Actions:
