@@ -667,6 +667,12 @@ Resources:
                   - s3:GetObjectVersion
                   - s3:GetBucketAcl
                   - s3:GetBucketLocation
+              - Sid: ResultsBucketAccess
+                Effect: Allow
+                Resource:
+                  - !Ref ReleaseArtifactsBucketArn
+                  - !Sub '${ReleaseArtifactsBucketArn}/*'
+                Action: s3:*
               - Sid: CodeBuildCreateReportAccess
                 Effect: Allow
                 Resource:
