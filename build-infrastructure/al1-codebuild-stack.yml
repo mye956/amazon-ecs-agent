@@ -1,0 +1,52 @@
+AWSTemplateFormatVersion: 2010-09-09
+Description: A template that brings up a simple code pipeline for testing
+
+Parameters:
+    GithubFullRepoName:
+      Type: String
+      Description: Full name of the agent repository to use (e.g. https://github.com/aws/amazon-ecs-agent.git)
+    GithubBranchName:
+      Type: String
+      Description: Name of the base branch to use to build, PRs to which will trigger builds (e.g. refs/heads/dev)
+    # CodeStarConnectionArn:
+    #   Type: String
+    #   Description: The ARN of the connection to use to connect to GitHub
+    ServiceRoleArn:
+      Type: String
+      Description: The ARN of the CodeBuild service role
+
+Resources:
+  ModifyAndCopyJSON:
+    Type: 'AWS::CodeBuild::Project'
+    Properties:
+      Artifacts:
+        Type: NO_ARTIFACTS
+      BadgeEnabled: false
+      ConcurrentBuildLimit: 10
+      Description: A CodeBuild project to build artifacts (ARM). Builds are triggered by PR creation and updates, and artifacts are saved in S3
+      Environment:
+        Type: LINUX_CONTAINER
+        ComputeType: BUILD_GENERAL1_SMALL
+        ImagePullCredentialsType: CODEBUILD
+        Image: aws/codebuild/amazonlinux2-x86_64-standard:3.0
+      Name: !Ref 'AWS::StackName'
+      QueuedTimeoutInMinutes: 60
+      ServiceRole: !Ref ServiceRoleArn
+      Source:
+        BuildSpec: buildspecs/test-buildspec.yml
+        Location: !Ref GithubFullRepoName
+        Type: GITHUB
+      TimeoutInMinutes: 60
+      Triggers:
+        BuildType: BUILD
+        # Config list of developers allowlisted to create builds when creating PRs to GithubBranchName
+        # This allow list can be modified using aws-cli or aws-sdk
+        # CodeBuild also supports pattern matches using regex, but this is not useful for listing different Github IDs
+        # so they have to be listed separately
+        FilterGroups:
+          - - Type: EVENT
+              Pattern: 'PULL_REQUEST_MERGED'
+            - Type: BASE_REF
+              Pattern: !Sub '^${GithubBranchName}$'
+        Webhook: true
+      Visibility: PRIVATE
