@@ -52,3 +52,5 @@ phases:
         }
         EOF
       - cat agent.json
+      - aws s3 cp ./agentVersionV2-${GITHUB_BRANCH}.json s3://yemike-testbucket/agentVersionV2-${GITHUB_BRANCH}.json
+      - aws s3 cp ./agent.json s3://yemike-testbucket/$GIT_COMMIT_SHA/agent.json
