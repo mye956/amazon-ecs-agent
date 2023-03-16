@@ -26,3 +26,4 @@ phases:
       # Formatting file
       - jq . agentVersionV2-${GITHUB_BRANCH}-COPY.json > agentVersionV2-${GITHUB_BRANCH}.json
       - cat agentVersionV2-${GITHUB_BRANCH}.json
+      
