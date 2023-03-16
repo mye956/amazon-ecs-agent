@@ -8,9 +8,8 @@ phases:
       - ls
       - pwd
       - printenv
-      # - GITHUB_BRANCH=$(echo ${CODEBUILD_WEBHOOK_HEAD_REF} | cut -d "/" -f3-)
-      # - echo $GITHUB_BRANCH
-      # - echo $BRANCH
+      - GITHUB_BRANCH=$(echo ${CODEBUILD_WEBHOOK_HEAD_REF} | cut -d "/" -f3-)
+      - echo $GITHUB_BRANCH
       - git branch
       - BRANCH=$(echo ${CODEBUILD_WEBHOOK_BASE_REF} | cut -d "/" -f3-)
       - echo $BRANCH
