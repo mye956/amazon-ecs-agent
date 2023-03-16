@@ -86,6 +86,7 @@ phases:
       - cat <<< $(jq '.releaseAgentVersion = '\"$AGENT_VERSION\"' | .currentAgentVersion = '\"$CURR_VER\"'' agentVersionV2-${GITHUB_SOURCE_BRANCH_NAME}.json) > agentVersionV2-${GITHUB_SOURCE_BRANCH_NAME}-COPY.json
       # Formatting file
       - jq . agentVersionV2-${GITHUB_SOURCE_BRANCH_NAME}-COPY.json > agentVersionV2-${GITHUB_SOURCE_BRANCH_NAME}.json
+      - cat agentVersionV2-${GITHUB_SOURCE_BRANCH_NAME}-COPY.json
       - cat agentVersionV2-${GITHUB_SOURCE_BRANCH_NAME}.json
 
 artifacts:
