@@ -15,7 +15,7 @@ phases:
       - echo $BRANCH
       - GIT_COMMIT_SHA=$(git rev-parse $BRANCH)
       - GIT_COMMIT_SHORT_SHA=$(git rev-parse --short=8 $BRANCH)
-      - aws s3 cp s3://yemike-testbucket/agentVersionV2-${GITHUB_BRANCH}.json ./agentVersionV2-${GITHUB_BRANCH}.json
+      - aws s3 cp s3://yemike-testbucket/agentVersionV2/agentVersionV2-${GITHUB_BRANCH}.json ./agentVersionV2-${GITHUB_BRANCH}.json
       - cat agentVersionV2-${GITHUB_BRANCH}.json
       - RELEASE_DATE=$(date +'%Y%m%d')
       
@@ -52,5 +52,5 @@ phases:
         }
         EOF
       - cat agent.json
-      - aws s3 cp ./agentVersionV2-${GITHUB_BRANCH}.json s3://yemike-testbucket/agentVersionV2-${GITHUB_BRANCH}.json
-      - aws s3 cp ./agent.json s3://yemike-testbucket/$GIT_COMMIT_SHA/agent.json
+      - aws s3 cp ./agentVersionV2-${GITHUB_BRANCH}.json s3://yemike-testbucket/agentVersionV2/agentVersionV2-${GITHUB_BRANCH}.json
+      - aws s3 cp ./agent.json s3://yemike-testbucket/al1-patch/agent.json
