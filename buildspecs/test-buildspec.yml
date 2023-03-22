@@ -37,7 +37,9 @@ phases:
       - |
         if [[ ! $AGENT_VERSION =~ "${CURR_VER}" ]] ; then
           echo "New Agent release version ${AGENT_VERSION}."
+          # Creating temp file with the updated existing agentVersion-<branch>.json file
           cat <<< $(jq '.releaseAgentVersion = '\"$AGENT_VERSION\"' | .currentAgentVersion = '\"$CURR_VER\"'' agentVersionV2-${GITHUB_SOURCE_BRANCH_NAME}.json) > agentVersionV2-${GITHUB_SOURCE_BRANCH_NAME}-COPY.json
+          # Update the with the new agentVersion-<branch>.json file
           jq . agentVersionV2-${GITHUB_SOURCE_BRANCH_NAME}-COPY.json > agentVersionV2-${GITHUB_SOURCE_BRANCH_NAME}.json
         fi
 
