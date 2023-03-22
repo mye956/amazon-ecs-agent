@@ -62,7 +62,7 @@ phases:
       # Grabbing the old release agent version (will be the new current agent version)
       - CURR_VER=$(jq -r '.releaseAgentVersion' agentVersionV2-${GITHUB_SOURCE_BRANCH_NAME}.json)
 
-      # Checking to see if there's a new release agent version than before 
+      # Checking to see if there's a new release agent version to be released
       - |
         if [[ ! $AGENT_VERSION =~ "${CURR_VER}" ]] ; then
           echo "New Agent release version ${AGENT_VERSION}."
