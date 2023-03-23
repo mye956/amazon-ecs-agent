@@ -11,6 +11,9 @@ Parameters:
     GithubRepositoryName:
       Type: String
       Description: The name of the repository
+    GithubSourceBranchName:
+      Type: String
+      Description: Name of the source branch used for the PRs (e.g. refs/heads/al1-patch)
     CodeStarConnectionArn:
       Type: String
       Description: The ARN of the connection to use to connect to GitHub
@@ -105,6 +108,10 @@ Resources:
           ComputeType: BUILD_GENERAL1_SMALL
           ImagePullCredentialsType: CODEBUILD
           Image: aws/codebuild/amazonlinux2-x86_64-standard:3.0
+          EnvironmentVariables:
+            - Name: GITHUB_SOURCE_BRANCH_NAME
+              Type: PLAINTEXT
+              Value: !Ref GithubSourceBranchName
     
   CodePipelineServiceRole:
     Type: 'AWS::IAM::Role'
