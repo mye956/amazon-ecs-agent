@@ -28,13 +28,8 @@ EOF
 # Downloading the agentVersionV2-<branch>.json (it is assumed that it already exists)
 aws s3 cp ${RESULTS_BUCKET_URI}/agentVersionV2/agentVersionV2-${GITHUB_SOURCE_BRANCH_NAME}.json agentVersionV2-${GITHUB_SOURCE_BRANCH_NAME}.json
 
-ls 
-cat agentVersionV2-${GITHUB_SOURCE_BRANCH_NAME}.json
-
 # Grabbing the new current and release agent version
-echo $(jq -r '.releaseAgentVersion' agentVersionV2-${GITHUB_SOURCE_BRANCH_NAME}.json)
 CURR_VER=$(jq -r '.releaseAgentVersion' agentVersionV2-${GITHUB_SOURCE_BRANCH_NAME}.json)
-echo "Current Version: ${CURR_VER}"
 
 if [[ ! $AGENT_VERSION =~ "${CURR_VER}" ]] ; then
     echo "New Agent release version ${AGENT_VERSION}."
