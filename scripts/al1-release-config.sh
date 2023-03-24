@@ -35,8 +35,6 @@ CURR_VER=$(jq -r '.agentReleaseVersion' agentVersionV2-${GITHUB_SOURCE_BRANCH_NA
 # Checking to see if there's a new release agent version to be released
 if [[ ! $AGENT_VERSION =~ "${CURR_VER}" ]] ; then
     # Updating the agentVersionV2-<branch>.json file with new current and release agent versions and copying it to a temp file
-    # cat <<< $(jq '.agentReleaseVersion = '\"$AGENT_VERSION\"' | .agentCurrentVersion = '\"$CURR_VER\"'' agentVersionV2-${GITHUB_SOURCE_BRANCH_NAME}.json) > agentVersionV2-${GITHUB_SOURCE_BRANCH_NAME}-COPY.json
-
     jq ".agentReleaseVersion = \"$AGENT_VERSION\" | .agentCurrentVersion = \"$CURR_VER\"" agentVersionV2-${GITHUB_SOURCE_BRANCH_NAME}.json > agentVersionV2-${GITHUB_SOURCE_BRANCH_NAME}-COPY.json
 
     # Replace existing agentVersionV2-<branch>.json file with the temp file
