@@ -38,6 +38,12 @@ if [[ ! $AGENT_VERSION =~ "${CURR_VER}" ]] ; then
     jq . agentVersionV2-${GITHUB_SOURCE_BRANCH_NAME}-COPY.json > agentVersionV2-${GITHUB_SOURCE_BRANCH_NAME}.json
 fi
 
+echo "agent.json file to be uploaded"
+cat agent.json
+
+echo "Updated agentVersion-${GITHUB_SOURCE_BRANCH_NAME}.json file to be uploaded"
+cat agentVersionV2-${GITHUB_SOURCE_BRANCH_NAME}.json
+
 # Uploading new agentVersionV2-<branch>.json and agent.json files
 aws s3 cp ./agentVersionV2-${GITHUB_SOURCE_BRANCH_NAME}.json ${RESULTS_BUCKET_URI}/agentVersionV2/agentVersionV2-${GITHUB_SOURCE_BRANCH_NAME}.json
 aws s3 cp ./agent.json ${RESULTS_BUCKET_URI}/${GITHUB_SOURCE_BRANCH_NAME}/agent.json
