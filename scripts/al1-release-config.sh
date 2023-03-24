@@ -4,7 +4,7 @@ GITHUB_DEST_BRANCH_NAME=$(echo ${CODEBUILD_WEBHOOK_BASE_REF} | cut -d "/" -f3-)
 GIT_COMMIT_SHA=$(git rev-parse $GITHUB_DEST_BRANCH_NAME)
 GIT_COMMIT_SHORT_SHA=$(git rev-parse --short=8 $GITHUB_DEST_BRANCH_NAME)
 RELEASE_DATE=$(date +'%Y%m%d')
-AGENT_VERSION=$(cat VERSION)
+AGENT_VERSION=$(cat ../VERSION)
 
 
 cat << EOF > agent.json
