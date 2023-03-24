@@ -30,9 +30,9 @@ aws s3 cp ${RESULTS_BUCKET_URI}/agentVersionV2/agentVersionV2-${GITHUB_SOURCE_BR
 
 ls 
 cat agentVersionV2-${GITHUB_SOURCE_BRANCH_NAME}.json
- 
+
 # Grabbing the new current and release agent version
-echo $(jq -r '.releaseAgentVersion' ./agentVersionV2-${GITHUB_SOURCE_BRANCH_NAME}.json)
+echo $(jq -r '.releaseAgentVersion' agentVersionV2-${GITHUB_SOURCE_BRANCH_NAME}.json)
 CURR_VER=$(jq -r '.releaseAgentVersion' agentVersionV2-${GITHUB_SOURCE_BRANCH_NAME}.json)
 echo "Current Version: ${CURR_VER}"
 
