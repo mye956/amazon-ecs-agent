@@ -7,14 +7,42 @@ github.com/Microsoft/go-winio/pkg/guid
 github.com/Microsoft/hcsshim/osversion
 # github.com/aws/amazon-ecs-agent/ecs-agent v0.0.0 => ../ecs-agent
 ## explicit; go 1.19
+github.com/aws/amazon-ecs-agent/ecs-agent/acs/client
 github.com/aws/amazon-ecs-agent/ecs-agent/acs/model/ecsacs
+github.com/aws/amazon-ecs-agent/ecs-agent/acs/session
+github.com/aws/amazon-ecs-agent/ecs-agent/api/attachmentinfo
+github.com/aws/amazon-ecs-agent/ecs-agent/api/eni
+github.com/aws/amazon-ecs-agent/ecs-agent/api/errors
+github.com/aws/amazon-ecs-agent/ecs-agent/api/status
+github.com/aws/amazon-ecs-agent/ecs-agent/credentials
+github.com/aws/amazon-ecs-agent/ecs-agent/credentials/mocks
 github.com/aws/amazon-ecs-agent/ecs-agent/doctor
+github.com/aws/amazon-ecs-agent/ecs-agent/logger
 github.com/aws/amazon-ecs-agent/ecs-agent/logger/audit
 github.com/aws/amazon-ecs-agent/ecs-agent/logger/audit/mocks
 github.com/aws/amazon-ecs-agent/ecs-agent/logger/audit/request
+github.com/aws/amazon-ecs-agent/ecs-agent/logger/field
+github.com/aws/amazon-ecs-agent/ecs-agent/metrics
 github.com/aws/amazon-ecs-agent/ecs-agent/tmds
+github.com/aws/amazon-ecs-agent/ecs-agent/tmds/handlers/response
+github.com/aws/amazon-ecs-agent/ecs-agent/tmds/handlers/utils
+github.com/aws/amazon-ecs-agent/ecs-agent/tmds/handlers/v1
+github.com/aws/amazon-ecs-agent/ecs-agent/tmds/handlers/v2
+github.com/aws/amazon-ecs-agent/ecs-agent/tmds/handlers/v4
+github.com/aws/amazon-ecs-agent/ecs-agent/tmds/handlers/v4/state
 github.com/aws/amazon-ecs-agent/ecs-agent/tmds/logging
 github.com/aws/amazon-ecs-agent/ecs-agent/tmds/utils/mux
+github.com/aws/amazon-ecs-agent/ecs-agent/utils
+github.com/aws/amazon-ecs-agent/ecs-agent/utils/arn
+github.com/aws/amazon-ecs-agent/ecs-agent/utils/cipher
+github.com/aws/amazon-ecs-agent/ecs-agent/utils/httpproxy
+github.com/aws/amazon-ecs-agent/ecs-agent/utils/retry
+github.com/aws/amazon-ecs-agent/ecs-agent/utils/retry/mock
+github.com/aws/amazon-ecs-agent/ecs-agent/utils/ttime
+github.com/aws/amazon-ecs-agent/ecs-agent/utils/ttime/mocks
+github.com/aws/amazon-ecs-agent/ecs-agent/wsclient
+github.com/aws/amazon-ecs-agent/ecs-agent/wsclient/mock
+github.com/aws/amazon-ecs-agent/ecs-agent/wsclient/wsconn
 # github.com/aws/aws-sdk-go v1.36.0
 ## explicit; go 1.11
 github.com/aws/aws-sdk-go/aws
@@ -132,11 +160,11 @@ github.com/didip/tollbooth
 github.com/didip/tollbooth/errors
 github.com/didip/tollbooth/libstring
 github.com/didip/tollbooth/limiter
-# github.com/docker/distribution v2.8.1+incompatible
+# github.com/docker/distribution v2.8.2+incompatible
 ## explicit
 github.com/docker/distribution/digestset
 github.com/docker/distribution/reference
-# github.com/docker/docker v20.10.23+incompatible
+# github.com/docker/docker v20.10.24+incompatible
 ## explicit
 github.com/docker/docker/api
 github.com/docker/docker/api/types
@@ -418,8 +446,6 @@ google.golang.org/protobuf/types/descriptorpb
 google.golang.org/protobuf/types/known/anypb
 google.golang.org/protobuf/types/known/durationpb
 google.golang.org/protobuf/types/known/timestamppb
-# gopkg.in/yaml.v2 v2.4.0
-## explicit; go 1.15
 # gopkg.in/yaml.v3 v3.0.1
 ## explicit
 gopkg.in/yaml.v3

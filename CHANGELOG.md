@@ -1,4 +1,23 @@
 # Changelog
+## 1.71.2
+* Improvement - Add structured logging for Task and Docker Image Manager [#3677](https://github.com/aws/amazon-ecs-agent/pull/3677) [#3696](https://github.com/aws/amazon-ecs-agent/pull/3696)
+* Enhancement - Update dependencies to include security patches reported by dependabot for agent [#3632](https://github.com/aws/amazon-ecs-agent/pull/3632) [#3691](https://github.com/aws/amazon-ecs-agent/pull/3691)
+* Code Quality Improvement - Refactor common ENI attachment functionality [#3685](https://github.com/aws/amazon-ecs-agent/pull/3685)
+* Code Quality Improvement - Move handlers utils, v2 metadata models, v1 and v2 TMDS credentials endpoints  to ecs-agent module [#3698](https://github.com/aws/amazon-ecs-agent/pull/3698) [#3701](https://github.com/aws/amazon-ecs-agent/pull/3698) [#3705](https://github.com/aws/amazon-ecs-agent/pull/3705)
+* Code Quality Improvement - Add wsclient library to ecs-agent module [#3690](https://github.com/aws/amazon-ecs-agent/pull/3690)
+* Fix - Support firelens for bridge mode ServiceConnect task [#3693](https://github.com/aws/amazon-ecs-agent/pull/3693)
+* Fix - Support special characters in the password for FSx : windows [#3669](https://github.com/aws/amazon-ecs-agent/pull/3669)
+
+## 1.71.1
+* Enhancement - Add new release config file called agentVersionV2-.json to our release CodePipeline project [#3680](https://github.com/aws/amazon-ecs-agent/pull/3680)
+* Enhancement - Update third party attribution files [#3655](https://github.com/aws/amazon-ecs-agent/pull/3655)
+* Enhancement - Add metrics interface and corresponding no-ops to ecs-agent/ [#3654](https://github.com/aws/amazon-ecs-agent/pull/3654)
+* Enhancement - Task state change logging refactor [#3674](https://github.com/aws/amazon-ecs-agent/pull/3674)
+* Enhancement - Add default AES256 encryption and enable versioning to buckets [#3673](https://github.com/aws/amazon-ecs-agent/pull/3673)
+* Code Quality Improvement - Move TMDS initialization and Audit Logger interface to ecs-agent module, and update agent module to consume them [#3653](https://github.com/aws/amazon-ecs-agent/pull/3653) [#3660](https://github.com/aws/amazon-ecs-agent/pull/3660) [#3663](https://github.com/aws/amazon-ecs-agent/pull/3663) [#3666](https://github.com/aws/amazon-ecs-agent/pull/3666)
+* Code Quality Improvement - Clean up ACS model, gogenerate, and tool dependencies [#3659](https://github.com/aws/amazon-ecs-agent/pull/3659) [#3670](https://github.com/aws/amazon-ecs-agent/pull/3670)
+* Code Quality Improvement - Move container instance health doctor to ecs-agent/ [#3662](https://github.com/aws/amazon-ecs-agent/pull/3662)
+* Code Quality Improvement - Move agent logger to ecs-agent module [#3681](https://github.com/aws/amazon-ecs-agent/pull/3681)
 
 ## 1.71.0
 * Enhancement - update docker client library to latest in ecs-init [#3635](https://github.com/aws/amazon-ecs-agent/pull/3635)

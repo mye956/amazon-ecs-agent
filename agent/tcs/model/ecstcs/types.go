@@ -36,3 +36,14 @@ func NewPublishHealthMetricsRequest(metadata *HealthMetadata, healthMetrics []*T
 		Timestamp: aws.Time(time.Now()),
 	}
 }
+
+type TelemetryMessage struct {
+	Metadata                   *MetricsMetadata
+	TaskMetrics                []*TaskMetric
+	IncludeServiceConnectStats bool
+}
+
+type HealthMessage struct {
+	Metadata      *HealthMetadata
+	HealthMetrics []*TaskHealth
+}

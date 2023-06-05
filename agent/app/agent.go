@@ -20,8 +20,8 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/aws/amazon-ecs-agent/agent/logger"
-	"github.com/aws/amazon-ecs-agent/agent/logger/field"
+	"github.com/aws/amazon-ecs-agent/ecs-agent/logger"
+	"github.com/aws/amazon-ecs-agent/ecs-agent/logger/field"
 
 	dockerdoctor "github.com/aws/amazon-ecs-agent/agent/doctor" // for Docker specific container instance health checks
 	"github.com/aws/amazon-ecs-agent/agent/eni/watcher"
@@ -35,11 +35,9 @@ import (
 	acshandler "github.com/aws/amazon-ecs-agent/agent/acs/handler"
 	"github.com/aws/amazon-ecs-agent/agent/api"
 	"github.com/aws/amazon-ecs-agent/agent/api/ecsclient"
-	apierrors "github.com/aws/amazon-ecs-agent/agent/api/errors"
 	"github.com/aws/amazon-ecs-agent/agent/app/factory"
 	"github.com/aws/amazon-ecs-agent/agent/config"
 	"github.com/aws/amazon-ecs-agent/agent/containermetadata"
-	"github.com/aws/amazon-ecs-agent/agent/credentials"
 	"github.com/aws/amazon-ecs-agent/agent/data"
 	"github.com/aws/amazon-ecs-agent/agent/dockerclient"
 	"github.com/aws/amazon-ecs-agent/agent/dockerclient/dockerapi"
@@ -60,11 +58,15 @@ import (
 	"github.com/aws/amazon-ecs-agent/agent/stats"
 	"github.com/aws/amazon-ecs-agent/agent/taskresource"
 	tcshandler "github.com/aws/amazon-ecs-agent/agent/tcs/handler"
+	"github.com/aws/amazon-ecs-agent/agent/tcs/model/ecstcs"
 	"github.com/aws/amazon-ecs-agent/agent/utils"
 	"github.com/aws/amazon-ecs-agent/agent/utils/loader"
 	"github.com/aws/amazon-ecs-agent/agent/utils/mobypkgwrapper"
-	"github.com/aws/amazon-ecs-agent/agent/utils/retry"
 	"github.com/aws/amazon-ecs-agent/agent/version"
+	acsclient "github.com/aws/amazon-ecs-agent/ecs-agent/acs/client"
+	apierrors "github.com/aws/amazon-ecs-agent/ecs-agent/api/errors"
+	"github.com/aws/amazon-ecs-agent/ecs-agent/credentials"
+	"github.com/aws/amazon-ecs-agent/ecs-agent/utils/retry"
 	"github.com/aws/aws-sdk-go/aws"
 	aws_credentials "github.com/aws/aws-sdk-go/aws/credentials"
 	"github.com/cihub/seelog"
@@ -98,6 +100,13 @@ const (
 	inServiceState                 = "InService"
 	asgLifecyclePollWait           = time.Minute
 	asgLifecyclePollMax            = 120 // given each poll cycle waits for about a minute, this gives 2-3 hours before timing out
+
+	// By default, TCS (or TACS) will reject metrics that are older than 5 minutes. Since our metrics collection interval
+	// is currently set to 20 seconds, setting a buffer size of 15 allows us to store exactly 5 minutes of metrics in
+	// these buffers in the case where we temporarily lose connect to TCS. This value does not change with task number,
+	// as the number of messages in the channel is equal to the number of times we call `getInstanceMetrics`, which collects
+	// metrics from all tasks and containers and put them into one TelemetryMessage object.
+	telemetryChannelDefaultBufferSize = 15
 )
 
 var (
@@ -814,7 +823,7 @@ func (agent *ecsAgent) reregisterContainerInstance(client api.ECSClient, capabil
 	return transientError{err}
 }
 
-// startAsyncRoutines starts all of the background methods
+// startAsyncRoutines starts all background methods
 func (agent *ecsAgent) startAsyncRoutines(
 	containerChangeEventStream *eventstream.EventStream,
 	credentialsManager credentials.Manager,
@@ -841,7 +850,10 @@ func (agent *ecsAgent) startAsyncRoutines(
 	// Agent introspection api
 	go handlers.ServeIntrospectionHTTPEndpoint(agent.ctx, &agent.containerInstanceARN, taskEngine, agent.cfg)
 
-	statsEngine := stats.NewDockerStatsEngine(agent.cfg, agent.dockerClient, containerChangeEventStream)
+	telemetryMessages := make(chan ecstcs.TelemetryMessage, telemetryChannelDefaultBufferSize)
+	healthMessages := make(chan ecstcs.HealthMessage, telemetryChannelDefaultBufferSize)
+
+	statsEngine := stats.NewDockerStatsEngine(agent.cfg, agent.dockerClient, containerChangeEventStream, telemetryMessages, healthMessages)
 
 	// Start serving the endpoint to fetch IAM Role credentials and other task metadata
 	if agent.cfg.TaskMetadataAZDisabled {
@@ -863,8 +875,17 @@ func (agent *ecsAgent) startAsyncRoutines(
 		ECSClient:                     client,
 		TaskEngine:                    taskEngine,
 		StatsEngine:                   statsEngine,
+		MetricsChannel:                telemetryMessages,
+		HealthChannel:                 healthMessages,
 		Doctor:                        doctor,
 	}
+
+	err := statsEngine.MustInit(agent.ctx, taskEngine, agent.cfg.Cluster, agent.containerInstanceARN)
+	if err != nil {
+		seelog.Warnf("Error initializing metrics engine: %v", err)
+		return
+	}
+	go statsEngine.StartMetricsPublish()
 
 	// Start metrics session in a go routine
 	go tcshandler.StartMetricsSession(&telemetrySessionParams)
@@ -943,6 +964,7 @@ func (agent *ecsAgent) startACSSession(
 		taskHandler,
 		agent.latestSeqNumberTaskManifest,
 		doctor,
+		acsclient.NewACSClientFactory(),
 	)
 	seelog.Info("Beginning Polling for updates")
 	err := acsSession.Start()

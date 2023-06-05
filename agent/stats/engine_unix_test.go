@@ -21,13 +21,13 @@ import (
 	"testing"
 
 	apicontainer "github.com/aws/amazon-ecs-agent/agent/api/container"
-	apieni "github.com/aws/amazon-ecs-agent/agent/api/eni"
 	"github.com/aws/amazon-ecs-agent/agent/api/serviceconnect"
 	apitask "github.com/aws/amazon-ecs-agent/agent/api/task"
 	apitaskstatus "github.com/aws/amazon-ecs-agent/agent/api/task/status"
 	"github.com/aws/amazon-ecs-agent/agent/config"
 	mock_dockerapi "github.com/aws/amazon-ecs-agent/agent/dockerclient/dockerapi/mocks"
 	mock_resolver "github.com/aws/amazon-ecs-agent/agent/stats/resolver/mock"
+	apieni "github.com/aws/amazon-ecs-agent/ecs-agent/api/eni"
 	"github.com/docker/docker/api/types"
 	"github.com/golang/mock/gomock"
 	"github.com/stretchr/testify/assert"
@@ -94,7 +94,7 @@ func TestNetworkModeStatsAWSVPCMode(t *testing.T) {
 			State: &types.ContainerState{Pid: 23},
 		},
 	}, nil).AnyTimes()
-	engine := NewDockerStatsEngine(&cfg, nil, eventStream("TestTaskNetworkStatsSet"))
+	engine := NewDockerStatsEngine(&cfg, nil, eventStream("TestTaskNetworkStatsSet"), nil, nil)
 	ctx, cancel := context.WithCancel(context.TODO())
 	defer cancel()
 	engine.ctx = ctx
@@ -155,7 +155,7 @@ func TestServiceConnectWithDisabledMetrics(t *testing.T) {
 		Container: &container,
 	}, nil).Times(2)
 
-	engine := NewDockerStatsEngine(&disableMetricsConfig, nil, eventStream("TestServiceConnectWithDisabledMetrics"))
+	engine := NewDockerStatsEngine(&disableMetricsConfig, nil, eventStream("TestServiceConnectWithDisabledMetrics"), nil, nil)
 	ctx, cancel := context.WithCancel(context.TODO())
 	defer cancel()
 	engine.ctx = ctx

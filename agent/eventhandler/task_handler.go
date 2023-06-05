@@ -26,11 +26,11 @@ import (
 	"github.com/aws/amazon-ecs-agent/agent/data"
 	"github.com/aws/amazon-ecs-agent/agent/ecs_client/model/ecs"
 	"github.com/aws/amazon-ecs-agent/agent/engine/dockerstate"
-	"github.com/aws/amazon-ecs-agent/agent/logger"
 	"github.com/aws/amazon-ecs-agent/agent/metrics"
 	"github.com/aws/amazon-ecs-agent/agent/statechange"
 	"github.com/aws/amazon-ecs-agent/agent/utils"
-	"github.com/aws/amazon-ecs-agent/agent/utils/retry"
+	"github.com/aws/amazon-ecs-agent/ecs-agent/logger"
+	"github.com/aws/amazon-ecs-agent/ecs-agent/utils/retry"
 	"github.com/cihub/seelog"
 )
 
@@ -184,9 +184,8 @@ func (handler *TaskHandler) startDrainEventsTicker() {
 			// the tasksToContainerStates and tasksToManagedAgentStates maps based on the
 			// task arns of containers and managed agents that haven't been sent to ECS yet.
 			for _, taskEvent := range handler.taskStateChangesToSend() {
-				seelog.Infof(
-					"TaskHandler: Adding a state change event to send batched container/managed agent events: %s",
-					taskEvent.String())
+				logger.Debug("TaskHandler: Adding a state change event to send batched container/managed agent events",
+					taskEvent.ToFields())
 				// Force start the the task state change submission
 				// workflow by calling AddStateChangeEvent method.
 				handler.AddStateChangeEvent(taskEvent, handler.client)

@@ -20,8 +20,10 @@ import (
 
 	"github.com/aws/amazon-ecs-agent/agent/api"
 	"github.com/aws/amazon-ecs-agent/agent/engine/dockerstate"
-	"github.com/aws/amazon-ecs-agent/agent/handlers/utils"
 	v3 "github.com/aws/amazon-ecs-agent/agent/handlers/v3"
+	"github.com/aws/amazon-ecs-agent/ecs-agent/tmds/handlers/utils"
+	tmdsv4 "github.com/aws/amazon-ecs-agent/ecs-agent/tmds/handlers/v4/state"
+
 	"github.com/cihub/seelog"
 )
 
@@ -70,7 +72,7 @@ func TaskMetadataHandler(state dockerstate.TaskEngineState, ecsClient api.ECSCli
 		// for non-awsvpc task mode
 		if !task.IsNetworkModeAWSVPC() {
 			// fill in non-awsvpc network details for container responses here
-			responses := make([]ContainerResponse, 0)
+			responses := make([]tmdsv4.ContainerResponse, 0)
 			for _, containerResponse := range taskResponse.Containers {
 				networks, err := GetContainerNetworkMetadata(containerResponse.ID, state)
 				if err != nil {
