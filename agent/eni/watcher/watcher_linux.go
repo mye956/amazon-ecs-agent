@@ -20,6 +20,7 @@ import (
 	"context"
 	"strings"
 	"time"
+	"encoding/json"
 
 	"github.com/aws/amazon-ecs-agent/ecs-agent/logger"
 	"github.com/aws/amazon-ecs-agent/ecs-agent/logger/field"
@@ -166,6 +167,8 @@ func (eniWatcher *ENIWatcher) eventHandler() {
 	for {
 		select {
 		case event := <-eniWatcher.events:
+			eventJSON, _ := json.Marshal(event)
+			log.Debugf("Recieved event, %s", string(eventJSON))
 			subsystem, ok := event.Env[udevSubsystem]
 			if !ok || subsystem != udevNetSubsystem {
 				continue
