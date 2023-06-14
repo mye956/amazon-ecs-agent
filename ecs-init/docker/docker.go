@@ -238,9 +238,9 @@ func (c *client) StartAgent() (int, error) {
 	envVarsFromFiles := c.LoadEnvVars()
 
 	// CHANGES
-	log.Debugf("Attempting to start agent")
+	log.Infof("Attempting to start agent")
 	envVarsJson, _ := json.Marshal(envVarsFromFiles)
-	log.Debugf("Env variables: %v", string(envVarsJson))
+	log.Infof("Env variables: %v", string(envVarsJson))
 
 	hostConfig := c.getHostConfig(envVarsFromFiles)
 
@@ -506,7 +506,7 @@ func getDockerSocketBind(envVarsFromFiles map[string]string) string {
 	}
 	// CHANGE
 	dockerBind := dockerUnixSocketSourcePath + ":" + dockerEndpointAgent
-	log.Debugf("Docker socket bind: %s", dockerBind)
+	log.Infof("Docker socket bind: %s", dockerBind)
 
 	return dockerUnixSocketSourcePath + ":" + dockerEndpointAgent
 }
