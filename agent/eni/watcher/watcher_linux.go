@@ -168,7 +168,7 @@ func (eniWatcher *ENIWatcher) eventHandler() {
 		select {
 		case event := <-eniWatcher.events:
 			eventJSON, _ := json.Marshal(event)
-			log.Debugf("Recieved event, %s", string(eventJSON))
+			log.Debugf("TEST Recieved event, %s", string(eventJSON))
 			subsystem, ok := event.Env[udevSubsystem]
 			if !ok || subsystem != udevNetSubsystem {
 				continue
