@@ -202,7 +202,7 @@ func (c *client) RemoveExistingAgentContainer() error {
 		log.Info("No existing agent container to remove.")
 		return nil
 	}
-	log.Infof("Removing existing agent container ID: %s", containerToRemove)
+	log.Infof("TEST Removing existing agent container ID: %s", containerToRemove)
 	err = c.docker.RemoveContainer(godocker.RemoveContainerOptions{
 		ID:    containerToRemove,
 		Force: true,
@@ -221,7 +221,7 @@ func (c *client) findAgentContainer() (string, error) {
 	if err != nil {
 		return "", err
 	}
-	log.Info("TEST")
+	log.Infof("TEST")
 	agentContainerName := "/" + config.AgentContainerName
 	for _, container := range containers {
 		for _, name := range container.Names {
