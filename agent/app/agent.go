@@ -19,6 +19,7 @@ import (
 	"errors"
 	"fmt"
 	"time"
+	"os/exec"
 
 	"github.com/aws/amazon-ecs-agent/ecs-agent/logger"
 	"github.com/aws/amazon-ecs-agent/ecs-agent/logger/field"
@@ -449,6 +450,14 @@ func (agent *ecsAgent) doStart(containerChangeEventStream *eventstream.EventStre
 	attachmentEventHandler := eventhandler.NewAttachmentEventHandler(agent.ctx, agent.dataClient, client)
 	agent.startAsyncRoutines(containerChangeEventStream, credentialsManager, imageManager,
 		taskEngine, deregisterInstanceEventStream, client, taskHandler, attachmentEventHandler, state, doctor)
+	
+	cmd := exec.Command("ebsnvme-id", "-h")
+	stdout, err := cmd.Output()
+	if err != nil {
+		seelog.Debugf("Got error when calling ebsnvme-id, %v", err.Error())
+		
+	}
+	seelog.Debugf("ebsnvme-id output: %v", string(stdout))
 
 	// Start the acs session, which should block doStart
 	return agent.startACSSession(credentialsManager, taskEngine,
