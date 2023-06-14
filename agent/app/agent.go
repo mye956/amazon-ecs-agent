@@ -451,7 +451,7 @@ func (agent *ecsAgent) doStart(containerChangeEventStream *eventstream.EventStre
 	agent.startAsyncRoutines(containerChangeEventStream, credentialsManager, imageManager,
 		taskEngine, deregisterInstanceEventStream, client, taskHandler, attachmentEventHandler, state, doctor)
 	
-	cmd := exec.Command("ebsnvme-id", "-h")
+	cmd := exec.Command("/host/sbin/ebsnvme-id", "-h")
 	stdout, err := cmd.Output()
 	if err != nil {
 		seelog.Debugf("Got error when calling ebsnvme-id, %v", err.Error())
