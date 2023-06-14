@@ -221,6 +221,7 @@ func (c *client) findAgentContainer() (string, error) {
 	if err != nil {
 		return "", err
 	}
+	log.Info("TEST")
 	agentContainerName := "/" + config.AgentContainerName
 	for _, container := range containers {
 		for _, name := range container.Names {
