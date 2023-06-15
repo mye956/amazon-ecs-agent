@@ -173,7 +173,7 @@ func (eniWatcher *ENIWatcher) eventHandler() {
 			if subsystem == "block" && event.Env[udevEventAction] == udevAddEvent {
 				eventJSON, _ := json.Marshal(event)
 				log.Debugf("Recieved udev event, %s", string(eventJSON))
-				log.Debugf("Device name: %v", event.Env[DEVNAME])
+				log.Debugf("Device name: %v", event.Env["DEVNAME"])
 
 				cmd := exec.Command("/ebsnvme-id", "-h")
 				// cmd := exec.Command("ls", "-al", "/host/sbin/")
