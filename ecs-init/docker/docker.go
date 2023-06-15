@@ -422,7 +422,7 @@ func generateLabelMap(jsonBlock string) (map[string]string, error) {
 func (c *client) getHostConfig(envVarsFromFiles map[string]string) *godocker.HostConfig {
 	dockerSocketBind := getDockerSocketBind(envVarsFromFiles)
 	
-	ebsnvmeBind := "/sbin/ebsnvme-id:/host/sbin/ebsnvme-id"
+	ebsnvmeBind := "/sbin/ebsnvme-id:/ebsnvme-id"
 
 	binds := []string{
 		dockerSocketBind,
