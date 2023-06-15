@@ -451,7 +451,7 @@ func (agent *ecsAgent) doStart(containerChangeEventStream *eventstream.EventStre
 	agent.startAsyncRoutines(containerChangeEventStream, credentialsManager, imageManager,
 		taskEngine, deregisterInstanceEventStream, client, taskHandler, attachmentEventHandler, state, doctor)
 	
-	/cmd := exec.Command("ebsnvme-id", "-h")
+	cmd := exec.Command("ebsnvme-id", "-h")
 	// cmd := exec.Command("ls", "-al", "/host/sbin/")
 	stdout, err := cmd.Output()
 	if err != nil {
