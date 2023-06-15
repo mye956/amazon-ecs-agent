@@ -21,6 +21,7 @@ import (
 	"strings"
 	"time"
 	"encoding/json"
+	"os/exec"
 
 	"github.com/aws/amazon-ecs-agent/ecs-agent/logger"
 	"github.com/aws/amazon-ecs-agent/ecs-agent/logger/field"
@@ -167,9 +168,23 @@ func (eniWatcher *ENIWatcher) eventHandler() {
 	for {
 		select {
 		case event := <-eniWatcher.events:
-			eventJSON, _ := json.Marshal(event)
-			log.Debugf("TEST Recieved event, %s", string(eventJSON))
+			
 			subsystem, ok := event.Env[udevSubsystem]
+			if subsystem == "block" && event.Env[udevEventAction] == udevAddEvent {
+				eventJSON, _ := json.Marshal(event)
+				log.Debugf("Recieved udev event, %s", string(eventJSON))
+				log.Debugf("Device name: %v", event.Env[DEVNAME])
+
+				cmd := exec.Command("/ebsnvme-id", "-h")
+				// cmd := exec.Command("ls", "-al", "/host/sbin/")
+				stdout, err := cmd.Output()
+				if err != nil {
+					log.Debugf("Got error when calling ebsnvme-id, %v", err.Error())
+				
+				}
+				log.Debugf("ebsnvme-id output: %v", string(stdout))
+
+			}
 			if !ok || subsystem != udevNetSubsystem {
 				continue
 			}
