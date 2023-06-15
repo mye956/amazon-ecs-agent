@@ -175,7 +175,7 @@ func (eniWatcher *ENIWatcher) eventHandler() {
 				log.Debugf("Recieved udev event, %s", string(eventJSON))
 				log.Debugf("Device name: %v", event.Env["DEVNAME"])
 
-				cmd := exec.Command("/ebsnvme-id", "-h")
+				cmd := exec.Command("ebsnvme-id", "-h")
 				// cmd := exec.Command("ls", "-al", "/host/sbin/")
 				stdout, err := cmd.Output()
 				if err != nil {
