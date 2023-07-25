@@ -58,11 +58,9 @@ import (
 	"github.com/aws/amazon-ecs-agent/agent/dockerclient/dockerapi"
 	"github.com/aws/amazon-ecs-agent/agent/dockerclient/sdkclientfactory"
 	"github.com/aws/amazon-ecs-agent/agent/ec2"
-	"github.com/aws/amazon-ecs-agent/agent/ecs_client/model/ecs"
 	"github.com/aws/amazon-ecs-agent/agent/engine/dockerstate"
 	"github.com/aws/amazon-ecs-agent/agent/engine/execcmd"
 	engineserviceconnect "github.com/aws/amazon-ecs-agent/agent/engine/serviceconnect"
-	"github.com/aws/amazon-ecs-agent/agent/eventstream"
 	"github.com/aws/amazon-ecs-agent/agent/taskresource"
 	cgroup "github.com/aws/amazon-ecs-agent/agent/taskresource/cgroup/control"
 	"github.com/aws/amazon-ecs-agent/agent/taskresource/firelens"
@@ -70,6 +68,8 @@ import (
 	"github.com/aws/amazon-ecs-agent/agent/utils"
 	"github.com/aws/amazon-ecs-agent/agent/utils/ioutilwrapper"
 	"github.com/aws/amazon-ecs-agent/ecs-agent/credentials"
+	"github.com/aws/amazon-ecs-agent/ecs-agent/ecs_client/model/ecs"
+	"github.com/aws/amazon-ecs-agent/ecs-agent/eventstream"
 )
 
 var (
@@ -584,9 +584,11 @@ func setupEngineForExecCommandAgent(t *testing.T, hostBinDir string) (TaskEngine
 	imageManager.SetDataClient(data.NewNoopClient())
 	metadataManager := containermetadata.NewManager(dockerClient, cfg)
 	execCmdMgr := execcmd.NewManagerWithBinDir(hostBinDir)
+	hostResources := getTestHostResources()
+	hostResourceManager := NewHostResourceManager(hostResources)
 
 	taskEngine := NewDockerTaskEngine(cfg, dockerClient, credentialsManager,
-		eventstream.NewEventStream("ENGINEINTEGTEST", context.Background()), imageManager, state, metadataManager,
+		eventstream.NewEventStream("ENGINEINTEGTEST", context.Background()), imageManager, &hostResourceManager, state, metadataManager,
 		nil, execCmdMgr, engineserviceconnect.NewManager())
 	taskEngine.monitorExecAgentsInterval = time.Second
 	taskEngine.MustInit(context.TODO())
@@ -808,6 +810,8 @@ func TestGMSATaskFile(t *testing.T) {
 	err = ioutil.WriteFile(testCredSpecFilePath, testCredSpecData, 0755)
 	require.NoError(t, err)
 
+	defer os.RemoveAll(testCredSpecFilePath)
+
 	testContainer := createTestContainer()
 	testContainer.Name = "testGMSATaskFile"
 
@@ -842,11 +846,99 @@ func TestGMSATaskFile(t *testing.T) {
 	assert.NoError(t, err, "Could not kill container")
 
 	verifyTaskIsStopped(stateChangeEvents, testTask)
+}
 
-	// Cleanup the test file
-	err = os.RemoveAll(testCredSpecFilePath)
+func TestGMSADomainlessTaskFile(t *testing.T) {
+	t.Setenv("ECS_GMSA_SUPPORTED", "True")
+	t.Setenv("ZZZ_SKIP_DOMAIN_JOIN_CHECK_NOT_SUPPORTED_IN_PRODUCTION", "True")
+	t.Setenv("ZZZ_SKIP_CREDENTIALS_FETCHER_INVOCATION_CHECK_NOT_SUPPORTED_IN_PRODUCTION", "True")
+
+	cfg := defaultTestConfigIntegTest()
+	cfg.TaskCPUMemLimit.Value = config.ExplicitlyDisabled
+	cfg.TaskCleanupWaitDuration = 3 * time.Second
+	cfg.GMSACapable = config.BooleanDefaultFalse{Value: config.ExplicitlyEnabled}
+	cfg.AWSRegion = "us-west-2"
+
+	taskEngine, done, _ := setupGMSALinux(cfg, nil, t)
+	defer done()
+
+	stateChangeEvents := taskEngine.StateChangeEvents()
+
+	// Setup test gmsa file
+	credentialSpecDataDir := "/tmp"
+	testFileName := "test-gmsa.json"
+	testCredSpecFilePath := filepath.Join(credentialSpecDataDir, testFileName)
+	_, err := os.Create(testCredSpecFilePath)
+	require.NoError(t, err)
+
+	// add local credentialspec file for domainless gmsa support
+	testCredSpecData := []byte(`{
+    "CmsPlugins":  [
+                       "ActiveDirectory"
+                   ],
+    "DomainJoinConfig":  {
+                             "Sid":  "S-1-5-21-975084816-3050680612-2826754290",
+                             "MachineAccountName":  "gmsa-acct-test",
+                             "Guid":  "92a07e28-bd9f-4bf3-b1f7-0894815a5257",
+                             "DnsTreeName":  "gmsa.test.com",
+                             "DnsName":  "gmsa.test.com",
+                             "NetBiosName":  "gmsa"
+                         },
+    "ActiveDirectoryConfig":  {
+                                  "GroupManagedServiceAccounts":  [
+                                                                      {
+                                                                          "Name":  "gmsa-acct-test",
+                                                                          "Scope":  "gmsa.test.com"
+                                                                      }
+                                                                  ],
+     "HostAccountConfig": {
+      "PortableCcgVersion": "1",
+      "PluginGUID": "{859E1386-BDB4-49E8-85C7-3070B13920E1}",
+      "PluginInput": {
+        "CredentialArn": "arn:aws:secretsmanager:us-west-2:123456789:secret:gmsausersecret-xb5Qev"
+      }
+    }
+                              }
+}`)
+
+	err = ioutil.WriteFile(testCredSpecFilePath, testCredSpecData, 0755)
+	require.NoError(t, err)
+
+	defer os.RemoveAll(testCredSpecFilePath)
+
+	testContainer := createTestContainer()
+	testContainer.Name = "testGMSADomainlessTaskFile"
+
+	testContainer.CredentialSpecs = []string{"credentialspecdomainless:file:///tmp/test-gmsa.json"}
+
+	testTask := &apitask.Task{
+		Arn:                 "testGMSAFileTaskARN",
+		Family:              "family",
+		Version:             "1",
+		DesiredStatusUnsafe: apitaskstatus.TaskRunning,
+		Containers:          []*apicontainer.Container{testContainer},
+	}
+	testTask.Containers[0].TransitionDependenciesMap = make(map[apicontainerstatus.ContainerStatus]apicontainer.TransitionDependencySet)
+	testTask.ResourcesMapUnsafe = make(map[string][]taskresource.TaskResource)
+	testTask.Containers[0].Command = getLongRunningCommand()
+
+	go taskEngine.AddTask(testTask)
+
+	verifyTaskIsRunning(stateChangeEvents, testTask)
+
+	client, _ := sdkClient.NewClientWithOpts(sdkClient.WithHost(endpoint), sdkClient.WithVersion(sdkclientfactory.GetDefaultVersion().String()))
+	containerMap, _ := taskEngine.(*DockerTaskEngine).state.ContainerMapByArn(testTask.Arn)
+	cid := containerMap[testTask.Containers[0].Name].DockerID
+
+	expectedBind := "/tmp/tgt:/var/credentials-fetcher/krbdir:ro"
+	err = verifyContainerBindMount(client, cid, expectedBind)
 	assert.NoError(t, err)
 
+	// Kill the existing container now
+	err = client.ContainerKill(context.TODO(), cid, "SIGKILL")
+	assert.NoError(t, err, "Could not kill container")
+
+	verifyTaskIsStopped(stateChangeEvents, testTask)
 }
 
 func verifyContainerBindMount(client *sdkClient.Client, id, expectedBind string) error {

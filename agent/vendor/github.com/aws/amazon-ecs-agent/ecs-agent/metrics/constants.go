@@ -22,4 +22,16 @@ const (
 	GetTaskProtectionMetricName    = metadataServerMetricNamespace + ".GetTaskProtection"
 	UpdateTaskProtectionMetricName = metadataServerMetricNamespace + ".UpdateTaskProtection"
 	AuthConfigMetricName           = metadataServerMetricNamespace + ".AuthConfig"
+
+	// AttachResourceResponder
+	attachResourceResponderNamespace = "ResourceAttachment"
+	ResourceValidationMetricName     = attachResourceResponderNamespace + ".Validation"
+
+	// TaskManifestResponder
+	taskManifestResponderNamespace = "TaskManifestResponder"
+	TaskManifestHandlingDuration   = taskManifestResponderNamespace + ".Duration"
+
+	// TaskStopVerificationACKResponder
+	taskStopVerificationACKResponderNamespace = "TaskStopVeificationACKResponder"
+	TaskStoppedMetricName                     = taskStopVerificationACKResponderNamespace + ".TaskStopped"
 )

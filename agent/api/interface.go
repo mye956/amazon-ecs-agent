@@ -14,10 +14,7 @@
 package api
 
 import (
-	"github.com/aws/amazon-ecs-agent/agent/api/serviceconnect"
-	"github.com/aws/amazon-ecs-agent/agent/ecs_client/model/ecs"
-	"github.com/aws/aws-sdk-go/aws"
-	"github.com/aws/aws-sdk-go/aws/request"
+	"github.com/aws/amazon-ecs-agent/ecs-agent/ecs_client/model/ecs"
 	prometheus "github.com/prometheus/client_model/go"
 )
 
@@ -58,6 +55,8 @@ type ECSClient interface {
 	// UpdateContainerInstancesState updates the given container Instance ID with
 	// the given status. Only valid statuses are ACTIVE and DRAINING.
 	UpdateContainerInstancesState(instanceARN, status string) error
+	// GetHostResources retrieves a map that map the resource name to the corresponding resource
+	GetHostResources() (map[string]*ecs.Resource, error)
 }
 
 // ECSSDK is an interface that specifies the subset of the AWS Go SDK's ECS
@@ -82,17 +81,6 @@ type ECSSubmitStateSDK interface {
 // AppnetClient is an interface with customized Appnet client that
 // implements the GetStats and DrainInboundConnections
 type AppnetClient interface {
-	GetStats(config serviceconnect.RuntimeConfig) (map[string]*prometheus.MetricFamily, error)
-	DrainInboundConnections(config serviceconnect.RuntimeConfig) error
-}
-
-// ECSTaskProtectionSDK is an interface with customized ecs client that
-// implements the UpdateTaskProtection and GetTaskProtection
-type ECSTaskProtectionSDK interface {
-	UpdateTaskProtection(input *ecs.UpdateTaskProtectionInput) (*ecs.UpdateTaskProtectionOutput, error)
-	UpdateTaskProtectionWithContext(ctx aws.Context, input *ecs.UpdateTaskProtectionInput,
-		opts ...request.Option) (*ecs.UpdateTaskProtectionOutput, error)
-	GetTaskProtection(input *ecs.GetTaskProtectionInput) (*ecs.GetTaskProtectionOutput, error)
-	GetTaskProtectionWithContext(ctx aws.Context, input *ecs.GetTaskProtectionInput,
-		opts ...request.Option) (*ecs.GetTaskProtectionOutput, error)
+	GetStats(adminSocketPath string, statsRequest string) (map[string]*prometheus.MetricFamily, error)
+	DrainInboundConnections(adminSocketPath string, drainRequest string) error
 }

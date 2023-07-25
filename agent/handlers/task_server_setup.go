@@ -21,7 +21,7 @@ import (
 	"github.com/aws/amazon-ecs-agent/agent/api"
 	"github.com/aws/amazon-ecs-agent/agent/config"
 	"github.com/aws/amazon-ecs-agent/agent/engine/dockerstate"
-	agentAPITaskProtectionV1 "github.com/aws/amazon-ecs-agent/agent/handlers/agentapi/taskprotection/v1/handlers"
+	tpfactory "github.com/aws/amazon-ecs-agent/agent/handlers/agentapi/taskprotection"
 	v2 "github.com/aws/amazon-ecs-agent/agent/handlers/v2"
 	v3 "github.com/aws/amazon-ecs-agent/agent/handlers/v3"
 	v4 "github.com/aws/amazon-ecs-agent/agent/handlers/v4"
@@ -31,6 +31,7 @@ import (
 	auditinterface "github.com/aws/amazon-ecs-agent/ecs-agent/logger/audit"
 	"github.com/aws/amazon-ecs-agent/ecs-agent/metrics"
 	"github.com/aws/amazon-ecs-agent/ecs-agent/tmds"
+	tp "github.com/aws/amazon-ecs-agent/ecs-agent/tmds/handlers/taskprotection/v1/handlers"
 	tmdsv1 "github.com/aws/amazon-ecs-agent/ecs-agent/tmds/handlers/v1"
 	tmdsv2 "github.com/aws/amazon-ecs-agent/ecs-agent/tmds/handlers/v2"
 	tmdsv4 "github.com/aws/amazon-ecs-agent/ecs-agent/tmds/handlers/v4"
@@ -47,22 +48,25 @@ const (
 	// writeTimeout specifies the maximum duration before timing out write of the response.
 	// The value is set to 5 seconds as per AWS SDK defaults.
 	writeTimeout = 5 * time.Second
+
+	// Timeout for ECS calls. Must be lower than server write timeout defined above.
+	ecsCallTimeout = 4 * time.Second
 )
 
-func taskServerSetup(credentialsManager credentials.Manager,
+func taskServerSetup(
+	credentialsManager credentials.Manager,
 	auditLogger auditinterface.AuditLogger,
 	state dockerstate.TaskEngineState,
 	ecsClient api.ECSClient,
 	cluster string,
-	region string,
 	statsEngine stats.Engine,
 	steadyStateRate int,
 	burstRate int,
 	availabilityZone string,
 	vpcID string,
 	containerInstanceArn string,
-	apiEndpoint string,
-	acceptInsecureCert bool) (*http.Server, error) {
+	taskProtectionClientFactory tp.TaskProtectionClientFactoryInterface,
+) (*http.Server, error) {
 
 	muxRouter := mux.NewRouter()
 
@@ -73,13 +77,18 @@ func taskServerSetup(credentialsManager credentials.Manager,
 	muxRouter.HandleFunc(tmdsv1.CredentialsPath,
 		tmdsv1.CredentialsHandler(credentialsManager, auditLogger))
 
+	tmdsAgentState := v4.NewTMDSAgentState(state, statsEngine, ecsClient, cluster, availabilityZone, vpcID, containerInstanceArn)
+	metricsFactory := metrics.NewNopEntryFactory()
+
 	v2HandlersSetup(muxRouter, state, ecsClient, statsEngine, cluster, credentialsManager, auditLogger, availabilityZone, containerInstanceArn)
 
 	v3HandlersSetup(muxRouter, state, ecsClient, statsEngine, cluster, availabilityZone, containerInstanceArn)
 
-	v4HandlersSetup(muxRouter, state, ecsClient, statsEngine, cluster, availabilityZone, vpcID, containerInstanceArn)
+	v4HandlersSetup(muxRouter, state, ecsClient, statsEngine, cluster, availabilityZone, vpcID, containerInstanceArn,
+		tmdsAgentState, metricsFactory)
 
-	agentAPIV1HandlersSetup(muxRouter, state, credentialsManager, cluster, region, apiEndpoint, acceptInsecureCert)
+	agentAPIV1HandlersSetup(muxRouter, state, credentialsManager, cluster, tmdsAgentState,
+		taskProtectionClientFactory, metricsFactory)
 
 	return tmds.NewServer(auditLogger,
 		tmds.WithHandler(muxRouter),
@@ -138,33 +147,40 @@ func v4HandlersSetup(muxRouter *mux.Router,
 	availabilityZone string,
 	vpcID string,
 	containerInstanceArn string,
+	tmdsAgentState *v4.TMDSAgentState,
+	metricsFactory metrics.EntryFactory,
 ) {
-	tmdsAgentState := v4.NewTMDSAgentState(state)
-	metricsFactory := metrics.NewNopEntryFactory()
 	muxRouter.HandleFunc(tmdsv4.ContainerMetadataPath(), tmdsv4.ContainerMetadataHandler(tmdsAgentState, metricsFactory))
-	muxRouter.HandleFunc(v4.TaskMetadataPath, v4.TaskMetadataHandler(state, ecsClient, cluster, availabilityZone, vpcID, containerInstanceArn, false))
-	muxRouter.HandleFunc(v4.TaskWithTagsMetadataPath, v4.TaskMetadataHandler(state, ecsClient, cluster, availabilityZone, vpcID, containerInstanceArn, true))
-	muxRouter.HandleFunc(v4.ContainerStatsPath, v4.ContainerStatsHandler(state, statsEngine))
-	muxRouter.HandleFunc(v4.TaskStatsPath, v4.TaskStatsHandler(state, statsEngine))
+	muxRouter.HandleFunc(tmdsv4.TaskMetadataPath(), tmdsv4.TaskMetadataHandler(tmdsAgentState, metricsFactory))
+	muxRouter.HandleFunc(tmdsv4.TaskMetadataWithTagsPath(), tmdsv4.TaskMetadataWithTagsHandler(tmdsAgentState, metricsFactory))
+	muxRouter.HandleFunc(tmdsv4.ContainerStatsPath(), tmdsv4.ContainerStatsHandler(tmdsAgentState, metricsFactory))
+	muxRouter.HandleFunc(tmdsv4.TaskStatsPath(), tmdsv4.TaskStatsHandler(tmdsAgentState, metricsFactory))
 	muxRouter.HandleFunc(v4.ContainerAssociationsPath, v4.ContainerAssociationsHandler(state))
 	muxRouter.HandleFunc(v4.ContainerAssociationPathWithSlash, v4.ContainerAssociationHandler(state))
 	muxRouter.HandleFunc(v4.ContainerAssociationPath, v4.ContainerAssociationHandler(state))
 }
 
 // agentAPIV1HandlersSetup adds handlers for Agent API V1
-func agentAPIV1HandlersSetup(muxRouter *mux.Router, state dockerstate.TaskEngineState, credentialsManager credentials.Manager, cluster string, region string, endpoint string, acceptInsecureCert bool) {
-	factory := agentAPITaskProtectionV1.TaskProtectionClientFactory{
-		Region: region, Endpoint: endpoint, AcceptInsecureCert: acceptInsecureCert,
-	}
+func agentAPIV1HandlersSetup(
+	muxRouter *mux.Router,
+	state dockerstate.TaskEngineState,
+	credentialsManager credentials.Manager,
+	cluster string,
+	agentState *v4.TMDSAgentState,
+	factory tp.TaskProtectionClientFactoryInterface,
+	metricsFactory metrics.EntryFactory,
+) {
 	muxRouter.
 		HandleFunc(
-			agentAPITaskProtectionV1.TaskProtectionPath(),
-			agentAPITaskProtectionV1.UpdateTaskProtectionHandler(state, credentialsManager, factory, cluster)).
+			tp.TaskProtectionPath(),
+			tp.UpdateTaskProtectionHandler(agentState, credentialsManager,
+				factory, cluster, metricsFactory, ecsCallTimeout)).
 		Methods("PUT")
 	muxRouter.
 		HandleFunc(
-			agentAPITaskProtectionV1.TaskProtectionPath(),
-			agentAPITaskProtectionV1.GetTaskProtectionHandler(state, credentialsManager, factory, cluster)).
+			tp.TaskProtectionPath(),
+			tp.GetTaskProtectionHandler(agentState, credentialsManager,
+				factory, cluster, metricsFactory, ecsCallTimeout)).
 		Methods("GET")
 }
 
@@ -190,9 +206,12 @@ func ServeTaskHTTPEndpoint(
 
 	auditLogger := audit.NewAuditLog(containerInstanceArn, cfg, logger)
 
-	server, err := taskServerSetup(credentialsManager, auditLogger, state, ecsClient, cfg.Cluster, cfg.AWSRegion, statsEngine,
-		cfg.TaskMetadataSteadyStateRate, cfg.TaskMetadataBurstRate, availabilityZone, vpcID, containerInstanceArn, cfg.APIEndpoint,
-		cfg.AcceptInsecureCert)
+	taskProtectionClientFactory := tpfactory.TaskProtectionClientFactory{
+		Region: cfg.AWSRegion, Endpoint: cfg.APIEndpoint, AcceptInsecureCert: cfg.AcceptInsecureCert,
+	}
+	server, err := taskServerSetup(credentialsManager, auditLogger, state, ecsClient, cfg.Cluster,
+		statsEngine, cfg.TaskMetadataSteadyStateRate, cfg.TaskMetadataBurstRate,
+		availabilityZone, vpcID, containerInstanceArn, taskProtectionClientFactory)
 	if err != nil {
 		seelog.Criticalf("Failed to set up Task Metadata Server: %v", err)
 		return

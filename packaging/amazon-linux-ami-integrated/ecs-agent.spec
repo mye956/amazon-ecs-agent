@@ -26,7 +26,7 @@
 %global agent_image ecs-agent-v%{version}.tar
 
 Name:           ecs-init
-Version:        1.71.2
+Version:        1.74.1
 Release:        1%{?dist}
 License:        Apache 2.0
 Summary:        Amazon Elastic Container Service initialization application
@@ -39,7 +39,7 @@ Source3:        amazon-ecs-volume-plugin.service
 Source4:        amazon-ecs-volume-plugin.socket
 Source5:        amazon-ecs-volume-plugin.conf
 
-BuildRequires:  golang >= 1.18.0
+BuildRequires:  golang >= 1.19.0
 %if %{with systemd}
 BuildRequires:  systemd
 Requires:       systemd
@@ -269,6 +269,21 @@ fi
 %endif
 
 %changelog
+* Fri Jul 21 2023 Heming Han <hanhm@amazon.com> - 1.74.1-1
+- Cache Agent version 1.74.1
+
+* Thu Jul 20 2023 Heming Han <hanhm@amazon.com> - 1.74.0-1
+- Cache Agent version 1.74.0
+
+* Wed Jul 05 2023 Michael Ye <yemike@amazon.com> - 1.73.1-1
+- Cache Agent version 1.73.1
+
+* Thu Jun 22 2023 Prateek Chaudhry <ptchau@amazon.com> - 1.73.0-1
+- Cache Agent version 1.73.0
+
+* Tue Jun 06 2023 Yinyi Chen <yinyic@amazon.com> - 1.72.0-1
+- Cache Agent version 1.72.0
+
 * Tue May 23 2023 Utsa Bhattacharjya <utsa@amazon.com> - 1.71.2-1
 - Cache Agent version 1.71.2
 

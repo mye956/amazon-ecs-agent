@@ -27,9 +27,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/aws/amazon-ecs-agent/ecs-agent/api/attachmentinfo"
-	"github.com/aws/amazon-ecs-agent/ecs-agent/api/status"
-
 	"github.com/aws/amazon-ecs-agent/agent/api/appmesh"
 	apicontainer "github.com/aws/amazon-ecs-agent/agent/api/container"
 	apicontainerstatus "github.com/aws/amazon-ecs-agent/agent/api/container/status"
@@ -37,6 +34,7 @@ import (
 	"github.com/aws/amazon-ecs-agent/agent/api/serviceconnect"
 	apitask "github.com/aws/amazon-ecs-agent/agent/api/task"
 	apitaskstatus "github.com/aws/amazon-ecs-agent/agent/api/task/status"
+	mock_asm_factory "github.com/aws/amazon-ecs-agent/agent/asm/factory/mocks"
 	"github.com/aws/amazon-ecs-agent/agent/config"
 	"github.com/aws/amazon-ecs-agent/agent/data"
 	"github.com/aws/amazon-ecs-agent/agent/dockerclient/dockerapi"
@@ -56,16 +54,18 @@ import (
 	"github.com/aws/amazon-ecs-agent/agent/taskresource/ssmsecret"
 	resourcestatus "github.com/aws/amazon-ecs-agent/agent/taskresource/status"
 	mock_ioutilwrapper "github.com/aws/amazon-ecs-agent/agent/utils/ioutilwrapper/mocks"
+	"github.com/aws/amazon-ecs-agent/ecs-agent/api/attachmentinfo"
 	apieni "github.com/aws/amazon-ecs-agent/ecs-agent/api/eni"
+	"github.com/aws/amazon-ecs-agent/ecs-agent/api/status"
 	"github.com/aws/amazon-ecs-agent/ecs-agent/credentials"
 
 	"github.com/aws/aws-sdk-go/aws"
-	"github.com/containernetworking/cni/pkg/types/current"
+	cniTypesCurrent "github.com/containernetworking/cni/pkg/types/100"
 	"github.com/docker/docker/api/types"
 	dockercontainer "github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/network"
 	"github.com/golang/mock/gomock"
-	specs "github.com/opencontainers/runtime-spec/specs-go"
+	"github.com/opencontainers/runtime-spec/specs-go"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -1091,7 +1091,7 @@ func TestContainersWithServiceConnect(t *testing.T) {
 	var wg sync.WaitGroup
 	wg.Add(1)
 	gomock.InOrder(
-		appnetClient.EXPECT().DrainInboundConnections(gomock.Any()).MaxTimes(1),
+		appnetClient.EXPECT().DrainInboundConnections(gomock.Any(), gomock.Any()).MaxTimes(1),
 		secondStop,
 		scStop,
 		cniClient.EXPECT().CleanupNS(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil),
@@ -1243,7 +1243,7 @@ func TestContainersWithServiceConnect_BridgeMode(t *testing.T) {
 	)
 
 	cniClient.EXPECT().SetupNS(gomock.Any(), gomock.Any(), gomock.Any()).DoAndReturn(
-		func(ctx context.Context, cfg *ecscni.Config, timeout time.Duration) (*current.Result, error) {
+		func(ctx context.Context, cfg *ecscni.Config, timeout time.Duration) (*cniTypesCurrent.Result, error) {
 			assert.Equal(t, 1, len(cfg.NetworkConfigs))
 			var scNetworkConfig ecscni.ServiceConnectConfig
 			err := json.Unmarshal(cfg.NetworkConfigs[0].CNINetworkConfig.Bytes, &scNetworkConfig)
@@ -1411,7 +1411,7 @@ func TestProvisionContainerResourcesBridgeModeWithServiceConnect(t *testing.T) {
 				},
 			}, nil),
 			mockCNIClient.EXPECT().SetupNS(gomock.Any(), gomock.Any(), gomock.Any()).DoAndReturn(
-				func(ctx context.Context, cfg *ecscni.Config, timeout time.Duration) (*current.Result, error) {
+				func(ctx context.Context, cfg *ecscni.Config, timeout time.Duration) (*cniTypesCurrent.Result, error) {
 					assert.Equal(t, 1, len(cfg.NetworkConfigs))
 					var scNetworkConfig ecscni.ServiceConnectConfig
 					err := json.Unmarshal(cfg.NetworkConfigs[0].CNINetworkConfig.Bytes, &scNetworkConfig)
@@ -1494,6 +1494,7 @@ func TestCredentialSpecResourceTaskFile(t *testing.T) {
 
 	ssmClientCreator := mock_ssm_factory.NewMockSSMClientCreator(ctrl)
 	s3ClientCreator := mock_s3_factory.NewMockS3ClientCreator(ctrl)
+	asmClientCreator := mock_asm_factory.NewMockClientCreator(ctrl)
 
 	credentialSpecRes, cerr := credentialspec.NewCredentialSpecResource(
 		testTask.Arn,
@@ -1502,6 +1503,7 @@ func TestCredentialSpecResourceTaskFile(t *testing.T) {
 		credentialsManager,
 		ssmClientCreator,
 		s3ClientCreator,
+		asmClientCreator,
 		nil)
 	assert.NoError(t, cerr)
 

@@ -13,24 +13,52 @@
 package state
 
 import (
+	"time"
+
+	"github.com/aws/amazon-ecs-agent/ecs-agent/stats"
 	"github.com/aws/amazon-ecs-agent/ecs-agent/tmds/handlers/response"
 	v2 "github.com/aws/amazon-ecs-agent/ecs-agent/tmds/handlers/v2"
+
+	"github.com/docker/docker/api/types"
+)
+
+const (
+	ClockStatusSynchronized    = "SYNCHRONIZED"
+	ClockStatusNotSynchronized = "NOT_SYNCHRONIZED"
 )
 
 // TaskResponse is the v4 Task response. It augments the v4 Container response
 // with the v2 task response object.
 type TaskResponse struct {
 	*v2.TaskResponse
-	Containers  []ContainerResponse `json:"Containers,omitempty"`
-	VPCID       string              `json:"VPCID,omitempty"`
-	ServiceName string              `json:"ServiceName,omitempty"`
+	Containers              []ContainerResponse      `json:"Containers,omitempty"`
+	VPCID                   string                   `json:"VPCID,omitempty"`
+	ServiceName             string                   `json:"ServiceName,omitempty"`
+	ClockDrift              *ClockDrift              `json:"ClockDrift,omitempty"`
+	EphemeralStorageMetrics *EphemeralStorageMetrics `json:"EphemeralStorageMetrics,omitempty"`
+	CredentialsID           string                   `json:"-"`
+}
+
+// Instance's clock drift status
+type ClockDrift struct {
+	ClockErrorBound            float64    `json:"ClockErrorBound,omitempty"`
+	ReferenceTimestamp         *time.Time `json:"ReferenceTimestamp,omitempty"`
+	ClockSynchronizationStatus string     `json:"ClockSynchronizationStatus,omitempty"`
+}
+
+// EphemeralStorageMetrics struct that is specific to the TMDS response. This struct will show customers the
+// disk utilization and reservation metrics in MiBs to match the units used in other fields in TMDS.
+type EphemeralStorageMetrics struct {
+	UtilizedMiBs int64 `json:"Utilized"`
+	ReservedMiBs int64 `json:"Reserved"`
 }
 
 // ContainerResponse is the v4 Container response. It augments the v4 Network response
 // with the v2 container response object.
 type ContainerResponse struct {
 	*v2.ContainerResponse
-	Networks []Network `json:"Networks,omitempty"`
+	Networks    []Network `json:"Networks,omitempty"`
+	Snapshotter string    `json:"Snapshotter,omitempty"`
 }
 
 // Network is the v4 Network response. It adds a bunch of information about network
@@ -66,4 +94,10 @@ type NetworkInterfaceProperties struct {
 	PrivateDNSName string `json:"PrivateDNSName,omitempty"`
 	// SubnetGatewayIPV4Address is the IPv4 gateway address for the network interface.
 	SubnetGatewayIPV4Address string `json:"SubnetGatewayIpv4Address,omitempty"`
+}
+
+// StatsResponse is the v4 Stats response for a container.
+type StatsResponse struct {
+	*types.StatsJSON
+	Network_rate_stats *stats.NetworkStatsPerSec `json:"network_rate_stats,omitempty"`
 }

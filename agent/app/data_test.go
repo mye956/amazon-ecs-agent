@@ -28,10 +28,10 @@ import (
 	"github.com/aws/amazon-ecs-agent/agent/data"
 	"github.com/aws/amazon-ecs-agent/agent/engine/dockerstate"
 	"github.com/aws/amazon-ecs-agent/agent/engine/image"
-	"github.com/aws/amazon-ecs-agent/agent/eventstream"
 	"github.com/aws/amazon-ecs-agent/agent/statemanager"
 	"github.com/aws/amazon-ecs-agent/ecs-agent/api/attachmentinfo"
 	"github.com/aws/amazon-ecs-agent/ecs-agent/api/eni"
+	"github.com/aws/amazon-ecs-agent/ecs-agent/eventstream"
 
 	"github.com/golang/mock/gomock"
 	"github.com/stretchr/testify/assert"
@@ -112,9 +112,10 @@ func TestLoadDataNoPreviousState(t *testing.T) {
 		stateManagerFactory:   stateManagerFactory,
 		saveableOptionFactory: factory.NewSaveableOption(),
 	}
+	hostResources := getTestHostResources()
 
 	_, err := agent.loadData(eventstream.NewEventStream("events", ctx),
-		credentialsManager, dockerstate.NewTaskEngineState(), imageManager, execCmdMgr, serviceConnectManager)
+		credentialsManager, dockerstate.NewTaskEngineState(), imageManager, hostResources, execCmdMgr, serviceConnectManager)
 	assert.NoError(t, err)
 }
 
@@ -143,8 +144,9 @@ func TestLoadDataLoadFromBoltDB(t *testing.T) {
 	}
 
 	state := dockerstate.NewTaskEngineState()
+	hostResources := getTestHostResources()
 	s, err := agent.loadData(eventstream.NewEventStream("events", ctx),
-		credentialsManager, state, imageManager, execCmdMgr, serviceConnectManager)
+		credentialsManager, state, imageManager, hostResources, execCmdMgr, serviceConnectManager)
 	assert.NoError(t, err)
 	checkLoadedData(state, s, t)
 }
@@ -181,8 +183,9 @@ func TestLoadDataLoadFromStateFile(t *testing.T) {
 	}
 
 	state := dockerstate.NewTaskEngineState()
+	hostResources := getTestHostResources()
 	s, err := agent.loadData(eventstream.NewEventStream("events", ctx),
-		credentialsManager, state, imageManager, execCmdMgr, serviceConnectManager)
+		credentialsManager, state, imageManager, hostResources, execCmdMgr, serviceConnectManager)
 	assert.NoError(t, err)
 	checkLoadedData(state, s, t)
 

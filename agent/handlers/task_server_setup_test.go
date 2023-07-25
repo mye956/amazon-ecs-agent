@@ -35,24 +35,27 @@ import (
 	apitask "github.com/aws/amazon-ecs-agent/agent/api/task"
 	apitaskstatus "github.com/aws/amazon-ecs-agent/agent/api/task/status"
 	"github.com/aws/amazon-ecs-agent/agent/config"
-	"github.com/aws/amazon-ecs-agent/agent/ecs_client/model/ecs"
 	mock_dockerstate "github.com/aws/amazon-ecs-agent/agent/engine/dockerstate/mocks"
-	task_protection_v1 "github.com/aws/amazon-ecs-agent/agent/handlers/agentapi/taskprotection/v1/handlers"
 	v3 "github.com/aws/amazon-ecs-agent/agent/handlers/v3"
-	"github.com/aws/amazon-ecs-agent/agent/stats"
 	mock_stats "github.com/aws/amazon-ecs-agent/agent/stats/mock"
-	agentutils "github.com/aws/amazon-ecs-agent/agent/utils"
 	apieni "github.com/aws/amazon-ecs-agent/ecs-agent/api/eni"
+	mock_taskprotection "github.com/aws/amazon-ecs-agent/ecs-agent/api/mocks"
 	"github.com/aws/amazon-ecs-agent/ecs-agent/credentials"
 	mock_credentials "github.com/aws/amazon-ecs-agent/ecs-agent/credentials/mocks"
+	"github.com/aws/amazon-ecs-agent/ecs-agent/ecs_client/model/ecs"
 	mock_audit "github.com/aws/amazon-ecs-agent/ecs-agent/logger/audit/mocks"
+	"github.com/aws/amazon-ecs-agent/ecs-agent/stats"
 	tmdsresponse "github.com/aws/amazon-ecs-agent/ecs-agent/tmds/handlers/response"
+	tp "github.com/aws/amazon-ecs-agent/ecs-agent/tmds/handlers/taskprotection/v1/handlers"
+	tptypes "github.com/aws/amazon-ecs-agent/ecs-agent/tmds/handlers/taskprotection/v1/types"
 	"github.com/aws/amazon-ecs-agent/ecs-agent/tmds/handlers/utils"
 	tmdsv1 "github.com/aws/amazon-ecs-agent/ecs-agent/tmds/handlers/v1"
 	v2 "github.com/aws/amazon-ecs-agent/ecs-agent/tmds/handlers/v2"
 	v4 "github.com/aws/amazon-ecs-agent/ecs-agent/tmds/handlers/v4/state"
 
 	"github.com/aws/aws-sdk-go/aws"
+	"github.com/aws/aws-sdk-go/aws/awserr"
+	"github.com/aws/aws-sdk-go/aws/request"
 	"github.com/docker/docker/api/types"
 	"github.com/golang/mock/gomock"
 	"github.com/stretchr/testify/assert"
@@ -104,9 +107,7 @@ const (
 	macAddress                 = "06:96:9a:ce:a6:ce"
 	privateDNSName             = "ip-172-31-47-69.us-west-2.compute.internal"
 	subnetGatewayIpv4Address   = "172.31.32.1/20"
-	region                     = "us-west-2"
-	endpoint                   = "ecsEndpoint"
-	acceptInsecureCert         = true
+	taskCredentialsID          = "taskCredentialsId"
 )
 
 var (
@@ -128,33 +129,6 @@ var (
 		},
 		Name: associationName,
 		Type: associationType,
-	}
-	task = &apitask.Task{
-		Arn:                 taskARN,
-		Associations:        []apitask.Association{association},
-		Family:              family,
-		Version:             version,
-		DesiredStatusUnsafe: apitaskstatus.TaskRunning,
-		KnownStatusUnsafe:   apitaskstatus.TaskRunning,
-		NetworkMode:         apitask.AWSVPCNetworkMode,
-		ENIs: []*apieni.ENI{
-			{
-				IPV4Addresses: []*apieni.ENIIPV4Address{
-					{
-						Address: eniIPv4Address,
-					},
-				},
-				MacAddress:               macAddress,
-				PrivateDNSName:           privateDNSName,
-				SubnetGatewayIPV4Address: subnetGatewayIpv4Address,
-			},
-		},
-		CPU:                      cpu,
-		Memory:                   memory,
-		PullStartedAtUnsafe:      now,
-		PullStoppedAtUnsafe:      now,
-		ExecutionStoppedAtUnsafe: now,
-		LaunchType:               "EC2",
 	}
 	pulledTask = &apitask.Task{
 		Arn:                 taskARN,
@@ -436,6 +410,38 @@ var (
 	})
 )
 
+func standardTask() *apitask.Task {
+	task := apitask.Task{
+		Arn:                 taskARN,
+		Associations:        []apitask.Association{association},
+		Family:              family,
+		Version:             version,
+		DesiredStatusUnsafe: apitaskstatus.TaskRunning,
+		KnownStatusUnsafe:   apitaskstatus.TaskRunning,
+		NetworkMode:         apitask.AWSVPCNetworkMode,
+		ENIs: []*apieni.ENI{
+			{
+				IPV4Addresses: []*apieni.ENIIPV4Address{
+					{
+						Address: eniIPv4Address,
+					},
+				},
+				MacAddress:               macAddress,
+				PrivateDNSName:           privateDNSName,
+				SubnetGatewayIPV4Address: subnetGatewayIpv4Address,
+			},
+		},
+		CPU:                      cpu,
+		Memory:                   memory,
+		PullStartedAtUnsafe:      now,
+		PullStoppedAtUnsafe:      now,
+		ExecutionStoppedAtUnsafe: now,
+		LaunchType:               "EC2",
+	}
+	task.SetCredentialsID(taskCredentialsID)
+	return &task
+}
+
 // Returns a standard v2 task response. This getter function protects against tests mutating the
 // response.
 func expectedTaskResponse() v2.TaskResponse {
@@ -562,6 +568,19 @@ func expectedV4TaskResponseNoContainers() v4.TaskResponse {
 	taskResponse := expectedV4TaskResponse()
 	taskResponse.Containers = nil
 	return taskResponse
+}
+
+func taskRoleCredentials() credentials.TaskIAMRoleCredentials {
+	return credentials.TaskIAMRoleCredentials{
+		ARN: taskARN,
+		IAMRoleCredentials: credentials.IAMRoleCredentials{
+			RoleArn:         "roleArn",
+			AccessKeyID:     "accessKeyID",
+			SecretAccessKey: "secretAccessKey",
+			SessionToken:    "sessionToken",
+			Expiration:      "expiration",
+		},
+	}
 }
 
 func v4TaskResponseFromV2(
@@ -763,9 +782,9 @@ func testErrorResponsesFromServer(t *testing.T, path string, expectedErrorMessag
 	credentialsManager := mock_credentials.NewMockManager(ctrl)
 	auditLog := mock_audit.NewMockAuditLogger(ctrl)
 	ecsClient := mock_api.NewMockECSClient(ctrl)
-	server, err := taskServerSetup(credentialsManager, auditLog, nil, ecsClient, "", "", nil,
+	server, err := taskServerSetup(credentialsManager, auditLog, nil, ecsClient, "", nil,
 		config.DefaultTaskMetadataSteadyStateRate, config.DefaultTaskMetadataBurstRate, "", vpcID,
-		containerInstanceArn, "", true)
+		containerInstanceArn, tp.NewMockTaskProtectionClientFactoryInterface(ctrl))
 	require.NoError(t, err)
 
 	recorder := httptest.NewRecorder()
@@ -800,9 +819,9 @@ func getResponseForCredentialsRequest(t *testing.T, expectedStatus int,
 	credentialsManager := mock_credentials.NewMockManager(ctrl)
 	auditLog := mock_audit.NewMockAuditLogger(ctrl)
 	ecsClient := mock_api.NewMockECSClient(ctrl)
-	server, err := taskServerSetup(credentialsManager, auditLog, nil, ecsClient, "", "", nil,
+	server, err := taskServerSetup(credentialsManager, auditLog, nil, ecsClient, "", nil,
 		config.DefaultTaskMetadataSteadyStateRate, config.DefaultTaskMetadataBurstRate, "", vpcID,
-		containerInstanceArn, "", true)
+		containerInstanceArn, tp.NewMockTaskProtectionClientFactoryInterface(ctrl))
 	require.NoError(t, err)
 
 	recorder := httptest.NewRecorder()
@@ -844,167 +863,6 @@ func parseResponseBody(body *bytes.Buffer) (*credentials.IAMRoleCredentials, err
 	return &creds, nil
 }
 
-func TestV2ContainerStats(t *testing.T) {
-	ctrl := gomock.NewController(t)
-	defer ctrl.Finish()
-
-	state := mock_dockerstate.NewMockTaskEngineState(ctrl)
-	auditLog := mock_audit.NewMockAuditLogger(ctrl)
-	statsEngine := mock_stats.NewMockEngine(ctrl)
-	ecsClient := mock_api.NewMockECSClient(ctrl)
-
-	dockerStats := &types.StatsJSON{}
-	dockerStats.NumProcs = 2
-	gomock.InOrder(
-		state.EXPECT().GetTaskByIPAddress(remoteIP).Return(taskARN, true),
-		statsEngine.EXPECT().ContainerDockerStats(taskARN, containerID).Return(dockerStats, &stats.NetworkStatsPerSec{}, nil),
-	)
-	server, err := taskServerSetup(credentials.NewManager(), auditLog, state, ecsClient, clusterName, region, statsEngine,
-		config.DefaultTaskMetadataSteadyStateRate, config.DefaultTaskMetadataBurstRate, "", vpcID,
-		containerInstanceArn, endpoint, acceptInsecureCert)
-	require.NoError(t, err)
-	recorder := httptest.NewRecorder()
-	req, _ := http.NewRequest("GET", v2BaseStatsPath+"/"+containerID, nil)
-	req.RemoteAddr = remoteIP + ":" + remotePort
-	server.Handler.ServeHTTP(recorder, req)
-	res, err := ioutil.ReadAll(recorder.Body)
-	assert.NoError(t, err)
-	assert.Equal(t, http.StatusOK, recorder.Code)
-	var statsFromResult *types.StatsJSON
-	err = json.Unmarshal(res, &statsFromResult)
-	assert.NoError(t, err)
-	assert.Equal(t, dockerStats.NumProcs, statsFromResult.NumProcs)
-}
-
-func TestV2TaskStats(t *testing.T) {
-	testCases := []struct {
-		path string
-	}{
-		{
-			v2BaseStatsPath,
-		},
-		{
-			v2BaseStatsPath + "/",
-		},
-	}
-
-	ctrl := gomock.NewController(t)
-	defer ctrl.Finish()
-
-	for _, tc := range testCases {
-		t.Run(fmt.Sprintf("Testing path: %s", tc.path), func(t *testing.T) {
-			state := mock_dockerstate.NewMockTaskEngineState(ctrl)
-			auditLog := mock_audit.NewMockAuditLogger(ctrl)
-			statsEngine := mock_stats.NewMockEngine(ctrl)
-			ecsClient := mock_api.NewMockECSClient(ctrl)
-
-			dockerStats := &types.StatsJSON{}
-			dockerStats.NumProcs = 2
-			containerMap := map[string]*apicontainer.DockerContainer{
-				containerName: {
-					DockerID: containerID,
-				},
-			}
-			gomock.InOrder(
-				state.EXPECT().GetTaskByIPAddress(remoteIP).Return(taskARN, true),
-				state.EXPECT().ContainerMapByArn(taskARN).Return(containerMap, true),
-				statsEngine.EXPECT().ContainerDockerStats(taskARN, containerID).Return(dockerStats, &stats.NetworkStatsPerSec{}, nil),
-			)
-			server, err := taskServerSetup(credentials.NewManager(), auditLog, state, ecsClient, clusterName, region, statsEngine,
-				config.DefaultTaskMetadataSteadyStateRate, config.DefaultTaskMetadataBurstRate, "", vpcID,
-				containerInstanceArn, endpoint, acceptInsecureCert)
-			require.NoError(t, err)
-			recorder := httptest.NewRecorder()
-			req, _ := http.NewRequest("GET", tc.path, nil)
-			req.RemoteAddr = remoteIP + ":" + remotePort
-			server.Handler.ServeHTTP(recorder, req)
-			res, err := ioutil.ReadAll(recorder.Body)
-			assert.NoError(t, err)
-			assert.Equal(t, http.StatusOK, recorder.Code)
-			var statsFromResult map[string]*types.StatsJSON
-			err = json.Unmarshal(res, &statsFromResult)
-			assert.NoError(t, err)
-			containerStats, ok := statsFromResult[containerID]
-			assert.True(t, ok)
-			assert.Equal(t, dockerStats.NumProcs, containerStats.NumProcs)
-		})
-	}
-}
-
-func TestV3TaskStats(t *testing.T) {
-	ctrl := gomock.NewController(t)
-	defer ctrl.Finish()
-
-	state := mock_dockerstate.NewMockTaskEngineState(ctrl)
-	auditLog := mock_audit.NewMockAuditLogger(ctrl)
-	statsEngine := mock_stats.NewMockEngine(ctrl)
-	ecsClient := mock_api.NewMockECSClient(ctrl)
-
-	dockerStats := &types.StatsJSON{}
-	dockerStats.NumProcs = 2
-
-	containerMap := map[string]*apicontainer.DockerContainer{
-		containerName: {
-			DockerID: containerID,
-		},
-	}
-
-	gomock.InOrder(
-		state.EXPECT().TaskARNByV3EndpointID(v3EndpointID).Return(taskARN, true),
-		state.EXPECT().ContainerMapByArn(taskARN).Return(containerMap, true),
-		statsEngine.EXPECT().ContainerDockerStats(taskARN, containerID).Return(dockerStats, &stats.NetworkStatsPerSec{}, nil),
-	)
-	server, err := taskServerSetup(credentials.NewManager(), auditLog, state, ecsClient, clusterName, region, statsEngine,
-		config.DefaultTaskMetadataSteadyStateRate, config.DefaultTaskMetadataBurstRate, "", vpcID,
-		containerInstanceArn, endpoint, acceptInsecureCert)
-	require.NoError(t, err)
-	recorder := httptest.NewRecorder()
-	req, _ := http.NewRequest("GET", v3BasePath+v3EndpointID+"/task/stats", nil)
-	server.Handler.ServeHTTP(recorder, req)
-	res, err := ioutil.ReadAll(recorder.Body)
-	assert.NoError(t, err)
-	assert.Equal(t, http.StatusOK, recorder.Code)
-	var statsFromResult map[string]*types.StatsJSON
-	err = json.Unmarshal(res, &statsFromResult)
-	assert.NoError(t, err)
-	containerStats, ok := statsFromResult[containerID]
-	assert.True(t, ok)
-	assert.Equal(t, dockerStats.NumProcs, containerStats.NumProcs)
-}
-
-func TestV3ContainerStats(t *testing.T) {
-	ctrl := gomock.NewController(t)
-	defer ctrl.Finish()
-
-	state := mock_dockerstate.NewMockTaskEngineState(ctrl)
-	auditLog := mock_audit.NewMockAuditLogger(ctrl)
-	statsEngine := mock_stats.NewMockEngine(ctrl)
-	ecsClient := mock_api.NewMockECSClient(ctrl)
-
-	dockerStats := &types.StatsJSON{}
-	dockerStats.NumProcs = 2
-
-	gomock.InOrder(
-		state.EXPECT().TaskARNByV3EndpointID(v3EndpointID).Return(taskARN, true),
-		state.EXPECT().DockerIDByV3EndpointID(v3EndpointID).Return(containerID, true),
-		statsEngine.EXPECT().ContainerDockerStats(taskARN, containerID).Return(dockerStats, &stats.NetworkStatsPerSec{}, nil),
-	)
-	server, err := taskServerSetup(credentials.NewManager(), auditLog, state, ecsClient, clusterName, region, statsEngine,
-		config.DefaultTaskMetadataSteadyStateRate, config.DefaultTaskMetadataBurstRate, "", vpcID,
-		containerInstanceArn, endpoint, acceptInsecureCert)
-	require.NoError(t, err)
-	recorder := httptest.NewRecorder()
-	req, _ := http.NewRequest("GET", v3BasePath+v3EndpointID+"/stats", nil)
-	server.Handler.ServeHTTP(recorder, req)
-	res, err := ioutil.ReadAll(recorder.Body)
-	assert.NoError(t, err)
-	assert.Equal(t, http.StatusOK, recorder.Code)
-	var statsFromResult *types.StatsJSON
-	err = json.Unmarshal(res, &statsFromResult)
-	assert.NoError(t, err)
-	assert.Equal(t, dockerStats.NumProcs, statsFromResult.NumProcs)
-}
-
 func TestV3ContainerAssociations(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	defer ctrl.Finish()
@@ -1018,11 +876,11 @@ func TestV3ContainerAssociations(t *testing.T) {
 		state.EXPECT().DockerIDByV3EndpointID(v3EndpointID).Return(containerID, true),
 		state.EXPECT().TaskARNByV3EndpointID(v3EndpointID).Return(taskARN, true),
 		state.EXPECT().ContainerByID(containerID).Return(dockerContainer, true),
-		state.EXPECT().TaskByArn(taskARN).Return(task, true),
+		state.EXPECT().TaskByArn(taskARN).Return(standardTask(), true),
 	)
-	server, err := taskServerSetup(credentials.NewManager(), auditLog, state, ecsClient, clusterName, region, statsEngine,
+	server, err := taskServerSetup(credentials.NewManager(), auditLog, state, ecsClient, clusterName, statsEngine,
 		config.DefaultTaskMetadataSteadyStateRate, config.DefaultTaskMetadataBurstRate, "", vpcID,
-		containerInstanceArn, endpoint, acceptInsecureCert)
+		containerInstanceArn, tp.NewMockTaskProtectionClientFactoryInterface(ctrl))
 	require.NoError(t, err)
 	recorder := httptest.NewRecorder()
 	req, _ := http.NewRequest("GET", v3BasePath+v3EndpointID+"/associations/"+associationType, nil)
@@ -1041,6 +899,8 @@ func TestV3ContainerAssociation(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	defer ctrl.Finish()
 
+	task := standardTask()
+
 	state := mock_dockerstate.NewMockTaskEngineState(ctrl)
 	auditLog := mock_audit.NewMockAuditLogger(ctrl)
 	statsEngine := mock_stats.NewMockEngine(ctrl)
@@ -1050,9 +910,9 @@ func TestV3ContainerAssociation(t *testing.T) {
 		state.EXPECT().TaskARNByV3EndpointID(v3EndpointID).Return(taskARN, true),
 		state.EXPECT().TaskByArn(taskARN).Return(task, true),
 	)
-	server, err := taskServerSetup(credentials.NewManager(), auditLog, state, ecsClient, clusterName, region, statsEngine,
+	server, err := taskServerSetup(credentials.NewManager(), auditLog, state, ecsClient, clusterName, statsEngine,
 		config.DefaultTaskMetadataSteadyStateRate, config.DefaultTaskMetadataBurstRate, "", vpcID,
-		containerInstanceArn, endpoint, acceptInsecureCert)
+		containerInstanceArn, tp.NewMockTaskProtectionClientFactoryInterface(ctrl))
 	require.NoError(t, err)
 	recorder := httptest.NewRecorder()
 	req, _ := http.NewRequest("GET", v3BasePath+v3EndpointID+"/associations/"+associationType+"/"+associationName, nil)
@@ -1064,83 +924,11 @@ func TestV3ContainerAssociation(t *testing.T) {
 	assert.Equal(t, expectedAssociationResponse, string(res))
 }
 
-func TestV4TaskStats(t *testing.T) {
-	ctrl := gomock.NewController(t)
-	defer ctrl.Finish()
-
-	state := mock_dockerstate.NewMockTaskEngineState(ctrl)
-	auditLog := mock_audit.NewMockAuditLogger(ctrl)
-	statsEngine := mock_stats.NewMockEngine(ctrl)
-	ecsClient := mock_api.NewMockECSClient(ctrl)
-
-	dockerStats := &types.StatsJSON{}
-	dockerStats.NumProcs = 2
-
-	containerMap := map[string]*apicontainer.DockerContainer{
-		containerName: {
-			DockerID: containerID,
-		},
-	}
-
-	gomock.InOrder(
-		state.EXPECT().TaskARNByV3EndpointID(v3EndpointID).Return(taskARN, true),
-		state.EXPECT().ContainerMapByArn(taskARN).Return(containerMap, true),
-		statsEngine.EXPECT().ContainerDockerStats(taskARN, containerID).Return(dockerStats, &stats.NetworkStatsPerSec{}, nil),
-	)
-	server, err := taskServerSetup(credentials.NewManager(), auditLog, state, ecsClient, clusterName, region, statsEngine,
-		config.DefaultTaskMetadataSteadyStateRate, config.DefaultTaskMetadataBurstRate, "", vpcID,
-		containerInstanceArn, endpoint, acceptInsecureCert)
-	require.NoError(t, err)
-	recorder := httptest.NewRecorder()
-	req, _ := http.NewRequest("GET", v4BasePath+v3EndpointID+"/task/stats", nil)
-	server.Handler.ServeHTTP(recorder, req)
-	res, err := ioutil.ReadAll(recorder.Body)
-	assert.NoError(t, err)
-	assert.Equal(t, http.StatusOK, recorder.Code)
-	var statsFromResult map[string]*types.StatsJSON
-	err = json.Unmarshal(res, &statsFromResult)
-	assert.NoError(t, err)
-	containerStats, ok := statsFromResult[containerID]
-	assert.True(t, ok)
-	assert.Equal(t, dockerStats.NumProcs, containerStats.NumProcs)
-}
-
-func TestV4ContainerStats(t *testing.T) {
-	ctrl := gomock.NewController(t)
-	defer ctrl.Finish()
-
-	state := mock_dockerstate.NewMockTaskEngineState(ctrl)
-	auditLog := mock_audit.NewMockAuditLogger(ctrl)
-	statsEngine := mock_stats.NewMockEngine(ctrl)
-	ecsClient := mock_api.NewMockECSClient(ctrl)
-
-	dockerStats := &types.StatsJSON{}
-	dockerStats.NumProcs = 2
-
-	gomock.InOrder(
-		state.EXPECT().TaskARNByV3EndpointID(v3EndpointID).Return(taskARN, true),
-		state.EXPECT().DockerIDByV3EndpointID(v3EndpointID).Return(containerID, true),
-		statsEngine.EXPECT().ContainerDockerStats(taskARN, containerID).Return(dockerStats, &stats.NetworkStatsPerSec{}, nil),
-	)
-	server, err := taskServerSetup(credentials.NewManager(), auditLog, state, ecsClient, clusterName, region, statsEngine,
-		config.DefaultTaskMetadataSteadyStateRate, config.DefaultTaskMetadataBurstRate, "", vpcID,
-		containerInstanceArn, endpoint, acceptInsecureCert)
-	require.NoError(t, err)
-	recorder := httptest.NewRecorder()
-	req, _ := http.NewRequest("GET", v4BasePath+v3EndpointID+"/stats", nil)
-	server.Handler.ServeHTTP(recorder, req)
-	res, err := ioutil.ReadAll(recorder.Body)
-	assert.NoError(t, err)
-	assert.Equal(t, http.StatusOK, recorder.Code)
-	var statsFromResult *types.StatsJSON
-	err = json.Unmarshal(res, &statsFromResult)
-	assert.NoError(t, err)
-	assert.Equal(t, dockerStats.NumProcs, statsFromResult.NumProcs)
-}
-
 func TestV4ContainerAssociations(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	defer ctrl.Finish()
+
+	task := standardTask()
 
 	state := mock_dockerstate.NewMockTaskEngineState(ctrl)
 	auditLog := mock_audit.NewMockAuditLogger(ctrl)
@@ -1153,9 +941,9 @@ func TestV4ContainerAssociations(t *testing.T) {
 		state.EXPECT().ContainerByID(containerID).Return(dockerContainer, true),
 		state.EXPECT().TaskByArn(taskARN).Return(task, true),
 	)
-	server, err := taskServerSetup(credentials.NewManager(), auditLog, state, ecsClient, clusterName, region, statsEngine,
+	server, err := taskServerSetup(credentials.NewManager(), auditLog, state, ecsClient, clusterName, statsEngine,
 		config.DefaultTaskMetadataSteadyStateRate, config.DefaultTaskMetadataBurstRate, "", vpcID,
-		containerInstanceArn, endpoint, acceptInsecureCert)
+		containerInstanceArn, tp.NewMockTaskProtectionClientFactoryInterface(ctrl))
 	require.NoError(t, err)
 	recorder := httptest.NewRecorder()
 	req, _ := http.NewRequest("GET", v4BasePath+v3EndpointID+"/associations/"+associationType, nil)
@@ -1174,6 +962,8 @@ func TestV4ContainerAssociation(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	defer ctrl.Finish()
 
+	task := standardTask()
+
 	state := mock_dockerstate.NewMockTaskEngineState(ctrl)
 	auditLog := mock_audit.NewMockAuditLogger(ctrl)
 	statsEngine := mock_stats.NewMockEngine(ctrl)
@@ -1183,9 +973,9 @@ func TestV4ContainerAssociation(t *testing.T) {
 		state.EXPECT().TaskARNByV3EndpointID(v3EndpointID).Return(taskARN, true),
 		state.EXPECT().TaskByArn(taskARN).Return(task, true),
 	)
-	server, err := taskServerSetup(credentials.NewManager(), auditLog, state, ecsClient, clusterName, region, statsEngine,
+	server, err := taskServerSetup(credentials.NewManager(), auditLog, state, ecsClient, clusterName, statsEngine,
 		config.DefaultTaskMetadataSteadyStateRate, config.DefaultTaskMetadataBurstRate, "", vpcID,
-		containerInstanceArn, endpoint, acceptInsecureCert)
+		containerInstanceArn, tp.NewMockTaskProtectionClientFactoryInterface(ctrl))
 	require.NoError(t, err)
 	recorder := httptest.NewRecorder()
 	req, _ := http.NewRequest("GET", v4BasePath+v3EndpointID+"/associations/"+associationType+"/"+associationName, nil)
@@ -1210,9 +1000,9 @@ func TestTaskHTTPEndpoint301Redirect(t *testing.T) {
 	statsEngine := mock_stats.NewMockEngine(ctrl)
 	ecsClient := mock_api.NewMockECSClient(ctrl)
 
-	server, err := taskServerSetup(credentials.NewManager(), auditLog, state, ecsClient, clusterName, region, statsEngine,
+	server, err := taskServerSetup(credentials.NewManager(), auditLog, state, ecsClient, clusterName, statsEngine,
 		config.DefaultTaskMetadataSteadyStateRate, config.DefaultTaskMetadataBurstRate, "", vpcID,
-		containerInstanceArn, endpoint, acceptInsecureCert)
+		containerInstanceArn, tp.NewMockTaskProtectionClientFactoryInterface(ctrl))
 	require.NoError(t, err)
 
 	for testPath, expectedPath := range testPathsMap {
@@ -1253,9 +1043,9 @@ func TestTaskHTTPEndpointErrorCode404(t *testing.T) {
 	statsEngine := mock_stats.NewMockEngine(ctrl)
 	ecsClient := mock_api.NewMockECSClient(ctrl)
 
-	server, err := taskServerSetup(credentials.NewManager(), auditLog, state, ecsClient, clusterName, region, statsEngine,
+	server, err := taskServerSetup(credentials.NewManager(), auditLog, state, ecsClient, clusterName, statsEngine,
 		config.DefaultTaskMetadataSteadyStateRate, config.DefaultTaskMetadataBurstRate, "", vpcID,
-		containerInstanceArn, endpoint, acceptInsecureCert)
+		containerInstanceArn, tp.NewMockTaskProtectionClientFactoryInterface(ctrl))
 	require.NoError(t, err)
 
 	for _, testPath := range testPaths {
@@ -1293,9 +1083,9 @@ func TestTaskHTTPEndpointErrorCode400(t *testing.T) {
 	statsEngine := mock_stats.NewMockEngine(ctrl)
 	ecsClient := mock_api.NewMockECSClient(ctrl)
 
-	server, err := taskServerSetup(credentials.NewManager(), auditLog, state, ecsClient, clusterName, region, statsEngine,
+	server, err := taskServerSetup(credentials.NewManager(), auditLog, state, ecsClient, clusterName, statsEngine,
 		config.DefaultTaskMetadataSteadyStateRate, config.DefaultTaskMetadataBurstRate, "", vpcID,
-		containerInstanceArn, endpoint, acceptInsecureCert)
+		containerInstanceArn, tp.NewMockTaskProtectionClientFactoryInterface(ctrl))
 	require.NoError(t, err)
 
 	for _, testPath := range testPaths {
@@ -1332,9 +1122,9 @@ func TestTaskHTTPEndpointErrorCode500(t *testing.T) {
 	statsEngine := mock_stats.NewMockEngine(ctrl)
 	ecsClient := mock_api.NewMockECSClient(ctrl)
 
-	server, err := taskServerSetup(credentials.NewManager(), auditLog, state, ecsClient, clusterName, region, statsEngine,
+	server, err := taskServerSetup(credentials.NewManager(), auditLog, state, ecsClient, clusterName, statsEngine,
 		config.DefaultTaskMetadataSteadyStateRate, config.DefaultTaskMetadataBurstRate, "", vpcID,
-		containerInstanceArn, endpoint, acceptInsecureCert)
+		containerInstanceArn, tp.NewMockTaskProtectionClientFactoryInterface(ctrl))
 	require.NoError(t, err)
 
 	for _, testPath := range testPaths {
@@ -1379,7 +1169,7 @@ func TestV4TaskNotFoundError404(t *testing.T) {
 		},
 		{
 			testPath:     "/v4/bad/stats",
-			expectedBody: "\"V4 container handler: unable to get task arn from request: unable to get task Arn from v3 endpoint ID: bad\"",
+			expectedBody: "\"V4 container stats handler: unable to get task arn from request: unable to get task Arn from v3 endpoint ID: bad\"",
 		},
 		{
 			testPath:     "/v4/bad/stats",
@@ -1402,9 +1192,9 @@ func TestV4TaskNotFoundError404(t *testing.T) {
 			statsEngine := mock_stats.NewMockEngine(ctrl)
 			ecsClient := mock_api.NewMockECSClient(ctrl)
 
-			server, err := taskServerSetup(credentials.NewManager(), auditLog, state, ecsClient, clusterName, region, statsEngine,
+			server, err := taskServerSetup(credentials.NewManager(), auditLog, state, ecsClient, clusterName, statsEngine,
 				config.DefaultTaskMetadataSteadyStateRate, config.DefaultTaskMetadataBurstRate, "", vpcID,
-				containerInstanceArn, endpoint, acceptInsecureCert)
+				containerInstanceArn, tp.NewMockTaskProtectionClientFactoryInterface(ctrl))
 			require.NoError(t, err)
 
 			state.EXPECT().TaskARNByV3EndpointID(gomock.Any()).Return("", tc.taskFound).AnyTimes()
@@ -1458,9 +1248,9 @@ func TestV4Unexpected500Error(t *testing.T) {
 			statsEngine := mock_stats.NewMockEngine(ctrl)
 			ecsClient := mock_api.NewMockECSClient(ctrl)
 
-			server, err := taskServerSetup(credentials.NewManager(), auditLog, state, ecsClient, clusterName, region, statsEngine,
+			server, err := taskServerSetup(credentials.NewManager(), auditLog, state, ecsClient, clusterName, statsEngine,
 				config.DefaultTaskMetadataSteadyStateRate, config.DefaultTaskMetadataBurstRate, "", vpcID,
-				containerInstanceArn, endpoint, acceptInsecureCert)
+				containerInstanceArn, tp.NewMockTaskProtectionClientFactoryInterface(ctrl))
 			require.NoError(t, err)
 
 			// Initial lookups succeed
@@ -1489,17 +1279,37 @@ func TestV4Unexpected500Error(t *testing.T) {
 
 // Types of TMDS responses, add more types as needed
 type TMDSResponse interface {
-	v2.ContainerResponse | v2.TaskResponse | v4.ContainerResponse | v4.TaskResponse | string
+	v2.ContainerResponse |
+		v2.TaskResponse |
+		v4.ContainerResponse |
+		v4.TaskResponse |
+		tptypes.TaskProtectionResponse |
+		types.StatsJSON |
+		v4.StatsResponse |
+		map[string]*types.StatsJSON |
+		map[string]*v4.StatsResponse |
+		string
 }
 
 // Represents a test case for TMDS. Supports generic TMDS response body types using type parametesrs.
 type TMDSTestCase[R TMDSResponse] struct {
 	// Request path
 	path string
+	// Method to use for the request, defaults to GET
+	method string
+	// Optional request body
+	requestBody interface{}
 	// Function to set expectations on mock task engine state
 	setStateExpectations func(state *mock_dockerstate.MockTaskEngineState)
+	// Function to set expectations on mock stats engine
+	setStatsEngineExpectations func(engine *mock_stats.MockEngine)
 	// Function to set expectations on mock ECS Client
 	setECSClientExpectations func(ecsClient *mock_api.MockECSClient)
+	// Function to set expectations on mock Task Protection Client Factory
+	setTaskProtectionClientFactoryExpectations func(
+		ctrl *gomock.Controller, factory *tp.MockTaskProtectionClientFactoryInterface)
+	// Function to set expectations on mock Credentials Manager
+	setCredentialsManagerExpectations func(credsManager *mock_credentials.MockManager)
 	// Expected HTTP status code of the response
 	expectedStatusCode int
 	// Expected response body, all JSON compatible types are accepted
@@ -1523,23 +1333,45 @@ func testTMDSRequest[R TMDSResponse](t *testing.T, tc TMDSTestCase[R]) {
 	auditLog := mock_audit.NewMockAuditLogger(ctrl)
 	statsEngine := mock_stats.NewMockEngine(ctrl)
 	ecsClient := mock_api.NewMockECSClient(ctrl)
+	credsManager := mock_credentials.NewMockManager(ctrl)
+	taskProtectionClientFactory := tp.NewMockTaskProtectionClientFactoryInterface(ctrl)
 
 	// Set expectations on mocks
 	auditLog.EXPECT().Log(gomock.Any(), gomock.Any(), gomock.Any()).AnyTimes()
-	tc.setStateExpectations(state)
+	if tc.setStateExpectations != nil {
+		tc.setStateExpectations(state)
+	}
+	if tc.setStatsEngineExpectations != nil {
+		tc.setStatsEngineExpectations(statsEngine)
+	}
 	if tc.setECSClientExpectations != nil {
 		tc.setECSClientExpectations(ecsClient)
 	}
+	if tc.setTaskProtectionClientFactoryExpectations != nil {
+		tc.setTaskProtectionClientFactoryExpectations(ctrl, taskProtectionClientFactory)
+	}
+	if tc.setCredentialsManagerExpectations != nil {
+		tc.setCredentialsManagerExpectations(credsManager)
+	}
 
 	// Initialize server
-	server, err := taskServerSetup(credentials.NewManager(), auditLog, state, ecsClient,
-		clusterName, region, statsEngine,
+	server, err := taskServerSetup(credsManager, auditLog, state, ecsClient,
+		clusterName, statsEngine,
 		config.DefaultTaskMetadataSteadyStateRate, config.DefaultTaskMetadataBurstRate, availabilityzone, vpcID,
-		containerInstanceArn, endpoint, acceptInsecureCert)
+		containerInstanceArn, taskProtectionClientFactory)
 	require.NoError(t, err)
 
 	// Create the request
-	req, err := http.NewRequest("GET", tc.path, nil)
+	var reqBody io.Reader
+	if tc.requestBody != nil {
+		reqBodyBytes, err := json.Marshal(tc.requestBody)
+		require.NoError(t, err)
+		reqBody = bytes.NewReader(reqBodyBytes)
+	}
+	if tc.method == "" {
+		tc.method = "GET"
+	}
+	req, err := http.NewRequest(tc.method, tc.path, reqBody)
 	require.NoError(t, err)
 	req.RemoteAddr = remoteIP + ":" + remotePort
 
@@ -1559,6 +1391,8 @@ func testTMDSRequest[R TMDSResponse](t *testing.T, tc TMDSTestCase[R]) {
 
 // Tests for v2 container metadata endpoint
 func TestV2ContainerMetadata(t *testing.T) {
+	task := standardTask()
+
 	t.Run("task not found by IP", func(t *testing.T) {
 		testTMDSRequest(t, TMDSTestCase[string]{
 			path: v2BaseMetadataPath + "/" + containerID,
@@ -1619,6 +1453,8 @@ func TestV2ContainerMetadata(t *testing.T) {
 }
 
 func TestV2TaskMetadata(t *testing.T) {
+	task := standardTask()
+
 	t.Run("task not found by IP", func(t *testing.T) {
 		testTMDSRequest(t, TMDSTestCase[string]{
 			path: v2BaseMetadataPath,
@@ -1693,6 +1529,8 @@ func TestV2TaskMetadata(t *testing.T) {
 }
 
 func TestV3ContainerMetadata(t *testing.T) {
+	task := standardTask()
+
 	t.Run("v3EndpointID invalid", func(t *testing.T) {
 		testTMDSRequest(t, TMDSTestCase[string]{
 			path: v3BasePath + v3EndpointID,
@@ -1784,6 +1622,8 @@ func TestV3ContainerMetadata(t *testing.T) {
 }
 
 func TestV3TaskMetadata(t *testing.T) {
+	task := standardTask()
+
 	t.Run("taskARN not found for v3EndpointID", func(t *testing.T) {
 		testTMDSRequest(t, TMDSTestCase[string]{
 			path: v3BasePath + v3EndpointID + "/task",
@@ -1895,6 +1735,8 @@ func TestV3TaskMetadata(t *testing.T) {
 }
 
 func TestV4ContainerMetadata(t *testing.T) {
+	task := standardTask()
+
 	t.Run("v3EndpointID is invalid", func(t *testing.T) {
 		testTMDSRequest(t, TMDSTestCase[string]{
 			path: v4BasePath + v3EndpointID,
@@ -2017,6 +1859,8 @@ func TestV4ContainerMetadata(t *testing.T) {
 }
 
 func TestV4TaskMetadata(t *testing.T) {
+	task := standardTask()
+
 	t.Run("taskARN not found for v3EndpointID", func(t *testing.T) {
 		testTMDSRequest(t, TMDSTestCase[string]{
 			path: v4BasePath + v3EndpointID + "/task",
@@ -2172,6 +2016,8 @@ func TestV4TaskMetadata(t *testing.T) {
 }
 
 func TestV2TaskMetadataWithTags(t *testing.T) {
+	task := standardTask()
+
 	containerInstanceTags := standardContainerInstanceTags()
 	taskTags := standardTaskTags()
 
@@ -2301,6 +2147,8 @@ func TestV2TaskMetadataWithTags(t *testing.T) {
 }
 
 func TestV3TaskMetadataWithTags(t *testing.T) {
+	task := standardTask()
+
 	containerInstanceTags := standardContainerInstanceTags()
 	taskTags := standardTaskTags()
 
@@ -2464,6 +2312,8 @@ func TestV3TaskMetadataWithTags(t *testing.T) {
 }
 
 func TestV4TaskMetadataWithTags(t *testing.T) {
+	task := standardTask()
+
 	containerInstanceTags := standardContainerInstanceTags()
 	taskTags := standardTaskTags()
 
@@ -2677,55 +2527,1024 @@ func TestV4TaskMetadataWithTags(t *testing.T) {
 	})
 }
 
-// Helper function for testing Agent API Task Protection v1 handlers
-func testAgentAPITaskProtectionV1Handler(t *testing.T, requestBody interface{}, method string) {
-	// Prepare dependency mocks
-	ctrl := gomock.NewController(t)
-	defer ctrl.Finish()
-
-	state := mock_dockerstate.NewMockTaskEngineState(ctrl)
-	auditLog := mock_audit.NewMockAuditLogger(ctrl)
-	statsEngine := mock_stats.NewMockEngine(ctrl)
-	ecsClient := mock_api.NewMockECSClient(ctrl)
-
-	gomock.InOrder(
-		state.EXPECT().TaskARNByV3EndpointID(v3EndpointID).Return(taskARN, true),
-		state.EXPECT().TaskByArn(taskARN).Return(task, true),
-	)
-
-	// Set up the server
-	server, err := taskServerSetup(credentials.NewManager(), auditLog, state, ecsClient, clusterName, region, statsEngine,
-		config.DefaultTaskMetadataSteadyStateRate, config.DefaultTaskMetadataBurstRate, "", vpcID,
-		containerInstanceArn, endpoint, acceptInsecureCert)
-	require.NoError(t, err)
-
-	// Prepare the request
-	var requestReader io.Reader = nil
-	if requestBody != nil {
-		requestBodyJSON, err := json.Marshal(requestBody)
-		assert.NoError(t, err)
-		requestReader = bytes.NewReader(requestBodyJSON)
-	}
-
-	// Send request and record response
-	recorder := httptest.NewRecorder()
-	req, _ := http.NewRequest(method, fmt.Sprintf("/api/%s/task-protection/v1/state", v3EndpointID),
-		requestReader)
-	server.Handler.ServeHTTP(recorder, req)
-
-	// assert that there is response
-	assert.NotNil(t, recorder.Body)
+func TestV2ContainerStats(t *testing.T) {
+	path := v2BaseStatsPath + "/" + containerID
+	t.Run("task not found", func(t *testing.T) {
+		testTMDSRequest(t, TMDSTestCase[string]{
+			path: path,
+			setStateExpectations: func(state *mock_dockerstate.MockTaskEngineState) {
+				state.EXPECT().GetTaskByIPAddress(remoteIP).Return("", false)
+			},
+			expectedStatusCode: http.StatusBadRequest,
+			expectedResponseBody: fmt.Sprintf(
+				"Unable to get task arn from request: unable to associate '%s' with task", remoteIP),
+		})
+	})
+	t.Run("stats not found", func(t *testing.T) {
+		testTMDSRequest(t, TMDSTestCase[string]{
+			path: path,
+			setStateExpectations: func(state *mock_dockerstate.MockTaskEngineState) {
+				state.EXPECT().GetTaskByIPAddress(remoteIP).Return(taskARN, true)
+			},
+			setStatsEngineExpectations: func(engine *mock_stats.MockEngine) {
+				engine.EXPECT().ContainerDockerStats(taskARN, containerID).
+					Return(nil, nil, errors.New("some error"))
+			},
+			expectedStatusCode:   http.StatusBadRequest,
+			expectedResponseBody: fmt.Sprintf("Unable to get container stats for: %s", containerID),
+		})
+	})
+	t.Run("happy case", func(t *testing.T) {
+		dockerStats := types.StatsJSON{Stats: types.Stats{NumProcs: 2}}
+		testTMDSRequest(t, TMDSTestCase[types.StatsJSON]{
+			path: path,
+			setStateExpectations: func(state *mock_dockerstate.MockTaskEngineState) {
+				state.EXPECT().GetTaskByIPAddress(remoteIP).Return(taskARN, true)
+			},
+			setStatsEngineExpectations: func(engine *mock_stats.MockEngine) {
+				engine.EXPECT().ContainerDockerStats(taskARN, containerID).
+					Return(&dockerStats, &stats.NetworkStatsPerSec{}, nil)
+			},
+			expectedStatusCode:   http.StatusOK,
+			expectedResponseBody: dockerStats,
+		})
+	})
 }
 
-// Tests that Agent API v1 GetTaskProtection handler is registered correctly
-func TestAgentAPIV1GetTaskProtectionHandler(t *testing.T) {
-	testAgentAPITaskProtectionV1Handler(t, nil, "GET")
+func TestV2TaskStats(t *testing.T) {
+	t.Run("task not found", func(t *testing.T) {
+		testTMDSRequest(t, TMDSTestCase[string]{
+			path: v2BaseStatsPath,
+			setStateExpectations: func(state *mock_dockerstate.MockTaskEngineState) {
+				state.EXPECT().GetTaskByIPAddress(remoteIP).Return("", false)
+			},
+			expectedStatusCode: http.StatusBadRequest,
+			expectedResponseBody: fmt.Sprintf(
+				"Unable to get task arn from request: unable to associate '%s' with task", remoteIP),
+		})
+	})
+	t.Run("container map not found", func(t *testing.T) {
+		testTMDSRequest(t, TMDSTestCase[string]{
+			path: v2BaseStatsPath,
+			setStateExpectations: func(state *mock_dockerstate.MockTaskEngineState) {
+				gomock.InOrder(
+					state.EXPECT().GetTaskByIPAddress(remoteIP).Return(taskARN, true),
+					state.EXPECT().ContainerMapByArn(taskARN).Return(nil, false),
+				)
+			},
+			expectedStatusCode:   http.StatusBadRequest,
+			expectedResponseBody: "Unable to get task stats for: " + taskARN,
+		})
+	})
+	t.Run("container map empty", func(t *testing.T) {
+		testTMDSRequest(t, TMDSTestCase[map[string]*types.StatsJSON]{
+			path: v2BaseStatsPath,
+			setStateExpectations: func(state *mock_dockerstate.MockTaskEngineState) {
+				gomock.InOrder(
+					state.EXPECT().GetTaskByIPAddress(remoteIP).Return(taskARN, true),
+					state.EXPECT().ContainerMapByArn(taskARN).
+						Return(map[string]*apicontainer.DockerContainer{}, true),
+				)
+			},
+			expectedStatusCode:   http.StatusOK,
+			expectedResponseBody: map[string]*types.StatsJSON{},
+		})
+	})
+	t.Run("stats not found for a container", func(t *testing.T) {
+		containerMap := map[string]*apicontainer.DockerContainer{
+			containerName: {DockerID: containerID},
+		}
+		testTMDSRequest(t, TMDSTestCase[map[string]*types.StatsJSON]{
+			path: v2BaseStatsPath,
+			setStateExpectations: func(state *mock_dockerstate.MockTaskEngineState) {
+				gomock.InOrder(
+					state.EXPECT().GetTaskByIPAddress(remoteIP).Return(taskARN, true),
+					state.EXPECT().ContainerMapByArn(taskARN).Return(containerMap, true),
+				)
+			},
+			setStatsEngineExpectations: func(engine *mock_stats.MockEngine) {
+				engine.EXPECT().ContainerDockerStats(taskARN, containerID).
+					Return(nil, nil, errors.New("some error"))
+			},
+			expectedStatusCode:   http.StatusOK,
+			expectedResponseBody: map[string]*types.StatsJSON{containerID: nil},
+		})
+	})
+
+	happyCasePaths := []string{v2BaseStatsPath, v2BaseStatsPath + "/"}
+	for _, path := range happyCasePaths {
+		t.Run("happy case", func(t *testing.T) {
+			dockerStats := types.StatsJSON{Stats: types.Stats{NumProcs: 2}}
+			containerMap := map[string]*apicontainer.DockerContainer{
+				containerName: {DockerID: containerID},
+			}
+			taskStats := map[string]*types.StatsJSON{containerID: &dockerStats}
+			testTMDSRequest(t, TMDSTestCase[map[string]*types.StatsJSON]{
+				path: path,
+				setStateExpectations: func(state *mock_dockerstate.MockTaskEngineState) {
+					gomock.InOrder(
+						state.EXPECT().GetTaskByIPAddress(remoteIP).Return(taskARN, true),
+						state.EXPECT().ContainerMapByArn(taskARN).Return(containerMap, true),
+					)
+				},
+				setStatsEngineExpectations: func(engine *mock_stats.MockEngine) {
+					engine.EXPECT().ContainerDockerStats(taskARN, containerID).
+						Return(&dockerStats, &stats.NetworkStatsPerSec{}, nil)
+				},
+				expectedStatusCode:   http.StatusOK,
+				expectedResponseBody: taskStats,
+			})
+		})
+	}
 }
 
-// Tests that Agent API v1 UpdateTaskProtection handler is registered correctly
-func TestAgentAPIV1UpdateTaskProtectionHandler(t *testing.T) {
-	requestBody := task_protection_v1.TaskProtectionRequest{
-		ProtectionEnabled: agentutils.BoolPtr(false),
+func TestV3ContainerStats(t *testing.T) {
+	path := v3BasePath + v3EndpointID + "/stats"
+	t.Run("task not found", func(t *testing.T) {
+		testTMDSRequest(t, TMDSTestCase[string]{
+			path: path,
+			setStateExpectations: func(state *mock_dockerstate.MockTaskEngineState) {
+				state.EXPECT().TaskARNByV3EndpointID(v3EndpointID).Return("", false)
+			},
+			expectedStatusCode: http.StatusBadRequest,
+			expectedResponseBody: fmt.Sprintf(
+				"V3 container stats handler: unable to get task arn from request: unable to get task Arn from v3 endpoint ID: %s",
+				v3EndpointID),
+		})
+	})
+	t.Run("Docker ID not found", func(t *testing.T) {
+		testTMDSRequest(t, TMDSTestCase[string]{
+			path: path,
+			setStateExpectations: func(state *mock_dockerstate.MockTaskEngineState) {
+				gomock.InOrder(
+					state.EXPECT().TaskARNByV3EndpointID(v3EndpointID).Return(taskARN, true),
+					state.EXPECT().DockerIDByV3EndpointID(v3EndpointID).Return("", false),
+				)
+			},
+			expectedStatusCode: http.StatusBadRequest,
+			expectedResponseBody: fmt.Sprintf(
+				"V3 container stats handler: unable to get container ID from request: unable to get docker ID from v3 endpoint ID: %s",
+				v3EndpointID),
+		})
+	})
+	t.Run("stats not found", func(t *testing.T) {
+		testTMDSRequest(t, TMDSTestCase[string]{
+			path: path,
+			setStateExpectations: func(state *mock_dockerstate.MockTaskEngineState) {
+				gomock.InOrder(
+					state.EXPECT().TaskARNByV3EndpointID(v3EndpointID).Return(taskARN, true),
+					state.EXPECT().DockerIDByV3EndpointID(v3EndpointID).Return(containerID, true),
+				)
+			},
+			setStatsEngineExpectations: func(engine *mock_stats.MockEngine) {
+				engine.EXPECT().ContainerDockerStats(taskARN, containerID).
+					Return(nil, nil, errors.New("some error"))
+			},
+			expectedStatusCode:   http.StatusBadRequest,
+			expectedResponseBody: fmt.Sprintf("Unable to get container stats for: %s", containerID),
+		})
+	})
+	t.Run("happy case", func(t *testing.T) {
+		dockerStats := types.StatsJSON{Stats: types.Stats{NumProcs: 2}}
+		testTMDSRequest(t, TMDSTestCase[types.StatsJSON]{
+			path: path,
+			setStateExpectations: func(state *mock_dockerstate.MockTaskEngineState) {
+				gomock.InOrder(
+					state.EXPECT().TaskARNByV3EndpointID(v3EndpointID).Return(taskARN, true),
+					state.EXPECT().DockerIDByV3EndpointID(v3EndpointID).Return(containerID, true),
+				)
+			},
+			setStatsEngineExpectations: func(engine *mock_stats.MockEngine) {
+				engine.EXPECT().ContainerDockerStats(taskARN, containerID).
+					Return(&dockerStats, &stats.NetworkStatsPerSec{}, nil)
+			},
+			expectedStatusCode:   http.StatusOK,
+			expectedResponseBody: dockerStats,
+		})
+	})
+}
+
+func TestV3TaskStats(t *testing.T) {
+	path := v3BasePath + v3EndpointID + "/task/stats"
+	t.Run("task not found", func(t *testing.T) {
+		testTMDSRequest(t, TMDSTestCase[string]{
+			path: path,
+			setStateExpectations: func(state *mock_dockerstate.MockTaskEngineState) {
+				state.EXPECT().TaskARNByV3EndpointID(v3EndpointID).Return("", false)
+			},
+			expectedStatusCode: http.StatusBadRequest,
+			expectedResponseBody: fmt.Sprintf(
+				"V3 task stats handler: unable to get task arn from request: unable to get task Arn from v3 endpoint ID: %s",
+				v3EndpointID),
+		})
+	})
+	t.Run("container map not found", func(t *testing.T) {
+		testTMDSRequest(t, TMDSTestCase[string]{
+			path: path,
+			setStateExpectations: func(state *mock_dockerstate.MockTaskEngineState) {
+				gomock.InOrder(
+					state.EXPECT().TaskARNByV3EndpointID(v3EndpointID).Return(taskARN, true),
+					state.EXPECT().ContainerMapByArn(taskARN).Return(nil, false),
+				)
+			},
+			expectedStatusCode:   http.StatusBadRequest,
+			expectedResponseBody: "Unable to get task stats for: " + taskARN,
+		})
+	})
+	t.Run("container map empty", func(t *testing.T) {
+		testTMDSRequest(t, TMDSTestCase[map[string]*types.StatsJSON]{
+			path: path,
+			setStateExpectations: func(state *mock_dockerstate.MockTaskEngineState) {
+				gomock.InOrder(
+					state.EXPECT().TaskARNByV3EndpointID(v3EndpointID).Return(taskARN, true),
+					state.EXPECT().ContainerMapByArn(taskARN).
+						Return(map[string]*apicontainer.DockerContainer{}, true),
+				)
+			},
+			expectedStatusCode:   http.StatusOK,
+			expectedResponseBody: map[string]*types.StatsJSON{},
+		})
+	})
+	t.Run("stats not found for a container", func(t *testing.T) {
+		containerMap := map[string]*apicontainer.DockerContainer{
+			containerName: {DockerID: containerID},
+		}
+		testTMDSRequest(t, TMDSTestCase[map[string]*types.StatsJSON]{
+			path: path,
+			setStateExpectations: func(state *mock_dockerstate.MockTaskEngineState) {
+				gomock.InOrder(
+					state.EXPECT().TaskARNByV3EndpointID(v3EndpointID).Return(taskARN, true),
+					state.EXPECT().ContainerMapByArn(taskARN).Return(containerMap, true),
+				)
+			},
+			setStatsEngineExpectations: func(engine *mock_stats.MockEngine) {
+				engine.EXPECT().ContainerDockerStats(taskARN, containerID).
+					Return(nil, nil, errors.New("some error"))
+			},
+			expectedStatusCode:   http.StatusOK,
+			expectedResponseBody: map[string]*types.StatsJSON{containerID: nil},
+		})
+	})
+	t.Run("happy case", func(t *testing.T) {
+		dockerStats := types.StatsJSON{Stats: types.Stats{NumProcs: 2}}
+		containerMap := map[string]*apicontainer.DockerContainer{
+			containerName: {DockerID: containerID},
+		}
+		testTMDSRequest(t, TMDSTestCase[map[string]*types.StatsJSON]{
+			path: path,
+			setStateExpectations: func(state *mock_dockerstate.MockTaskEngineState) {
+				gomock.InOrder(
+					state.EXPECT().TaskARNByV3EndpointID(v3EndpointID).Return(taskARN, true),
+					state.EXPECT().ContainerMapByArn(taskARN).Return(containerMap, true),
+				)
+			},
+			setStatsEngineExpectations: func(engine *mock_stats.MockEngine) {
+				engine.EXPECT().ContainerDockerStats(taskARN, containerID).
+					Return(&dockerStats, &stats.NetworkStatsPerSec{}, nil)
+			},
+			expectedStatusCode:   http.StatusOK,
+			expectedResponseBody: map[string]*types.StatsJSON{containerID: &dockerStats},
+		})
+	})
+}
+
+func TestV4ContainerStats(t *testing.T) {
+	path := v4BasePath + v3EndpointID + "/stats"
+	t.Run("task not found", func(t *testing.T) {
+		testTMDSRequest(t, TMDSTestCase[string]{
+			path: path,
+			setStateExpectations: func(state *mock_dockerstate.MockTaskEngineState) {
+				state.EXPECT().TaskARNByV3EndpointID(v3EndpointID).Return("", false)
+			},
+			expectedStatusCode: http.StatusNotFound,
+			expectedResponseBody: fmt.Sprintf(
+				"V4 container stats handler: unable to get task arn from request: unable to get task Arn from v3 endpoint ID: %s",
+				v3EndpointID),
+		})
+	})
+	t.Run("Docker ID not found", func(t *testing.T) {
+		testTMDSRequest(t, TMDSTestCase[string]{
+			path: path,
+			setStateExpectations: func(state *mock_dockerstate.MockTaskEngineState) {
+				gomock.InOrder(
+					state.EXPECT().TaskARNByV3EndpointID(v3EndpointID).Return(taskARN, true),
+					state.EXPECT().DockerIDByV3EndpointID(v3EndpointID).Return("", false),
+				)
+			},
+			expectedStatusCode: http.StatusNotFound,
+			expectedResponseBody: fmt.Sprintf(
+				"V4 container stats handler: unable to get container ID from request: unable to get docker ID from v3 endpoint ID: %s",
+				v3EndpointID),
+		})
+	})
+	t.Run("stats not found", func(t *testing.T) {
+		testTMDSRequest(t, TMDSTestCase[string]{
+			path: path,
+			setStateExpectations: func(state *mock_dockerstate.MockTaskEngineState) {
+				gomock.InOrder(
+					state.EXPECT().TaskARNByV3EndpointID(v3EndpointID).Return(taskARN, true),
+					state.EXPECT().DockerIDByV3EndpointID(v3EndpointID).Return(containerID, true),
+				)
+			},
+			setStatsEngineExpectations: func(engine *mock_stats.MockEngine) {
+				engine.EXPECT().ContainerDockerStats(taskARN, containerID).
+					Return(nil, nil, errors.New("some error"))
+			},
+			expectedStatusCode:   http.StatusInternalServerError,
+			expectedResponseBody: "Unable to get container stats for: " + containerID,
+		})
+	})
+	t.Run("happy case", func(t *testing.T) {
+		dockerStats := types.StatsJSON{Stats: types.Stats{NumProcs: 2}}
+		networkStats := stats.NetworkStatsPerSec{
+			RxBytesPerSecond: 52,
+			TxBytesPerSecond: 84,
+		}
+		testTMDSRequest(t, TMDSTestCase[v4.StatsResponse]{
+			path: path,
+			setStateExpectations: func(state *mock_dockerstate.MockTaskEngineState) {
+				gomock.InOrder(
+					state.EXPECT().TaskARNByV3EndpointID(v3EndpointID).Return(taskARN, true),
+					state.EXPECT().DockerIDByV3EndpointID(v3EndpointID).Return(containerID, true),
+				)
+			},
+			setStatsEngineExpectations: func(engine *mock_stats.MockEngine) {
+				engine.EXPECT().ContainerDockerStats(taskARN, containerID).
+					Return(&dockerStats, &networkStats, nil)
+			},
+			expectedStatusCode: http.StatusOK,
+			expectedResponseBody: v4.StatsResponse{
+				StatsJSON:          &dockerStats,
+				Network_rate_stats: &networkStats,
+			},
+		})
+	})
+}
+
+func TestV4TaskStats(t *testing.T) {
+	path := v4BasePath + v3EndpointID + "/task/stats"
+	t.Run("task not found", func(t *testing.T) {
+		testTMDSRequest(t, TMDSTestCase[string]{
+			path: path,
+			setStateExpectations: func(state *mock_dockerstate.MockTaskEngineState) {
+				gomock.InOrder(
+					state.EXPECT().TaskARNByV3EndpointID(v3EndpointID).Return("", false),
+				)
+			},
+			expectedStatusCode: http.StatusNotFound,
+			expectedResponseBody: fmt.Sprintf(
+				"V4 task stats handler: unable to get task arn from request: unable to get task Arn from v3 endpoint ID: %s",
+				v3EndpointID),
+		})
+	})
+	t.Run("containerMap not found", func(t *testing.T) {
+		testTMDSRequest(t, TMDSTestCase[string]{
+			path: path,
+			setStateExpectations: func(state *mock_dockerstate.MockTaskEngineState) {
+				gomock.InOrder(
+					state.EXPECT().TaskARNByV3EndpointID(v3EndpointID).Return(taskARN, true),
+					state.EXPECT().ContainerMapByArn(taskARN).Return(nil, false),
+				)
+			},
+			expectedStatusCode:   http.StatusInternalServerError,
+			expectedResponseBody: "Unable to get task stats for: " + taskARN,
+		})
+	})
+	t.Run("containerMap empty", func(t *testing.T) {
+		containerMap := map[string]*apicontainer.DockerContainer{}
+		testTMDSRequest(t, TMDSTestCase[map[string]*v4.StatsResponse]{
+			path: path,
+			setStateExpectations: func(state *mock_dockerstate.MockTaskEngineState) {
+				gomock.InOrder(
+					state.EXPECT().TaskARNByV3EndpointID(v3EndpointID).Return(taskARN, true),
+					state.EXPECT().ContainerMapByArn(taskARN).Return(containerMap, true),
+				)
+			},
+			expectedStatusCode:   http.StatusOK,
+			expectedResponseBody: map[string]*v4.StatsResponse{},
+		})
+	})
+	t.Run("stats not found for a container", func(t *testing.T) {
+		containerMap := map[string]*apicontainer.DockerContainer{
+			containerName: {DockerID: containerID},
+		}
+		testTMDSRequest(t, TMDSTestCase[map[string]*v4.StatsResponse]{
+			path: path,
+			setStateExpectations: func(state *mock_dockerstate.MockTaskEngineState) {
+				gomock.InOrder(
+					state.EXPECT().TaskARNByV3EndpointID(v3EndpointID).Return(taskARN, true),
+					state.EXPECT().ContainerMapByArn(taskARN).Return(containerMap, true),
+				)
+			},
+			setStatsEngineExpectations: func(engine *mock_stats.MockEngine) {
+				engine.EXPECT().ContainerDockerStats(taskARN, containerID).
+					Return(nil, nil, errors.New("some error"))
+			},
+			expectedStatusCode: http.StatusOK,
+			expectedResponseBody: map[string]*v4.StatsResponse{
+				containerID: {
+					StatsJSON: nil, Network_rate_stats: nil,
+				}},
+		})
+	})
+	t.Run("happy case", func(t *testing.T) {
+		containerMap := map[string]*apicontainer.DockerContainer{
+			containerName: {DockerID: containerID},
+		}
+		networkStats := stats.NetworkStatsPerSec{
+			RxBytesPerSecond: 52,
+			TxBytesPerSecond: 84,
+		}
+		dockerStats := types.StatsJSON{Stats: types.Stats{NumProcs: 2}}
+		testTMDSRequest(t, TMDSTestCase[map[string]*v4.StatsResponse]{
+			path: path,
+			setStateExpectations: func(state *mock_dockerstate.MockTaskEngineState) {
+				gomock.InOrder(
+					state.EXPECT().TaskARNByV3EndpointID(v3EndpointID).Return(taskARN, true),
+					state.EXPECT().ContainerMapByArn(taskARN).Return(containerMap, true),
+				)
+			},
+			setStatsEngineExpectations: func(engine *mock_stats.MockEngine) {
+				engine.EXPECT().ContainerDockerStats(taskARN, containerID).
+					Return(&dockerStats, &networkStats, nil)
+			},
+			expectedStatusCode: http.StatusOK,
+			expectedResponseBody: map[string]*v4.StatsResponse{containerID: {
+				StatsJSON:          &dockerStats,
+				Network_rate_stats: &networkStats,
+			}},
+		})
+	})
+}
+
+func TestGetTaskProtection(t *testing.T) {
+	path := fmt.Sprintf("/api/%s/task-protection/v1/state", v3EndpointID)
+
+	// Set up some fake data
+	task := standardTask()
+	ecsInput := ecs.GetTaskProtectionInput{
+		Cluster: aws.String(clusterName),
+		Tasks:   aws.StringSlice([]string{taskARN}),
 	}
-	testAgentAPITaskProtectionV1Handler(t, requestBody, "PUT")
+	protectedTask := ecs.ProtectedTask{
+		ProtectionEnabled: aws.Bool(true),
+		TaskArn:           aws.String(taskARN),
+	}
+	ecsOutput := ecs.GetTaskProtectionOutput{
+		ProtectedTasks: []*ecs.ProtectedTask{&protectedTask},
+	}
+	ecsRequestID := "reqid"
+	ecsErrMessage := "ecs error message"
+
+	// Helper functions to set expectation on mocks
+	happyStateExpectations := func(state *mock_dockerstate.MockTaskEngineState) {
+		gomock.InOrder(
+			state.EXPECT().TaskARNByV3EndpointID(v3EndpointID).Return(taskARN, true),
+			state.EXPECT().TaskByArn(taskARN).Return(task, true).Times(2),
+			state.EXPECT().ContainerMapByArn(taskARN).Return(containerNameToDockerContainer, true),
+			state.EXPECT().TaskByArn(taskARN).Return(task, true),
+			state.EXPECT().PulledContainerMapByArn(taskARN).Return(nil, true),
+		)
+	}
+	happyCredentialsManagerExpectations := func(credsManager *mock_credentials.MockManager) {
+		credsManager.EXPECT().
+			GetTaskCredentials(task.GetCredentialsID()).
+			Return(taskRoleCredentials(), true)
+	}
+	taskProtectionClientFactoryExpectations := func(output *ecs.GetTaskProtectionOutput, err error) func(
+		*gomock.Controller, *tp.MockTaskProtectionClientFactoryInterface,
+	) {
+		return func(
+			ctrl *gomock.Controller,
+			factory *tp.MockTaskProtectionClientFactoryInterface,
+		) {
+			client := mock_taskprotection.NewMockECSTaskProtectionSDK(ctrl)
+			client.EXPECT().GetTaskProtectionWithContext(gomock.Any(), &ecsInput).Return(output, err)
+			factory.EXPECT().NewTaskProtectionClient(taskRoleCredentials()).Return(client)
+		}
+	}
+
+	// Test cases start here
+	t.Run("task ARN not found", func(t *testing.T) {
+		testTMDSRequest(t, TMDSTestCase[tptypes.TaskProtectionResponse]{
+			path: path,
+			setStateExpectations: func(state *mock_dockerstate.MockTaskEngineState) {
+				gomock.InOrder(
+					state.EXPECT().TaskARNByV3EndpointID(v3EndpointID).Return("", false),
+				)
+			},
+			expectedStatusCode: http.StatusNotFound,
+			expectedResponseBody: tptypes.TaskProtectionResponse{
+				Error: &tptypes.ErrorResponse{
+					Code:    ecs.ErrCodeResourceNotFoundException,
+					Message: "Failed to find a task for the request",
+				},
+			},
+		})
+	})
+	t.Run("task not found", func(t *testing.T) {
+		testTMDSRequest(t, TMDSTestCase[tptypes.TaskProtectionResponse]{
+			path: path,
+			setStateExpectations: func(state *mock_dockerstate.MockTaskEngineState) {
+				gomock.InOrder(
+					state.EXPECT().TaskARNByV3EndpointID(v3EndpointID).Return(taskARN, true),
+					state.EXPECT().TaskByArn(taskARN).Return(nil, false),
+				)
+			},
+			expectedStatusCode: http.StatusInternalServerError,
+			expectedResponseBody: tptypes.TaskProtectionResponse{
+				Error: &tptypes.ErrorResponse{
+					Code:    ecs.ErrCodeServerException,
+					Message: "Failed to find a task for the request",
+				},
+			},
+		})
+	})
+	t.Run("task credentials not found", func(t *testing.T) {
+		testTMDSRequest(t, TMDSTestCase[tptypes.TaskProtectionResponse]{
+			path:                 path,
+			setStateExpectations: happyStateExpectations,
+			setCredentialsManagerExpectations: func(credsManager *mock_credentials.MockManager) {
+				credsManager.
+					EXPECT().GetTaskCredentials(taskCredentialsID).
+					Return(credentials.TaskIAMRoleCredentials{}, false)
+			},
+			expectedStatusCode: http.StatusForbidden,
+			expectedResponseBody: tptypes.TaskProtectionResponse{
+				Error: &tptypes.ErrorResponse{
+					Arn:     taskARN,
+					Code:    ecs.ErrCodeAccessDeniedException,
+					Message: "Invalid Request: no task IAM role credentials available for task",
+				},
+			},
+		})
+	})
+	t.Run("ecs call server exception", func(t *testing.T) {
+		testTMDSRequest(t, TMDSTestCase[tptypes.TaskProtectionResponse]{
+			path:                              path,
+			setStateExpectations:              happyStateExpectations,
+			setCredentialsManagerExpectations: happyCredentialsManagerExpectations,
+			setTaskProtectionClientFactoryExpectations: taskProtectionClientFactoryExpectations(
+				nil,
+				awserr.NewRequestFailure(
+					awserr.New(ecs.ErrCodeServerException, ecsErrMessage, nil),
+					http.StatusInternalServerError,
+					ecsRequestID,
+				),
+			),
+			expectedStatusCode: http.StatusInternalServerError,
+			expectedResponseBody: tptypes.TaskProtectionResponse{
+				RequestID: &ecsRequestID,
+				Error: &tptypes.ErrorResponse{
+					Arn:     taskARN,
+					Code:    ecs.ErrCodeServerException,
+					Message: ecsErrMessage,
+				},
+			},
+		})
+	})
+	t.Run("ecs call access denied exception", func(t *testing.T) {
+		testTMDSRequest(t, TMDSTestCase[tptypes.TaskProtectionResponse]{
+			path:                              path,
+			setStateExpectations:              happyStateExpectations,
+			setCredentialsManagerExpectations: happyCredentialsManagerExpectations,
+			setTaskProtectionClientFactoryExpectations: taskProtectionClientFactoryExpectations(
+				nil,
+				awserr.NewRequestFailure(
+					awserr.New(ecs.ErrCodeAccessDeniedException, ecsErrMessage, nil),
+					http.StatusBadRequest,
+					ecsRequestID,
+				),
+			),
+			expectedStatusCode: http.StatusBadRequest,
+			expectedResponseBody: tptypes.TaskProtectionResponse{
+				RequestID: &ecsRequestID,
+				Error: &tptypes.ErrorResponse{
+					Arn:     taskARN,
+					Code:    ecs.ErrCodeAccessDeniedException,
+					Message: ecsErrMessage,
+				},
+			},
+		})
+	})
+	t.Run("ecs call non-request-failure aws error", func(t *testing.T) {
+		testTMDSRequest(t, TMDSTestCase[tptypes.TaskProtectionResponse]{
+			path:                              path,
+			setStateExpectations:              happyStateExpectations,
+			setCredentialsManagerExpectations: happyCredentialsManagerExpectations,
+			setTaskProtectionClientFactoryExpectations: taskProtectionClientFactoryExpectations(
+				nil,
+				awserr.New(ecs.ErrCodeInvalidParameterException, ecsErrMessage, nil)),
+			expectedStatusCode: http.StatusInternalServerError,
+			expectedResponseBody: tptypes.TaskProtectionResponse{
+				Error: &tptypes.ErrorResponse{
+					Arn:     taskARN,
+					Code:    ecs.ErrCodeInvalidParameterException,
+					Message: ecsErrMessage,
+				},
+			},
+		})
+	})
+	t.Run("agent timeout", func(t *testing.T) {
+		testTMDSRequest(t, TMDSTestCase[tptypes.TaskProtectionResponse]{
+			path:                              path,
+			setStateExpectations:              happyStateExpectations,
+			setCredentialsManagerExpectations: happyCredentialsManagerExpectations,
+			setTaskProtectionClientFactoryExpectations: taskProtectionClientFactoryExpectations(
+				nil, awserr.New(request.CanceledErrorCode, "request cancelled", nil)),
+			expectedStatusCode: http.StatusGatewayTimeout,
+			expectedResponseBody: tptypes.TaskProtectionResponse{
+				Error: &tptypes.ErrorResponse{
+					Arn:     taskARN,
+					Code:    request.CanceledErrorCode,
+					Message: "Timed out calling ECS Task Protection API",
+				},
+			},
+		})
+	})
+	t.Run("non-aws error", func(t *testing.T) {
+		testTMDSRequest(t, TMDSTestCase[tptypes.TaskProtectionResponse]{
+			path:                              path,
+			setStateExpectations:              happyStateExpectations,
+			setCredentialsManagerExpectations: happyCredentialsManagerExpectations,
+			setTaskProtectionClientFactoryExpectations: taskProtectionClientFactoryExpectations(
+				nil, errors.New("some error")),
+			expectedStatusCode: http.StatusInternalServerError,
+			expectedResponseBody: tptypes.TaskProtectionResponse{
+				Error: &tptypes.ErrorResponse{
+					Arn:     taskARN,
+					Code:    ecs.ErrCodeServerException,
+					Message: "some error",
+				},
+			},
+		})
+	})
+	t.Run("ecs failure", func(t *testing.T) {
+		testTMDSRequest(t, TMDSTestCase[tptypes.TaskProtectionResponse]{
+			path:                              path,
+			setStateExpectations:              happyStateExpectations,
+			setCredentialsManagerExpectations: happyCredentialsManagerExpectations,
+			setTaskProtectionClientFactoryExpectations: taskProtectionClientFactoryExpectations(
+				&ecs.GetTaskProtectionOutput{
+					Failures: []*ecs.Failure{{
+						Arn:    aws.String(taskARN),
+						Reason: aws.String("ecs failure"),
+					}},
+				}, nil),
+			expectedStatusCode: http.StatusOK,
+			expectedResponseBody: tptypes.TaskProtectionResponse{
+				Failure: &ecs.Failure{
+					Arn:    aws.String(taskARN),
+					Reason: aws.String("ecs failure"),
+				},
+			},
+		})
+	})
+	t.Run("more than one ecs failure", func(t *testing.T) {
+		testTMDSRequest(t, TMDSTestCase[tptypes.TaskProtectionResponse]{
+			path:                              path,
+			setStateExpectations:              happyStateExpectations,
+			setCredentialsManagerExpectations: happyCredentialsManagerExpectations,
+			setTaskProtectionClientFactoryExpectations: taskProtectionClientFactoryExpectations(
+				&ecs.GetTaskProtectionOutput{
+					Failures: []*ecs.Failure{
+						{
+							Arn:    aws.String(taskARN),
+							Reason: aws.String("ecs failure 1"),
+						},
+						{
+							Arn:    aws.String(taskARN),
+							Reason: aws.String("ecs failure 2"),
+						},
+					},
+				}, nil),
+			expectedStatusCode: http.StatusInternalServerError,
+			expectedResponseBody: tptypes.TaskProtectionResponse{
+				Error: &tptypes.ErrorResponse{
+					Arn:     taskARN,
+					Code:    ecs.ErrCodeServerException,
+					Message: "Unexpected error occurred",
+				},
+			},
+		})
+	})
+	t.Run("happy case", func(t *testing.T) {
+		testTMDSRequest(t, TMDSTestCase[tptypes.TaskProtectionResponse]{
+			path:                              path,
+			setStateExpectations:              happyStateExpectations,
+			setCredentialsManagerExpectations: happyCredentialsManagerExpectations,
+			setTaskProtectionClientFactoryExpectations: taskProtectionClientFactoryExpectations(&ecsOutput, nil),
+			expectedStatusCode:                         http.StatusOK,
+			expectedResponseBody: tptypes.TaskProtectionResponse{
+				Protection: &protectedTask,
+			},
+		})
+	})
+}
+
+func TestUpdateTaskProtection(t *testing.T) {
+	// Set up some fake data
+	task := standardTask()
+	protectionEnabled := aws.Bool(true)
+	expirationMinutes := aws.Int64(5)
+	ecsInput := ecs.UpdateTaskProtectionInput{
+		Cluster:           aws.String(clusterName),
+		ProtectionEnabled: protectionEnabled,
+		ExpiresInMinutes:  expirationMinutes,
+		Tasks:             aws.StringSlice([]string{taskARN}),
+	}
+	protectedTask := ecs.ProtectedTask{
+		ProtectionEnabled: aws.Bool(true),
+		TaskArn:           aws.String(taskARN),
+	}
+	ecsOutput := ecs.UpdateTaskProtectionOutput{
+		ProtectedTasks: []*ecs.ProtectedTask{&protectedTask},
+	}
+	ecsRequestID := "reqid"
+	ecsErrMessage := "ecs error message"
+	happyReqBody := &tp.TaskProtectionRequest{
+		ProtectionEnabled: protectionEnabled,
+		ExpiresInMinutes:  expirationMinutes,
+	}
+
+	// Helper functions to set expectation on mocks
+	happyStateExpectations := func(state *mock_dockerstate.MockTaskEngineState) {
+		gomock.InOrder(
+			state.EXPECT().TaskARNByV3EndpointID(v3EndpointID).Return(taskARN, true),
+			state.EXPECT().TaskByArn(taskARN).Return(task, true).Times(2),
+			state.EXPECT().ContainerMapByArn(taskARN).Return(containerNameToDockerContainer, true),
+			state.EXPECT().TaskByArn(taskARN).Return(task, true),
+			state.EXPECT().PulledContainerMapByArn(taskARN).Return(nil, true),
+		)
+	}
+	happyCredentialsManagerExpectations := func(credsManager *mock_credentials.MockManager) {
+		credsManager.EXPECT().
+			GetTaskCredentials(task.GetCredentialsID()).
+			Return(taskRoleCredentials(), true)
+	}
+	taskProtectionClientFactoryExpectations := func(output *ecs.UpdateTaskProtectionOutput, err error) func(
+		*gomock.Controller, *tp.MockTaskProtectionClientFactoryInterface,
+	) {
+		return func(
+			ctrl *gomock.Controller,
+			factory *tp.MockTaskProtectionClientFactoryInterface,
+		) {
+			client := mock_taskprotection.NewMockECSTaskProtectionSDK(ctrl)
+			client.EXPECT().UpdateTaskProtectionWithContext(gomock.Any(), &ecsInput).Return(output, err)
+			factory.EXPECT().NewTaskProtectionClient(taskRoleCredentials()).Return(client)
+		}
+	}
+
+	// Helper function for creating a function that runs a test case
+	runTest := func(t *testing.T, tc TMDSTestCase[tptypes.TaskProtectionResponse]) func(*testing.T) {
+		return func(t *testing.T) {
+			tc.path = fmt.Sprintf("/api/%s/task-protection/v1/state", v3EndpointID)
+			tc.method = "PUT"
+			testTMDSRequest(t, tc)
+		}
+	}
+
+	// Test cases start here
+	t.Run("task ARN not found", runTest(t, TMDSTestCase[tptypes.TaskProtectionResponse]{
+		requestBody: happyReqBody,
+		setStateExpectations: func(state *mock_dockerstate.MockTaskEngineState) {
+			gomock.InOrder(
+				state.EXPECT().TaskARNByV3EndpointID(v3EndpointID).Return("", false),
+			)
+		},
+		expectedStatusCode: http.StatusNotFound,
+		expectedResponseBody: tptypes.TaskProtectionResponse{
+			Error: &tptypes.ErrorResponse{
+				Code:    ecs.ErrCodeResourceNotFoundException,
+				Message: "Failed to find a task for the request",
+			},
+		},
+	}))
+	t.Run("task not found", runTest(t, TMDSTestCase[tptypes.TaskProtectionResponse]{
+		requestBody: happyReqBody,
+		setStateExpectations: func(state *mock_dockerstate.MockTaskEngineState) {
+			gomock.InOrder(
+				state.EXPECT().TaskARNByV3EndpointID(v3EndpointID).Return(taskARN, true),
+				state.EXPECT().TaskByArn(taskARN).Return(nil, false),
+			)
+		},
+		expectedStatusCode: http.StatusInternalServerError,
+		expectedResponseBody: tptypes.TaskProtectionResponse{
+			Error: &tptypes.ErrorResponse{
+				Code:    ecs.ErrCodeServerException,
+				Message: "Failed to find a task for the request",
+			},
+		},
+	}))
+	t.Run("task credentials not found", runTest(t, TMDSTestCase[tptypes.TaskProtectionResponse]{
+		requestBody:          happyReqBody,
+		setStateExpectations: happyStateExpectations,
+		setCredentialsManagerExpectations: func(credsManager *mock_credentials.MockManager) {
+			credsManager.
+				EXPECT().GetTaskCredentials(taskCredentialsID).
+				Return(credentials.TaskIAMRoleCredentials{}, false)
+		},
+		expectedStatusCode: http.StatusForbidden,
+		expectedResponseBody: tptypes.TaskProtectionResponse{
+			Error: &tptypes.ErrorResponse{
+				Arn:     taskARN,
+				Code:    ecs.ErrCodeAccessDeniedException,
+				Message: "Invalid Request: no task IAM role credentials available for task",
+			},
+		},
+	}))
+	t.Run("ecs call server exception", runTest(t, TMDSTestCase[tptypes.TaskProtectionResponse]{
+		requestBody:                       happyReqBody,
+		setStateExpectations:              happyStateExpectations,
+		setCredentialsManagerExpectations: happyCredentialsManagerExpectations,
+		setTaskProtectionClientFactoryExpectations: taskProtectionClientFactoryExpectations(
+			nil,
+			awserr.NewRequestFailure(
+				awserr.New(ecs.ErrCodeServerException, ecsErrMessage, nil),
+				http.StatusInternalServerError,
+				ecsRequestID,
+			),
+		),
+		expectedStatusCode: http.StatusInternalServerError,
+		expectedResponseBody: tptypes.TaskProtectionResponse{
+			RequestID: &ecsRequestID,
+			Error: &tptypes.ErrorResponse{
+				Arn:     taskARN,
+				Code:    ecs.ErrCodeServerException,
+				Message: ecsErrMessage,
+			},
+		},
+	}))
+	t.Run("ecs call access denied exception", runTest(t, TMDSTestCase[tptypes.TaskProtectionResponse]{
+		requestBody:                       happyReqBody,
+		setStateExpectations:              happyStateExpectations,
+		setCredentialsManagerExpectations: happyCredentialsManagerExpectations,
+		setTaskProtectionClientFactoryExpectations: taskProtectionClientFactoryExpectations(
+			nil,
+			awserr.NewRequestFailure(
+				awserr.New(ecs.ErrCodeAccessDeniedException, ecsErrMessage, nil),
+				http.StatusBadRequest,
+				ecsRequestID,
+			),
+		),
+		expectedStatusCode: http.StatusBadRequest,
+		expectedResponseBody: tptypes.TaskProtectionResponse{
+			RequestID: &ecsRequestID,
+			Error: &tptypes.ErrorResponse{
+				Arn:     taskARN,
+				Code:    ecs.ErrCodeAccessDeniedException,
+				Message: ecsErrMessage,
+			},
+		},
+	}))
+	t.Run("ecs call non-request-failure aws error", runTest(t, TMDSTestCase[tptypes.TaskProtectionResponse]{
+		requestBody:                       happyReqBody,
+		setStateExpectations:              happyStateExpectations,
+		setCredentialsManagerExpectations: happyCredentialsManagerExpectations,
+		setTaskProtectionClientFactoryExpectations: taskProtectionClientFactoryExpectations(
+			nil,
+			awserr.New(ecs.ErrCodeInvalidParameterException, ecsErrMessage, nil)),
+		expectedStatusCode: http.StatusInternalServerError,
+		expectedResponseBody: tptypes.TaskProtectionResponse{
+			Error: &tptypes.ErrorResponse{
+				Arn:     taskARN,
+				Code:    ecs.ErrCodeInvalidParameterException,
+				Message: ecsErrMessage,
+			},
+		},
+	}))
+	t.Run("agent timeout", runTest(t, TMDSTestCase[tptypes.TaskProtectionResponse]{
+		requestBody:                       happyReqBody,
+		setStateExpectations:              happyStateExpectations,
+		setCredentialsManagerExpectations: happyCredentialsManagerExpectations,
+		setTaskProtectionClientFactoryExpectations: taskProtectionClientFactoryExpectations(
+			nil, awserr.New(request.CanceledErrorCode, "request cancelled", nil)),
+		expectedStatusCode: http.StatusGatewayTimeout,
+		expectedResponseBody: tptypes.TaskProtectionResponse{
+			Error: &tptypes.ErrorResponse{
+				Arn:     taskARN,
+				Code:    request.CanceledErrorCode,
+				Message: "Timed out calling ECS Task Protection API",
+			},
+		},
+	}))
+	t.Run("non-aws error", runTest(t, TMDSTestCase[tptypes.TaskProtectionResponse]{
+		requestBody:                       happyReqBody,
+		setStateExpectations:              happyStateExpectations,
+		setCredentialsManagerExpectations: happyCredentialsManagerExpectations,
+		setTaskProtectionClientFactoryExpectations: taskProtectionClientFactoryExpectations(
+			nil, errors.New("some error")),
+		expectedStatusCode: http.StatusInternalServerError,
+		expectedResponseBody: tptypes.TaskProtectionResponse{
+			Error: &tptypes.ErrorResponse{
+				Arn:     taskARN,
+				Code:    ecs.ErrCodeServerException,
+				Message: "some error",
+			},
+		},
+	}))
+	t.Run("ecs failure", runTest(t, TMDSTestCase[tptypes.TaskProtectionResponse]{
+		requestBody:                       happyReqBody,
+		setStateExpectations:              happyStateExpectations,
+		setCredentialsManagerExpectations: happyCredentialsManagerExpectations,
+		setTaskProtectionClientFactoryExpectations: taskProtectionClientFactoryExpectations(
+			&ecs.UpdateTaskProtectionOutput{
+				Failures: []*ecs.Failure{{
+					Arn:    aws.String(taskARN),
+					Reason: aws.String("ecs failure"),
+				}},
+			}, nil),
+		expectedStatusCode: http.StatusOK,
+		expectedResponseBody: tptypes.TaskProtectionResponse{
+			Failure: &ecs.Failure{
+				Arn:    aws.String(taskARN),
+				Reason: aws.String("ecs failure"),
+			},
+		},
+	}))
+	t.Run("more than on ecs failure", runTest(t, TMDSTestCase[tptypes.TaskProtectionResponse]{
+		requestBody:                       happyReqBody,
+		setStateExpectations:              happyStateExpectations,
+		setCredentialsManagerExpectations: happyCredentialsManagerExpectations,
+		setTaskProtectionClientFactoryExpectations: taskProtectionClientFactoryExpectations(
+			&ecs.UpdateTaskProtectionOutput{
+				Failures: []*ecs.Failure{
+					{
+						Arn:    aws.String(taskARN),
+						Reason: aws.String("ecs failure 1"),
+					},
+					{
+						Arn:    aws.String(taskARN),
+						Reason: aws.String("ecs failure 2"),
+					},
+				},
+			}, nil),
+		expectedStatusCode: http.StatusInternalServerError,
+		expectedResponseBody: tptypes.TaskProtectionResponse{
+			Error: &tptypes.ErrorResponse{
+				Arn:     taskARN,
+				Code:    ecs.ErrCodeServerException,
+				Message: "Unexpected error occurred",
+			},
+		},
+	}))
+	t.Run("empty request", runTest(t, TMDSTestCase[tptypes.TaskProtectionResponse]{
+		requestBody:          map[string]string{},
+		setStateExpectations: happyStateExpectations,
+		expectedStatusCode:   http.StatusBadRequest,
+		expectedResponseBody: tptypes.TaskProtectionResponse{
+			Error: &tptypes.ErrorResponse{
+				Arn:     taskARN,
+				Code:    ecs.ErrCodeInvalidParameterException,
+				Message: "Invalid request: does not contain 'ProtectionEnabled' field",
+			},
+		},
+	}))
+	t.Run("invalid type in request", runTest(t, TMDSTestCase[tptypes.TaskProtectionResponse]{
+		requestBody: map[string]interface{}{
+			"ProtectionEnabled": true,
+			"ExpiresInMinutes":  "bad",
+		},
+		expectedStatusCode: http.StatusBadRequest,
+		expectedResponseBody: tptypes.TaskProtectionResponse{
+			Error: &tptypes.ErrorResponse{
+				Code:    ecs.ErrCodeInvalidParameterException,
+				Message: "UpdateTaskProtection: failed to decode request",
+			},
+		},
+	}))
+	t.Run("unknown fields in the request", runTest(t, TMDSTestCase[tptypes.TaskProtectionResponse]{
+		requestBody: map[string]interface{}{
+			"ProtectionEnabled": true,
+			"ExpiresInMinutes":  5,
+			"Unknown":           "unknown",
+		},
+		expectedStatusCode: http.StatusBadRequest,
+		expectedResponseBody: tptypes.TaskProtectionResponse{
+			Error: &tptypes.ErrorResponse{
+				Code:    ecs.ErrCodeInvalidParameterException,
+				Message: "UpdateTaskProtection: failed to decode request",
+			},
+		},
+	}))
+	t.Run("non-JSON object request", runTest(t, TMDSTestCase[tptypes.TaskProtectionResponse]{
+		requestBody:        "bad",
+		expectedStatusCode: http.StatusBadRequest,
+		expectedResponseBody: tptypes.TaskProtectionResponse{
+			Error: &tptypes.ErrorResponse{
+				Code:    ecs.ErrCodeInvalidParameterException,
+				Message: "UpdateTaskProtection: failed to decode request",
+			},
+		},
+	}))
+	t.Run("happy case", runTest(t, TMDSTestCase[tptypes.TaskProtectionResponse]{
+		requestBody:                                happyReqBody,
+		setStateExpectations:                       happyStateExpectations,
+		setCredentialsManagerExpectations:          happyCredentialsManagerExpectations,
+		setTaskProtectionClientFactoryExpectations: taskProtectionClientFactoryExpectations(&ecsOutput, nil),
+		expectedStatusCode:                         http.StatusOK,
+		expectedResponseBody: tptypes.TaskProtectionResponse{
+			Protection: &protectedTask,
+		},
+	}))
 }

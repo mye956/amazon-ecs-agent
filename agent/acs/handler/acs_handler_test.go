@@ -40,12 +40,12 @@ import (
 	"github.com/aws/amazon-ecs-agent/agent/engine/dockerstate"
 	mock_engine "github.com/aws/amazon-ecs-agent/agent/engine/mocks"
 	"github.com/aws/amazon-ecs-agent/agent/eventhandler"
-	"github.com/aws/amazon-ecs-agent/agent/eventstream"
 	"github.com/aws/amazon-ecs-agent/agent/version"
 	acsclient "github.com/aws/amazon-ecs-agent/ecs-agent/acs/client"
 	rolecredentials "github.com/aws/amazon-ecs-agent/ecs-agent/credentials"
 	mock_credentials "github.com/aws/amazon-ecs-agent/ecs-agent/credentials/mocks"
 	"github.com/aws/amazon-ecs-agent/ecs-agent/doctor"
+	"github.com/aws/amazon-ecs-agent/ecs-agent/eventstream"
 	"github.com/aws/amazon-ecs-agent/ecs-agent/utils/retry"
 	mock_retry "github.com/aws/amazon-ecs-agent/ecs-agent/utils/retry/mock"
 	mock_wsclient "github.com/aws/amazon-ecs-agent/ecs-agent/wsclient/mock"
@@ -1418,7 +1418,6 @@ func validateAddedTask(expectedTask apitask.Task, addedTask apitask.Task) error 
 		Family:              addedTask.Family,
 		Version:             addedTask.Version,
 		DesiredStatusUnsafe: addedTask.GetDesiredStatus(),
-		StartSequenceNumber: addedTask.StartSequenceNumber,
 	}
 
 	if !reflect.DeepEqual(expectedTask, taskToCompareFromAdded) {

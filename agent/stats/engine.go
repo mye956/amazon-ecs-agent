@@ -36,9 +36,10 @@ import (
 	"github.com/aws/amazon-ecs-agent/agent/dockerclient"
 	"github.com/aws/amazon-ecs-agent/agent/dockerclient/dockerapi"
 	ecsengine "github.com/aws/amazon-ecs-agent/agent/engine"
-	"github.com/aws/amazon-ecs-agent/agent/eventstream"
 	"github.com/aws/amazon-ecs-agent/agent/stats/resolver"
-	"github.com/aws/amazon-ecs-agent/agent/tcs/model/ecstcs"
+	"github.com/aws/amazon-ecs-agent/ecs-agent/eventstream"
+	"github.com/aws/amazon-ecs-agent/ecs-agent/stats"
+	"github.com/aws/amazon-ecs-agent/ecs-agent/tcs/model/ecstcs"
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/docker/docker/api/types"
 )
@@ -78,7 +79,7 @@ type DockerContainerMetadataResolver struct {
 // defined to make testing easier.
 type Engine interface {
 	GetInstanceMetrics(includeServiceConnectStats bool) (*ecstcs.MetricsMetadata, []*ecstcs.TaskMetric, error)
-	ContainerDockerStats(taskARN string, containerID string) (*types.StatsJSON, *NetworkStatsPerSec, error)
+	ContainerDockerStats(taskARN string, containerID string) (*types.StatsJSON, *stats.NetworkStatsPerSec, error)
 	GetTaskHealthMetrics() (*ecstcs.HealthMetadata, []*ecstcs.TaskHealth, error)
 	GetPublishServiceConnectTickerInterval() int32
 	SetPublishServiceConnectTickerInterval(int32)
@@ -460,6 +461,9 @@ func (engine *DockerStatsEngine) StartMetricsPublish() {
 		select {
 		case <-engine.publishMetricsTicker.C:
 			seelog.Debugf("publishMetricsTicker triggered. Sending telemetry messages to tcsClient through channel")
+			if includeServiceConnectStats {
+				seelog.Debugf("service connect metrics included")
+			}
 			go engine.publishMetrics(includeServiceConnectStats)
 			go engine.publishHealth()
 		case <-engine.ctx.Done():
@@ -474,9 +478,8 @@ func (engine *DockerStatsEngine) publishMetrics(includeServiceConnectStats bool)
 	metricsMetadata, taskMetrics, metricsErr := engine.GetInstanceMetrics(includeServiceConnectStats)
 	if metricsErr == nil {
 		metricsMessage := ecstcs.TelemetryMessage{
-			Metadata:                   metricsMetadata,
-			TaskMetrics:                taskMetrics,
-			IncludeServiceConnectStats: includeServiceConnectStats,
+			Metadata:    metricsMetadata,
+			TaskMetrics: taskMetrics,
 		}
 		select {
 		case engine.metricsChannel <- metricsMessage:
@@ -543,16 +546,22 @@ func (engine *DockerStatsEngine) GetInstanceMetrics(includeServiceConnectStats b
 		containerMetrics, err := engine.taskContainerMetricsUnsafe(taskArn)
 		if err != nil {
 			seelog.Debugf("Error getting container metrics for task: %s, err: %v", taskArn, err)
-			// skip collecting service connect related metrics, if task is not service connect enabled
-			if !isServiceConnectTask {
+			// skip collecting service connect related metrics, if task is not service connect enabled.
+			// when task metrics and health metrics are both disabled and there is a service connect task,
+			// and we should not include service connect this time, we also need to skip following execution
+			// to avoid invalid metrics sent to TCS
+			if !isServiceConnectTask || !includeServiceConnectStats {
 				continue
 			}
 		}
 
 		if len(containerMetrics) == 0 {
 			seelog.Debugf("Empty containerMetrics for task, ignoring, task: %s", taskArn)
-			// skip collecting service connect related metrics, if task is not service connect enabled
-			if !isServiceConnectTask {
+			// skip collecting service connect related metrics, if task is not service connect enabled.
+			// when task metrics and health metrics are both disabled and there is a service connect task,
+			// and we should not include service connect this time, we also need to skip following execution
+			// to avoid invalid metrics sent to TCS
+			if !isServiceConnectTask || !includeServiceConnectStats {
 				continue
 			}
 		}
@@ -575,6 +584,7 @@ func (engine *DockerStatsEngine) GetInstanceMetrics(includeServiceConnectStats b
 			if serviceConnectStats, ok := engine.taskToServiceConnectStats[taskArn]; ok {
 				if !serviceConnectStats.HasStatsBeenSent() {
 					taskMetric.ServiceConnectMetricsWrapper = serviceConnectStats.GetStats()
+					seelog.Debugf("Adding service connect stats for task : %s", taskArn)
 					serviceConnectStats.SetStatsSent(true)
 				}
 			}
@@ -584,6 +594,7 @@ func (engine *DockerStatsEngine) GetInstanceMetrics(includeServiceConnectStats b
 
 	if len(taskMetrics) == 0 {
 		// Not idle. Expect taskMetrics to be there.
+		seelog.Debugf("Return empty metrics error")
 		return nil, nil, EmptyMetricsError
 	}
 
@@ -958,7 +969,7 @@ func (engine *DockerStatsEngine) resetStatsUnsafe() {
 }
 
 // ContainerDockerStats returns the last stored raw docker stats object for a container
-func (engine *DockerStatsEngine) ContainerDockerStats(taskARN string, containerID string) (*types.StatsJSON, *NetworkStatsPerSec, error) {
+func (engine *DockerStatsEngine) ContainerDockerStats(taskARN string, containerID string) (*types.StatsJSON, *stats.NetworkStatsPerSec, error) {
 	engine.lock.RLock()
 	defer engine.lock.RUnlock()
 

@@ -28,11 +28,11 @@ import (
 	"github.com/aws/amazon-ecs-agent/agent/config"
 	"github.com/aws/amazon-ecs-agent/agent/dockerclient"
 	mock_dockerapi "github.com/aws/amazon-ecs-agent/agent/dockerclient/dockerapi/mocks"
-	"github.com/aws/amazon-ecs-agent/agent/ecs_client/model/ecs"
 	mock_ecscni "github.com/aws/amazon-ecs-agent/agent/ecscni/mocks"
 	mock_serviceconnect "github.com/aws/amazon-ecs-agent/agent/engine/serviceconnect/mock"
 	mock_loader "github.com/aws/amazon-ecs-agent/agent/utils/loader/mocks"
 	mock_mobypkgwrapper "github.com/aws/amazon-ecs-agent/agent/utils/mobypkgwrapper/mocks"
+	"github.com/aws/amazon-ecs-agent/ecs-agent/ecs_client/model/ecs"
 
 	"github.com/aws/aws-sdk-go/aws"
 	aws_credentials "github.com/aws/aws-sdk-go/aws/credentials"
@@ -1432,4 +1432,48 @@ func TestAppendGMSACapabilities(t *testing.T) {
 		assert.Equal(t, aws.StringValue(expected.Name), aws.StringValue(capabilities[i].Name))
 		assert.Equal(t, aws.StringValue(expected.Value), aws.StringValue(capabilities[i].Value))
 	}
+}
+
+func TestAppendGMSADomainlessCapabilities(t *testing.T) {
+	var inputCapabilities []*ecs.Attribute
+	var expectedCapabilities []*ecs.Attribute
+
+	expectedCapabilities = append(expectedCapabilities,
+		[]*ecs.Attribute{
+			{
+				Name: aws.String(attributePrefix + capabilityGMSADomainless),
+			},
+		}...)
+
+	agent := &ecsAgent{
+		cfg: &config.Config{
+			GMSADomainlessCapable: config.BooleanDefaultFalse{Value: config.ExplicitlyEnabled},
+		},
+	}
+
+	capabilities := agent.appendGMSADomainlessCapabilities(inputCapabilities)
+
+	assert.Equal(t, len(expectedCapabilities), len(capabilities))
+	for i, expected := range expectedCapabilities {
+		assert.Equal(t, aws.StringValue(expected.Name), aws.StringValue(capabilities[i].Name))
+		assert.Equal(t, aws.StringValue(expected.Value), aws.StringValue(capabilities[i].Value))
+	}
+}
+
+func TestAppendGMSADomainlessCapabilitiesFalse(t *testing.T) {
+	var inputCapabilities []*ecs.Attribute
+	var expectedCapabilities []*ecs.Attribute
+
+	expectedCapabilities = append(expectedCapabilities,
+		[]*ecs.Attribute{}...)
+
+	agent := &ecsAgent{
+		cfg: &config.Config{
+			GMSADomainlessCapable: config.BooleanDefaultFalse{Value: config.ExplicitlyDisabled},
+		},
+	}
+
+	capabilities := agent.appendGMSADomainlessCapabilities(inputCapabilities)
+
+	assert.Equal(t, len(expectedCapabilities), len(capabilities))
 }

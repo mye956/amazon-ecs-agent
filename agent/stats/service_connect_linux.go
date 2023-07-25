@@ -22,12 +22,12 @@ import (
 	"sync"
 
 	"github.com/aws/amazon-ecs-agent/agent/api"
-	"github.com/aws/amazon-ecs-agent/agent/api/appnet"
+	"github.com/aws/amazon-ecs-agent/ecs-agent/api/appnet"
 
 	apitask "github.com/aws/amazon-ecs-agent/agent/api/task"
-	"github.com/aws/amazon-ecs-agent/agent/tcs/model/ecstcs"
 	"github.com/aws/amazon-ecs-agent/ecs-agent/logger"
 	"github.com/aws/amazon-ecs-agent/ecs-agent/logger/field"
+	"github.com/aws/amazon-ecs-agent/ecs-agent/tcs/model/ecstcs"
 	prometheus "github.com/prometheus/client_model/go"
 )
 
@@ -56,7 +56,10 @@ func newServiceConnectStats() (*ServiceConnectStats, error) {
 
 // TODO [SC]: Add retries on failure to retrieve service connect stats
 func (sc *ServiceConnectStats) retrieveServiceConnectStats(task *apitask.Task) {
-	stats, err := sc.appnetClient.GetStats(task.GetServiceConnectRuntimeConfig())
+	serviceConnectConfig := task.GetServiceConnectRuntimeConfig()
+	adminSocketPath := serviceConnectConfig.AdminSocketPath
+	statsRequest := serviceConnectConfig.StatsRequest
+	stats, err := sc.appnetClient.GetStats(adminSocketPath, statsRequest)
 	if err != nil {
 		logger.Error("Error retrieving Service Connect stats for task", logger.Fields{
 			field.TaskID: task.GetID(),

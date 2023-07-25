@@ -25,7 +25,11 @@ func parseGMSACapability() BooleanDefaultFalse {
 	return BooleanDefaultFalse{Value: ExplicitlyDisabled}
 }
 
-func parseFSxWindowsFileServerCapability() BooleanDefaultFalse {
+func parseFSxWindowsFileServerCapability() BooleanDefaultTrue {
+	return BooleanDefaultTrue{Value: ExplicitlyDisabled}
+}
+
+func parseGMSADomainlessCapability() BooleanDefaultFalse {
 	return BooleanDefaultFalse{Value: ExplicitlyDisabled}
 }
 

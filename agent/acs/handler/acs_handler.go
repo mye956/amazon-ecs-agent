@@ -32,10 +32,11 @@ import (
 	"github.com/aws/amazon-ecs-agent/agent/engine"
 	"github.com/aws/amazon-ecs-agent/agent/engine/dockerstate"
 	"github.com/aws/amazon-ecs-agent/agent/eventhandler"
-	"github.com/aws/amazon-ecs-agent/agent/eventstream"
 	"github.com/aws/amazon-ecs-agent/agent/version"
+	acssession "github.com/aws/amazon-ecs-agent/ecs-agent/acs/session"
 	rolecredentials "github.com/aws/amazon-ecs-agent/ecs-agent/credentials"
 	"github.com/aws/amazon-ecs-agent/ecs-agent/doctor"
+	"github.com/aws/amazon-ecs-agent/ecs-agent/eventstream"
 	"github.com/aws/amazon-ecs-agent/ecs-agent/utils/retry"
 	"github.com/aws/amazon-ecs-agent/ecs-agent/utils/ttime"
 	"github.com/aws/amazon-ecs-agent/ecs-agent/wsclient"
@@ -262,32 +263,6 @@ func (acsSession *session) startACSSession(client wsclient.ClientServer) error {
 		dataClient: acsSession.dataClient,
 	}
 
-	// Add handler to ack task ENI attach message
-	eniAttachHandler := newAttachTaskENIHandler(
-		acsSession.ctx,
-		cfg.Cluster,
-		acsSession.containerInstanceARN,
-		client,
-		eniHandler,
-	)
-	eniAttachHandler.start()
-	defer eniAttachHandler.stop()
-
-	client.AddRequestHandler(eniAttachHandler.handlerFunc())
-
-	// Add handler to ack instance ENI attach message
-	instanceENIAttachHandler := newAttachInstanceENIHandler(
-		acsSession.ctx,
-		cfg.Cluster,
-		acsSession.containerInstanceARN,
-		client,
-		eniHandler,
-	)
-	instanceENIAttachHandler.start()
-	defer instanceENIAttachHandler.stop()
-
-	client.AddRequestHandler(instanceENIAttachHandler.handlerFunc())
-
 	manifestMessageIDAccessor := &manifestMessageIDAccessor{}
 
 	// Add TaskManifestHandler
@@ -321,7 +296,17 @@ func (acsSession *session) startACSSession(client wsclient.ClientServer) error {
 
 	client.AddRequestHandler(payloadHandler.handlerFunc())
 
-	client.AddRequestHandler(HeartbeatHandlerFunc(client, acsSession.doctor))
+	responseSender := func(response interface{}) error {
+		return client.MakeRequest(response)
+	}
+	responders := []wsclient.RequestResponder{
+		acssession.NewAttachTaskENIResponder(eniHandler, responseSender),
+		acssession.NewAttachInstanceENIResponder(eniHandler, responseSender),
+		acssession.NewHeartbeatResponder(acsSession.doctor, responseSender),
+	}
+	for _, r := range responders {
+		client.AddRequestHandler(r.HandlerFunc())
+	}
 
 	updater.AddAgentUpdateHandlers(client, cfg, acsSession.state, acsSession.dataClient, acsSession.taskEngine)
 
