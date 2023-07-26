@@ -24,8 +24,20 @@ import (
 	"github.com/aws/amazon-ecs-agent/agent/engine/image"
 	"github.com/aws/amazon-ecs-agent/ecs-agent/api/attachmentinfo"
 	apieni "github.com/aws/amazon-ecs-agent/ecs-agent/api/eni"
+	apiebs "github.com/aws/amazon-ecs-agent/ecs-agent/api/resource"
 
 	"github.com/stretchr/testify/assert"
+)
+
+var (
+	testAttachmentProperties = map[string]string{
+		apiebs.ResourceTypeName:    apiebs.ElasticBlockStorage,
+		apiebs.RequestedSizeName:   "5",
+		apiebs.VolumeSizeInGiBName: "7",
+		apiebs.DeviceName:          "/dev/nvme0n0",
+		apiebs.VolumeIdName:        "vol-123",
+		apiebs.FileSystemTypeName:  "testXFS",
+	}
 )
 
 func TestCreateDockerTaskEngineState(t *testing.T) {
@@ -60,6 +72,7 @@ func TestCreateDockerTaskEngineState(t *testing.T) {
 	}
 
 	assert.Len(t, state.(*DockerTaskEngineState).AllENIAttachments(), 0)
+	assert.Len(t, state.(*DockerTaskEngineState).AllEBSAttachments(), 0)
 	task, ok := state.TaskByShortID("test")
 	if assert.Empty(t, ok, "Empty state should have no tasks") {
 		assert.Empty(t, task, "Empty state should have no tasks")
@@ -114,6 +127,70 @@ func TestAddRemoveENIAttachment(t *testing.T) {
 	eni, ok = state.ENIByMac("mac1")
 	assert.False(t, ok)
 	assert.Nil(t, eni)
+}
+
+func TestAddRemoveEBSAttachment(t *testing.T) {
+	state := NewTaskEngineState()
+
+	attachment := &apiebs.ResourceAttachment{
+		AttachmentInfo: attachmentinfo.AttachmentInfo{
+			TaskARN:       "taskarn",
+			AttachmentARN: "ebs1",
+		},
+		AttachmentProperties: testAttachmentProperties,
+	}
+
+	state.AddEBSAttachment(attachment)
+	assert.Len(t, state.(*DockerTaskEngineState).AllEBSAttachments(), 1)
+	ebs, ok := state.EBSByVolumeId("vol-123")
+	assert.True(t, ok)
+	assert.Equal(t, ebs.TaskARN, attachment.TaskARN)
+
+	ebs, ok = state.EBSByVolumeId("vol-abc")
+	assert.False(t, ok)
+	assert.Nil(t, ebs)
+
+	state.RemoveEBSAttachment(attachment.AttachmentProperties[apiebs.VolumeIdName])
+	assert.Len(t, state.(*DockerTaskEngineState).AllEBSAttachments(), 0)
+	ebs, ok = state.EBSByVolumeId("vol-123")
+	assert.False(t, ok)
+	assert.Nil(t, ebs)
+}
+
+func TestAddPendingEBSAttachment(t *testing.T) {
+	state := NewTaskEngineState()
+
+	pendingAttachment := &apiebs.ResourceAttachment{
+		AttachmentInfo: attachmentinfo.AttachmentInfo{
+			TaskARN:          "taskarn1",
+			AttachmentARN:    "ebs1",
+			AttachStatusSent: false,
+		},
+		AttachmentProperties: testAttachmentProperties,
+	}
+
+	testSentAttachmentProperties := map[string]string{
+		apiebs.ResourceTypeName:    apiebs.ElasticBlockStorage,
+		apiebs.RequestedSizeName:   "3",
+		apiebs.VolumeSizeInGiBName: "9",
+		apiebs.DeviceName:          "/dev/nvme1n0",
+		apiebs.VolumeIdName:        "vol-456",
+		apiebs.FileSystemTypeName:  "testXFS2",
+	}
+
+	sentAttachment := &apiebs.ResourceAttachment{
+		AttachmentInfo: attachmentinfo.AttachmentInfo{
+			TaskARN:          "taskarn2",
+			AttachmentARN:    "ebs2",
+			AttachStatusSent: true,
+		},
+		AttachmentProperties: testSentAttachmentProperties,
+	}
+
+	state.AddEBSAttachment(pendingAttachment)
+	state.AddEBSAttachment(sentAttachment)
+	assert.Len(t, state.(*DockerTaskEngineState).AllPendingEBSAttachments(), 1)
+	assert.Len(t, state.(*DockerTaskEngineState).AllEBSAttachments(), 2)
 }
 
 func TestTwophaseAddContainer(t *testing.T) {
