@@ -82,16 +82,16 @@ type TaskEngineState interface {
 	DockerIDByV3EndpointID(v3EndpointID string) (string, bool)
 	// TaskARNByV3EndpointID returns a taskARN for a given v3 endpoint ID
 	TaskARNByV3EndpointID(v3EndpointID string) (string, bool)
-	// AllEBSAttachments returns all of the ebs attachments
-	AllEBSAttachments() []*apiebs.ResourceAttachment
-	// AllPendingEBSAttachments reutrns all of the ebs attachments that haven't sent a state change
-	AllPendingEBSAttachments() []*apiebs.ResourceAttachment
+	//// AllEBSAttachments returns all of the ebs attachments
+	//AllEBSAttachments() []*apiebs.ResourceAttachment
+	//// AllPendingEBSAttachments reutrns all of the ebs attachments that haven't sent a state change
+	//AllPendingEBSAttachments() []*apiebs.ResourceAttachment
 	// AddEBSAttachment adds an ebs attachment from acs to be stored
 	//AddEBSAttachment(ebs *apiebs.ResourceAttachment)
 	//// RemoveEBSAttachment removes an ebs attachment to stop tracking
 	//RemoveEBSAttachment(volumeId string)
-	// EBSByVolumeId returns the specific EBSAttachment of the given volume ID
-	EBSByVolumeId(volumeId string) (*apiebs.ResourceAttachment, bool)
+	//// EBSByVolumeId returns the specific EBSAttachment of the given volume ID
+	//EBSByVolumeId(volumeId string) (*apiebs.ResourceAttachment, bool)
 
 	json.Marshaler
 	json.Unmarshaler
@@ -617,37 +617,37 @@ func (state *DockerTaskEngineState) TaskARNByV3EndpointID(v3EndpointID string) (
 	return taskArn, ok
 }
 
-func (state *DockerTaskEngineState) AllEBSAttachments() []*apiebs.ResourceAttachment {
-	state.lock.RLock()
-	defer state.lock.RUnlock()
-
-	return state.allEBSAttachmentsUnsafe()
-}
-
-func (state *DockerTaskEngineState) allEBSAttachmentsUnsafe() []*apiebs.ResourceAttachment {
-	var allEBSAttachments []*apiebs.ResourceAttachment
-	for _, v := range state.ebsAttachments {
-		allEBSAttachments = append(allEBSAttachments, v)
-	}
-	return allEBSAttachments
-}
-
-func (state *DockerTaskEngineState) AllPendingEBSAttachments() []*apiebs.ResourceAttachment {
-	state.lock.RLock()
-	defer state.lock.RUnlock()
-
-	return state.allPendingEBSAttachmentsUnsafe()
-}
-
-func (state *DockerTaskEngineState) allPendingEBSAttachmentsUnsafe() []*apiebs.ResourceAttachment {
-	var allEBSAttachments []*apiebs.ResourceAttachment
-	for _, v := range state.ebsAttachments {
-		if !v.IsSent() {
-			allEBSAttachments = append(allEBSAttachments, v)
-		}
-	}
-	return allEBSAttachments
-}
+//func (state *DockerTaskEngineState) AllEBSAttachments() []*apiebs.ResourceAttachment {
+//	state.lock.RLock()
+//	defer state.lock.RUnlock()
+//
+//	return state.allEBSAttachmentsUnsafe()
+//}
+//
+//func (state *DockerTaskEngineState) allEBSAttachmentsUnsafe() []*apiebs.ResourceAttachment {
+//	var allEBSAttachments []*apiebs.ResourceAttachment
+//	for _, v := range state.ebsAttachments {
+//		allEBSAttachments = append(allEBSAttachments, v)
+//	}
+//	return allEBSAttachments
+//}
+//
+//func (state *DockerTaskEngineState) AllPendingEBSAttachments() []*apiebs.ResourceAttachment {
+//	state.lock.RLock()
+//	defer state.lock.RUnlock()
+//
+//	return state.allPendingEBSAttachmentsUnsafe()
+//}
+//
+//func (state *DockerTaskEngineState) allPendingEBSAttachmentsUnsafe() []*apiebs.ResourceAttachment {
+//	var allEBSAttachments []*apiebs.ResourceAttachment
+//	for _, v := range state.ebsAttachments {
+//		if !v.IsSent() {
+//			allEBSAttachments = append(allEBSAttachments, v)
+//		}
+//	}
+//	return allEBSAttachments
+//}
 
 //func (state *DockerTaskEngineState) AddEBSAttachment(ebsAttachment *apiebs.ResourceAttachment) {
 //	if ebsAttachment == nil {
@@ -678,10 +678,10 @@ func (state *DockerTaskEngineState) allPendingEBSAttachmentsUnsafe() []*apiebs.R
 //	}
 //}
 
-func (state *DockerTaskEngineState) EBSByVolumeId(volumeId string) (*apiebs.ResourceAttachment, bool) {
-	state.lock.RLock()
-	defer state.lock.RUnlock()
-
-	ebs, ok := state.ebsAttachments[volumeId]
-	return ebs, ok
-}
+//func (state *DockerTaskEngineState) EBSByVolumeId(volumeId string) (*apiebs.ResourceAttachment, bool) {
+//	state.lock.RLock()
+//	defer state.lock.RUnlock()
+//
+//	ebs, ok := state.ebsAttachments[volumeId]
+//	return ebs, ok
+//}
