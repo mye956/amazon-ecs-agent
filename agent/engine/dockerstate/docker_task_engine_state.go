@@ -82,8 +82,8 @@ type TaskEngineState interface {
 	DockerIDByV3EndpointID(v3EndpointID string) (string, bool)
 	// TaskARNByV3EndpointID returns a taskARN for a given v3 endpoint ID
 	TaskARNByV3EndpointID(v3EndpointID string) (string, bool)
-	//// AllEBSAttachments returns all of the ebs attachments
-	//AllEBSAttachments() []*apiebs.ResourceAttachment
+	// AllEBSAttachments returns all of the ebs attachments
+	AllEBSAttachments() []*apiebs.ResourceAttachment
 	//// AllPendingEBSAttachments reutrns all of the ebs attachments that haven't sent a state change
 	//AllPendingEBSAttachments() []*apiebs.ResourceAttachment
 	// AddEBSAttachment adds an ebs attachment from acs to be stored
@@ -617,20 +617,21 @@ func (state *DockerTaskEngineState) TaskARNByV3EndpointID(v3EndpointID string) (
 	return taskArn, ok
 }
 
-//func (state *DockerTaskEngineState) AllEBSAttachments() []*apiebs.ResourceAttachment {
-//	state.lock.RLock()
-//	defer state.lock.RUnlock()
-//
-//	return state.allEBSAttachmentsUnsafe()
-//}
-//
-//func (state *DockerTaskEngineState) allEBSAttachmentsUnsafe() []*apiebs.ResourceAttachment {
-//	var allEBSAttachments []*apiebs.ResourceAttachment
-//	for _, v := range state.ebsAttachments {
-//		allEBSAttachments = append(allEBSAttachments, v)
-//	}
-//	return allEBSAttachments
-//}
+func (state *DockerTaskEngineState) AllEBSAttachments() []*apiebs.ResourceAttachment {
+	state.lock.RLock()
+	defer state.lock.RUnlock()
+
+	return state.allEBSAttachmentsUnsafe()
+}
+
+func (state *DockerTaskEngineState) allEBSAttachmentsUnsafe() []*apiebs.ResourceAttachment {
+	var allEBSAttachments []*apiebs.ResourceAttachment
+	for _, v := range state.ebsAttachments {
+		allEBSAttachments = append(allEBSAttachments, v)
+	}
+	return allEBSAttachments
+}
+
 //
 //func (state *DockerTaskEngineState) AllPendingEBSAttachments() []*apiebs.ResourceAttachment {
 //	state.lock.RLock()
