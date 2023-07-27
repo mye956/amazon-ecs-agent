@@ -87,9 +87,9 @@ type TaskEngineState interface {
 	// AllPendingEBSAttachments reutrns all of the ebs attachments that haven't sent a state change
 	AllPendingEBSAttachments() []*apiebs.ResourceAttachment
 	// AddEBSAttachment adds an ebs attachment from acs to be stored
-	AddEBSAttachment(ebs *apiebs.ResourceAttachment)
-	// RemoveEBSAttachment removes an ebs attachment to stop tracking
-	RemoveEBSAttachment(volumeId string)
+	//AddEBSAttachment(ebs *apiebs.ResourceAttachment)
+	//// RemoveEBSAttachment removes an ebs attachment to stop tracking
+	//RemoveEBSAttachment(volumeId string)
 	// EBSByVolumeId returns the specific EBSAttachment of the given volume ID
 	EBSByVolumeId(volumeId string) (*apiebs.ResourceAttachment, bool)
 
@@ -649,34 +649,34 @@ func (state *DockerTaskEngineState) allPendingEBSAttachmentsUnsafe() []*apiebs.R
 	return allEBSAttachments
 }
 
-func (state *DockerTaskEngineState) AddEBSAttachment(ebsAttachment *apiebs.ResourceAttachment) {
-	if ebsAttachment == nil {
-		seelog.Debug("Cannot add empty ebs attachment information")
-		return
-	}
-	state.lock.Lock()
-	defer state.lock.Unlock()
-	//key := ebsAttachment.AttachmentProperties[apiebs.DeviceName] + ":" + ebsAttachment.AttachmentProperties[apiebs.VolumeIdName]
-	if _, ok := state.ebsAttachments[ebsAttachment.AttachmentProperties[apiebs.VolumeIdName]]; !ok {
-		state.ebsAttachments[ebsAttachment.AttachmentProperties[apiebs.VolumeIdName]] = ebsAttachment
-	} else {
-		seelog.Debugf("Duplicate ebs attachment information: %v", ebsAttachment)
-	}
-}
-
-func (state *DockerTaskEngineState) RemoveEBSAttachment(volumeId string) {
-	if volumeId == "" {
-		seelog.Debug("Cannot remove empty ebs attachment information")
-		return
-	}
-	state.lock.Lock()
-	defer state.lock.Unlock()
-	if _, ok := state.ebsAttachments[volumeId]; ok {
-		delete(state.ebsAttachments, volumeId)
-	} else {
-		seelog.Debugf("Delete non-existed ebs attachment: %v", volumeId)
-	}
-}
+//func (state *DockerTaskEngineState) AddEBSAttachment(ebsAttachment *apiebs.ResourceAttachment) {
+//	if ebsAttachment == nil {
+//		seelog.Debug("Cannot add empty ebs attachment information")
+//		return
+//	}
+//	state.lock.Lock()
+//	defer state.lock.Unlock()
+//	//key := ebsAttachment.AttachmentProperties[apiebs.DeviceName] + ":" + ebsAttachment.AttachmentProperties[apiebs.VolumeIdName]
+//	if _, ok := state.ebsAttachments[ebsAttachment.AttachmentProperties[apiebs.VolumeIdName]]; !ok {
+//		state.ebsAttachments[ebsAttachment.AttachmentProperties[apiebs.VolumeIdName]] = ebsAttachment
+//	} else {
+//		seelog.Debugf("Duplicate ebs attachment information: %v", ebsAttachment)
+//	}
+//}
+//
+//func (state *DockerTaskEngineState) RemoveEBSAttachment(volumeId string) {
+//	if volumeId == "" {
+//		seelog.Debug("Cannot remove empty ebs attachment information")
+//		return
+//	}
+//	state.lock.Lock()
+//	defer state.lock.Unlock()
+//	if _, ok := state.ebsAttachments[volumeId]; ok {
+//		delete(state.ebsAttachments, volumeId)
+//	} else {
+//		seelog.Debugf("Delete non-existed ebs attachment: %v", volumeId)
+//	}
+//}
 
 func (state *DockerTaskEngineState) EBSByVolumeId(volumeId string) (*apiebs.ResourceAttachment, bool) {
 	state.lock.RLock()
