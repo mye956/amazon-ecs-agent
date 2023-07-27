@@ -25,6 +25,7 @@ import (
 	task "github.com/aws/amazon-ecs-agent/agent/api/task"
 	image "github.com/aws/amazon-ecs-agent/agent/engine/image"
 	eni "github.com/aws/amazon-ecs-agent/ecs-agent/api/eni"
+	resource "github.com/aws/amazon-ecs-agent/ecs-agent/api/resource"
 	gomock "github.com/golang/mock/gomock"
 )
 
@@ -121,6 +122,20 @@ func (m *MockTaskEngineState) AddTaskIPAddress(arg0, arg1 string) {
 func (mr *MockTaskEngineStateMockRecorder) AddTaskIPAddress(arg0, arg1 interface{}) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "AddTaskIPAddress", reflect.TypeOf((*MockTaskEngineState)(nil).AddTaskIPAddress), arg0, arg1)
+}
+
+// AllEBSAttachments mocks base method.
+func (m *MockTaskEngineState) AllEBSAttachments() []*resource.ResourceAttachment {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "AllEBSAttachments")
+	ret0, _ := ret[0].([]*resource.ResourceAttachment)
+	return ret0
+}
+
+// AllEBSAttachments indicates an expected call of AllEBSAttachments.
+func (mr *MockTaskEngineStateMockRecorder) AllEBSAttachments() *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "AllEBSAttachments", reflect.TypeOf((*MockTaskEngineState)(nil).AllEBSAttachments))
 }
 
 // AllENIAttachments mocks base method.
