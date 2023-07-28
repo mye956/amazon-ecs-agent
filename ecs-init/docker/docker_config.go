@@ -40,6 +40,8 @@ func createHostConfig(binds []string) *godocker.HostConfig {
 		iptablesExecutableHostDir+":"+iptablesExecutableContainerDir+readOnly,
 		iptablesAltDir+":"+iptablesAltDir+readOnly,
 		iptablesLegacyDir+":"+iptablesLegacyDir+readOnly,
+		"/usr/sbin/ebsnvme-id:/host/ebsnvme-id",
+		"/dev:/host/dev",
 	)
 
 	logConfig := config.AgentDockerLogDriverConfiguration()
@@ -51,14 +53,15 @@ func createHostConfig(binds []string) *godocker.HostConfig {
 		// hence not adding them in that case.
 		caps = []string{CapNetAdmin, CapSysAdmin}
 	}
-
+	deviceCgroupRules := []string{"b *:* r"}
 	hostConfig := &godocker.HostConfig{
-		LogConfig:   logConfig,
-		Binds:       binds,
-		NetworkMode: networkMode,
-		UsernsMode:  usernsMode,
-		CapAdd:      caps,
-		Init:        true,
+		LogConfig:         logConfig,
+		Binds:             binds,
+		NetworkMode:       networkMode,
+		UsernsMode:        usernsMode,
+		CapAdd:            caps,
+		Init:              true,
+		DeviceCgroupRules: deviceCgroupRules,
 	}
 
 	if config.RunPrivileged() {

@@ -20,7 +20,7 @@ var (
 func ConfirmEBSVolumeIsAttached(ctx context.Context, deviceName, volumeID string) error {
 	ctxWithTimeout, cancel := context.WithTimeout(ctx, ebsnvmeIDTimeoutDuration)
 	defer cancel()
-	output, err := exec.CommandContext(ctxWithTimeout, "ebsnvme-id", "-v", deviceName).CombinedOutput()
+	output, err := exec.CommandContext(ctxWithTimeout, "/host/ebsnvme-id", "-v", deviceName).CombinedOutput()
 	if err != nil {
 		return errors.Wrapf(err, "failed to run ebsnvme-id: %s", string(output))
 	}
