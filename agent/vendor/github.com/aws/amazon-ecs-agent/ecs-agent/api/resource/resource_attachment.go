@@ -139,7 +139,7 @@ func (ra *ResourceAttachment) StartTimer(timeoutFunc func()) error {
 }
 
 // Initialize initializes the fields that can't be populated from loading state file.
-// Notably, this initializes the ack timer so that if we times out waiting for the resource to be attached, the attachment
+// Notably, this initializes the ack timer so that if we time out waiting for the resource to be attached, the attachment
 // can be removed from state.
 func (ra *ResourceAttachment) Initialize(timeoutFunc func()) error {
 	ra.guard.Lock()
