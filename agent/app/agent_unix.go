@@ -151,7 +151,7 @@ func (agent *ecsAgent) startENIWatcher(state dockerstate.TaskEngineState, stateC
 }
 
 func (agent *ecsAgent) startEBSWatcher(state dockerstate.TaskEngineState, stateChangeEvents chan<- statechange.Event) error {
-	seelog.Debug("Setting up EBS Watcher")
+	seelog.Debug("Setting up EBS Watcher...")
 	if agent.ebsWatcher == nil {
 		ebsWatcher, err := ebs.NewWatcher(agent.ctx, state, stateChangeEvents)
 		if err != nil {
