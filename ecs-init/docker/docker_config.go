@@ -40,7 +40,7 @@ func createHostConfig(binds []string) *godocker.HostConfig {
 		iptablesExecutableHostDir+":"+iptablesExecutableContainerDir+readOnly,
 		iptablesAltDir+":"+iptablesAltDir+readOnly,
 		iptablesLegacyDir+":"+iptablesLegacyDir+readOnly,
-		"/usr/sbin/ebsnvme-id:/host/ebsnvme-id",
+		"/usr/sbin/ebsnvme-id:/ebsnvme-id",
 		"/dev:/host/dev",
 	)
 

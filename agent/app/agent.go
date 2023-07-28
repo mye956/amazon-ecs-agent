@@ -55,7 +55,10 @@ import (
 	"github.com/aws/amazon-ecs-agent/agent/utils/mobypkgwrapper"
 	"github.com/aws/amazon-ecs-agent/agent/version"
 	acsclient "github.com/aws/amazon-ecs-agent/ecs-agent/acs/client"
+	"github.com/aws/amazon-ecs-agent/ecs-agent/api/attachmentinfo"
 	apierrors "github.com/aws/amazon-ecs-agent/ecs-agent/api/errors"
+	apira "github.com/aws/amazon-ecs-agent/ecs-agent/api/resource"
+	"github.com/aws/amazon-ecs-agent/ecs-agent/api/status"
 	"github.com/aws/amazon-ecs-agent/ecs-agent/credentials"
 	"github.com/aws/amazon-ecs-agent/ecs-agent/doctor"
 	"github.com/aws/amazon-ecs-agent/ecs-agent/ecs_client/model/ecs"
@@ -469,10 +472,32 @@ func (agent *ecsAgent) doStart(containerChangeEventStream *eventstream.EventStre
 	agent.startAsyncRoutines(containerChangeEventStream, credentialsManager, imageManager,
 		taskEngine, deregisterInstanceEventStream, client, taskHandler, attachmentEventHandler, state, doctor)
 
+	tempAttachmentProperties := map[string]string{
+		apira.ResourceTypeName:    apira.ElasticBlockStorage,
+		apira.RequestedSizeName:   "5",
+		apira.VolumeSizeInGiBName: "7",
+		apira.DeviceName:          "/host/dev/nvme1n1",
+		apira.VolumeIdName:        "vol-04180f94f0c06b3f2",
+		apira.FileSystemTypeName:  "testXFS",
+	}
+
+	duration := time.Now().Add(2000000 * time.Millisecond)
 	if err := agent.startEBSWatcher(state, taskEngine.StateChangeEvents()); err != nil {
 		seelog.Criticalf("Unable to start EBS watcher")
 		return exitcodes.ExitTerminal
 	}
+
+	go agent.ebsWatcher.HandleResourceAttachment(&apira.ResourceAttachment{
+		AttachmentInfo: attachmentinfo.AttachmentInfo{
+			AttachmentARN:        "dummy-arn",
+			Status:               status.AttachmentNone,
+			ExpiresAt:            duration,
+			AttachStatusSent:     false,
+			ClusterARN:           "dummy-cluster-arn",
+			ContainerInstanceARN: "dummy-container-instance-arn",
+		},
+		AttachmentProperties: tempAttachmentProperties,
+	})
 
 	// Start the acs session, which should block doStart
 	return agent.startACSSession(credentialsManager, taskEngine,

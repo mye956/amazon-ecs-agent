@@ -6,6 +6,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/aws/amazon-ecs-agent/ecs-agent/logger"
+
 	"github.com/pkg/errors"
 )
 
@@ -20,11 +22,17 @@ var (
 func ConfirmEBSVolumeIsAttached(ctx context.Context, deviceName, volumeID string) error {
 	ctxWithTimeout, cancel := context.WithTimeout(ctx, ebsnvmeIDTimeoutDuration)
 	defer cancel()
-	output, err := exec.CommandContext(ctxWithTimeout, "/host/ebsnvme-id", "-v", deviceName).CombinedOutput()
+	out, err2 := exec.CommandContext(ctxWithTimeout, "/blah/lsblk").CombinedOutput()
+	if err2 != nil {
+		logger.Info("Error", logger.Fields{"out": string(out), "err": err2})
+	}
+	logger.Info("lsblk output", logger.Fields{"out": string(out), "err": err2})
+	// output, err := exec.CommandContext(ctxWithTimeout, "/bin/python3", "/blah/sbin/ebsnvme-id", "-v", deviceName).CombinedOutput()
+	output, err := exec.CommandContext(ctxWithTimeout, "./ebsnvme-id", "-v", deviceName).CombinedOutput()
 	if err != nil {
 		return errors.Wrapf(err, "failed to run ebsnvme-id: %s", string(output))
 	}
-
+	logger.Info("ebsnvme-id output", logger.Fields{"out": string(output), "err": err})
 	actualVolumeID, err := parseEBSNVMeIDOutput(output)
 	if err != nil {
 		return err

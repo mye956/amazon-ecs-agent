@@ -36,8 +36,8 @@ github.com/docker/go-plugins-helpers v0.0.0-20181025120712-1e6269c305b8/go.mod h
 github.com/docker/go-units v0.4.0 h1:3uh0PgVws3nIA0Q+MwDC8yjEPf9zjRfZZWXZYDct3Tw=
 github.com/docker/go-units v0.4.0/go.mod h1:fgPhTUdO+D/Jk86RDLlptpiXQzgHJF7gydDDbaIK4Dk=
 github.com/frankban/quicktest v1.11.3/go.mod h1:wRf/ReqHper53s+kmmSZizM8NamnL3IM0I9ntUbOk+k=
-github.com/fsouza/go-dockerclient v0.0.0-20170830181106-98edf3edfae6 h1:7hCS9hg8Acv3TizWpi1yeV/vMBA6THLsX9FzzMMhFHQ=
-github.com/fsouza/go-dockerclient v0.0.0-20170830181106-98edf3edfae6/go.mod h1:KpcjM623fQYE9MZiTGzKhjfxXAV9wbyX2C1cyRHfhl0=
+github.com/fsouza/go-dockerclient v1.1.0 h1:wBQ0OiOE+hk75uQXjZxcCXTY11GkWRrpEEKUYRVe/Kc=
+github.com/fsouza/go-dockerclient v1.1.0/go.mod h1:KpcjM623fQYE9MZiTGzKhjfxXAV9wbyX2C1cyRHfhl0=
 github.com/godbus/dbus/v5 v5.0.3/go.mod h1:xhWf0FNVPg57R7Z0UbKHbJfkEywrmjJnf7w5xrFpKfA=
 github.com/godbus/dbus/v5 v5.0.4/go.mod h1:xhWf0FNVPg57R7Z0UbKHbJfkEywrmjJnf7w5xrFpKfA=
 github.com/godbus/dbus/v5 v5.0.6/go.mod h1:xhWf0FNVPg57R7Z0UbKHbJfkEywrmjJnf7w5xrFpKfA=

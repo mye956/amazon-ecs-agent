@@ -15,6 +15,7 @@ package ebs
 
 import (
 	"context"
+	"sync"
 	"time"
 
 	"github.com/aws/amazon-ecs-agent/agent/engine/dockerstate"
@@ -73,12 +74,13 @@ func NewWatcher(ctx context.Context,
 	state dockerstate.TaskEngineState,
 	stateChangeEvents chan<- statechange.Event) (*EBSWatcher, error) {
 	derivedContext, cancel := context.WithCancel(ctx)
-	log.Info("eni watcher has been initialized")
+	log.Info("ebs watcher has been initialized")
 	return &EBSWatcher{
 		ctx:            derivedContext,
 		cancel:         cancel,
 		agentState:     state,
 		ebsChangeEvent: stateChangeEvents,
+		mailbox:        make(chan func(), 100),
 	}, nil
 }
 
@@ -88,18 +90,22 @@ func (w *EBSWatcher) Start() {
 	w.scanTicker = time.NewTicker(scanPeriod)
 
 	if len(w.agentState.AllPendingEBSAttachments()) == 0 {
+		log.Info("EBS watcher stopping")
 		w.scanTicker.Stop()
 	}
 
 	for {
 		select {
 		case f := <-w.mailbox:
+			log.Info("EBS watcher received function")
 			f()
 		case <-w.scanTicker.C:
+			log.Info("EBS watcher about to scan")
 			w.scanEBSVolumes()
 		case <-w.ctx.Done():
 			w.scanTicker.Stop()
 			log.Info("EBS watcher stopped")
+			return
 		}
 	}
 }
@@ -109,20 +115,29 @@ func (w *EBSWatcher) Stop() {
 	w.cancel()
 }
 
-func (w *EBSWatcher) HandleResourceAttachment(ebs *apiebs.ResourceAttachment) {
+func (w *EBSWatcher) HandleResourceAttachment(ebs *apiebs.ResourceAttachment) error {
+	var err error
+	log.Info("Running HandleResourceAttachment")
+	var wg sync.WaitGroup
+	wg.Add(1)
 	w.mailbox <- func() {
+		defer wg.Done()
 		empty := len(w.agentState.AllPendingEBSAttachments()) == 0
 
+		log.Info("Handling EBS attachment")
 		err := w.handleEBSAttachment(ebs)
 		if err != nil {
 			log.Info("Failed to handle resource attachment")
 		}
-
 		if empty && len(w.agentState.AllPendingEBSAttachments()) == 1 {
 			w.scanTicker.Stop()
 			w.scanTicker = time.NewTicker(scanPeriod)
+			log.Info()
 		}
 	}
+	log.Info("HandleResourceAttachment finished")
+	wg.Wait()
+	return err
 }
 
 func (w *EBSWatcher) handleEBSAttachment(ebs *apiebs.ResourceAttachment) error {
@@ -132,6 +147,7 @@ func (w *EBSWatcher) handleEBSAttachment(ebs *apiebs.ResourceAttachment) error {
 	}
 	volumeID := ebs.AttachmentProperties[apiebs.VolumeIdName]
 	_, ok := w.agentState.EBSByVolumeId(volumeID)
+	log.Infof("Handling EBS attachment with volume ID: %v", volumeID)
 
 	if ok {
 		log.Info("EBS Volume attachment already exists. Skip handling EBS attachment.")
@@ -155,7 +171,7 @@ func (w *EBSWatcher) handleEBSAttachment(ebs *apiebs.ResourceAttachment) error {
 	})
 
 	w.agentState.AddEBSAttachment(ebs)
-
+	log.Info("EBS attachment added to state")
 	return nil
 }
 
@@ -167,13 +183,25 @@ func (w *EBSWatcher) notifyFoundEBS(volumeId string) {
 		}
 		log.Info("Found EBS volume with volumd ID: %v and device name: %v", volumeId, ebs.AttachmentProperties[apiebs.DeviceName])
 		ebs.StopAckTimer()
-		w.agentState.RemoveEBSAttachment(volumeId)
+		//w.agentState.RemoveEBSAttachment(volumeId)
+		w.removeEBSAttachment(volumeId)
 	}
 }
 
 func (w *EBSWatcher) RemoveAttachment(volumeID string) {
 	w.mailbox <- func() {
-		w.agentState.RemoveEBSAttachment(volumeID)
+		// w.agentState.RemoveEBSAttachment(volumeID)
+		w.removeEBSAttachment(volumeID)
+	}
+}
+
+func (w *EBSWatcher) removeEBSAttachment(volumeID string) {
+	log.Info("Removing EBS volume")
+	w.agentState.RemoveEBSAttachment(volumeID)
+	log.Info("EBS attachment has been removed.")
+	if len(w.agentState.AllPendingEBSAttachments()) == 0 {
+		log.Info("No more attachments to scan for. Stopping scan timer...")
+		w.scanTicker.Stop()
 	}
 }
 
@@ -181,6 +209,7 @@ func (w *EBSWatcher) scanEBSVolumes() {
 	for _, ebs := range w.agentState.AllPendingEBSAttachments() {
 		volumeId := ebs.AttachmentProperties[apiebs.VolumeIdName]
 		deviceName := ebs.AttachmentProperties[apiebs.DeviceName]
+		log.Infof("Scanning for EBS volume with volume ID: %v and device name: %v", volumeId, deviceName)
 		err := apiebs.ConfirmEBSVolumeIsAttached(w.ctx, deviceName, volumeId)
 		if err != nil {
 			log.Infof("Unable to find EBS volume with volume ID: %v and device name: %v", volumeId, deviceName)
@@ -188,8 +217,11 @@ func (w *EBSWatcher) scanEBSVolumes() {
 				log.Info("Found a different EBS volume attached to the host")
 				w.agentState.RemoveEBSAttachment(volumeId)
 			}
+			log.Infof("Error: %v", err)
+			w.agentState.RemoveEBSAttachment(volumeId)
 			continue
 		}
+		log.Info("EBS volume has been found")
 		w.notifyFoundEBS(volumeId)
 	}
 }
