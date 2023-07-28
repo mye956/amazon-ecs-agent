@@ -469,6 +469,11 @@ func (agent *ecsAgent) doStart(containerChangeEventStream *eventstream.EventStre
 	agent.startAsyncRoutines(containerChangeEventStream, credentialsManager, imageManager,
 		taskEngine, deregisterInstanceEventStream, client, taskHandler, attachmentEventHandler, state, doctor)
 
+	if err := agent.startEBSWatcher(state, taskEngine.StateChangeEvents()); err != nil {
+		seelog.Criticalf("Unable to start EBS watcher")
+		return exitcodes.ExitTerminal
+	}
+
 	// Start the acs session, which should block doStart
 	return agent.startACSSession(credentialsManager, taskEngine,
 		deregisterInstanceEventStream, client, state, taskHandler, doctor)
