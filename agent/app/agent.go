@@ -66,6 +66,7 @@ import (
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/aws/awserr"
 	aws_credentials "github.com/aws/aws-sdk-go/aws/credentials"
+	ebs "github.com/aws/amazon-ecs-agent/agent/ebs"
 
 	"github.com/cihub/seelog"
 	"github.com/pborman/uuid"
@@ -146,6 +147,7 @@ type ecsAgent struct {
 	pauseLoader                 loader.Loader
 	serviceconnectManager       engineserviceconnect.Manager
 	eniWatcher                  *watcher.ENIWatcher
+	ebsWatcher                  *ebs.EBSWatcher
 	cniClient                   ecscni.CNIClient
 	vpc                         string
 	subnet                      string
