@@ -19,19 +19,28 @@ import (
 	"github.com/aws/amazon-ecs-agent/agent/data"
 	"github.com/aws/amazon-ecs-agent/agent/engine/dockerstate"
 	"github.com/aws/amazon-ecs-agent/agent/utils"
-	apieni "github.com/aws/amazon-ecs-agent/ecs-agent/api/eni"
 	"github.com/aws/amazon-ecs-agent/ecs-agent/logger"
 	"github.com/aws/amazon-ecs-agent/ecs-agent/logger/field"
+	ni "github.com/aws/amazon-ecs-agent/ecs-agent/netlib/model/networkinterface"
 	"github.com/aws/amazon-ecs-agent/ecs-agent/utils/arn"
 	"github.com/cihub/seelog"
 	"github.com/pkg/errors"
 )
 
-// eniHandler remove ENI attachment from agent state after the ENI ack timeout
+// eniHandler struct implements ENIHandler interface defined in ecs-agent module.
+// It removes ENI attachment from agent state after the ENI ack timeout.
 type eniHandler struct {
 	mac        string
 	state      dockerstate.TaskEngineState
 	dataClient data.Client
+}
+
+// NewENIHandler creates a new eniHandler.
+func NewENIHandler(state dockerstate.TaskEngineState, dataClient data.Client) *eniHandler {
+	return &eniHandler{
+		state:      state,
+		dataClient: dataClient,
+	}
 }
 
 // HandleENIAttachment handles an ENI attachment via the following:
@@ -39,7 +48,7 @@ type eniHandler struct {
 // 2. Otherwise add the attachment to state, start its ack timer, and save the state
 // These are common tasks for handling a task ENI attachment and an instance ENI attachment, so they are put
 // into this function to be shared by both attachment handlers
-func (eniHandler *eniHandler) HandleENIAttachment(ea *apieni.ENIAttachment) error {
+func (eniHandler *eniHandler) HandleENIAttachment(ea *ni.ENIAttachment) error {
 	attachmentType := ea.AttachmentType
 	attachmentARN := ea.AttachmentARN
 	taskARN := ea.TaskARN
@@ -61,7 +70,7 @@ func (eniHandler *eniHandler) HandleENIAttachment(ea *apieni.ENIAttachment) erro
 }
 
 // addENIAttachmentToState adds an ENI attachment to state, and start its ack timer
-func (eniHandler *eniHandler) addENIAttachmentToState(ea *apieni.ENIAttachment) error {
+func (eniHandler *eniHandler) addENIAttachmentToState(ea *ni.ENIAttachment) error {
 	attachmentType := ea.AttachmentType
 	attachmentARN := ea.AttachmentARN
 	taskARN := ea.TaskARN
@@ -73,14 +82,14 @@ func (eniHandler *eniHandler) addENIAttachmentToState(ea *apieni.ENIAttachment) 
 	}
 
 	switch attachmentType {
-	case apieni.ENIAttachmentTypeTaskENI:
+	case ni.ENIAttachmentTypeTaskENI:
 		taskId, _ := arn.TaskIdFromArn(taskARN)
 		logger.Info("Adding eni attachment info to state for task", logger.Fields{
 			field.TaskID:    taskId,
 			"attachmentARN": attachmentARN,
 			"mac":           mac,
 		})
-	case apieni.ENIAttachmentTypeInstanceENI:
+	case ni.ENIAttachmentTypeInstanceENI:
 		logger.Info("Adding instance eni attachment info to state", logger.Fields{
 			"attachmentARN": attachmentARN,
 			"mac":           mac,

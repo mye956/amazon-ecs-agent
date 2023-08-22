@@ -27,7 +27,7 @@ import (
 	"github.com/aws/amazon-ecs-agent/agent/engine/dockerstate"
 	"github.com/aws/amazon-ecs-agent/ecs-agent/acs/session/testconst"
 	"github.com/aws/amazon-ecs-agent/ecs-agent/api/attachmentinfo"
-	apieni "github.com/aws/amazon-ecs-agent/ecs-agent/api/eni"
+	ni "github.com/aws/amazon-ecs-agent/ecs-agent/netlib/model/networkinterface"
 )
 
 const (
@@ -36,12 +36,12 @@ const (
 
 // TestTaskENIAckTimeout tests acknowledge timeout for a task eni before submit the state change
 func TestTaskENIAckTimeout(t *testing.T) {
-	testENIAckTimeout(t, apieni.ENIAttachmentTypeTaskENI)
+	testENIAckTimeout(t, ni.ENIAttachmentTypeTaskENI)
 }
 
 // TestInstanceENIAckTimeout tests acknowledge timeout for an instance level eni before submit the state change
 func TestInstanceENIAckTimeout(t *testing.T) {
-	testENIAckTimeout(t, apieni.ENIAttachmentTypeInstanceENI)
+	testENIAckTimeout(t, ni.ENIAttachmentTypeInstanceENI)
 }
 
 func testENIAckTimeout(t *testing.T, attachmentType string) {
@@ -52,9 +52,9 @@ func testENIAckTimeout(t *testing.T, attachmentType string) {
 	dataClient := newTestDataClient(t)
 
 	expiresAt := time.Now().Add(time.Millisecond * testconst.WaitTimeoutMillis)
-	eniAttachment := &apieni.ENIAttachment{
+	eniAttachment := &ni.ENIAttachment{
 		AttachmentInfo: attachmentinfo.AttachmentInfo{
-			TaskARN:          taskArn,
+			TaskARN:          testconst.TaskARN,
 			AttachmentARN:    attachmentArn,
 			ExpiresAt:        expiresAt,
 			AttachStatusSent: false,
@@ -62,10 +62,7 @@ func testENIAckTimeout(t *testing.T, attachmentType string) {
 		AttachmentType: attachmentType,
 		MACAddress:     testconst.RandomMAC,
 	}
-	eniHandler := &eniHandler{
-		state:      taskEngineState,
-		dataClient: dataClient,
-	}
+	eniHandler := NewENIHandler(taskEngineState, dataClient)
 
 	err := eniHandler.addENIAttachmentToState(eniAttachment)
 	assert.NoError(t, err)
@@ -86,12 +83,12 @@ func testENIAckTimeout(t *testing.T, attachmentType string) {
 
 // TestTaskENIAckWithinTimeout tests the eni state change was reported before the timeout, for a task eni
 func TestTaskENIAckWithinTimeout(t *testing.T) {
-	testENIAckWithinTimeout(t, apieni.ENIAttachmentTypeTaskENI)
+	testENIAckWithinTimeout(t, ni.ENIAttachmentTypeTaskENI)
 }
 
 // TestInstanceENIAckWithinTimeout tests the eni state change was reported before the timeout, for an instance eni
 func TestInstanceENIAckWithinTimeout(t *testing.T) {
-	testENIAckWithinTimeout(t, apieni.ENIAttachmentTypeInstanceENI)
+	testENIAckWithinTimeout(t, ni.ENIAttachmentTypeInstanceENI)
 }
 
 func testENIAckWithinTimeout(t *testing.T, attachmentType string) {
@@ -101,9 +98,9 @@ func testENIAckWithinTimeout(t *testing.T, attachmentType string) {
 	taskEngineState := dockerstate.NewTaskEngineState()
 	dataClient := data.NewNoopClient()
 	expiresAt := time.Now().Add(time.Millisecond * testconst.WaitTimeoutMillis)
-	eniAttachment := &apieni.ENIAttachment{
+	eniAttachment := &ni.ENIAttachment{
 		AttachmentInfo: attachmentinfo.AttachmentInfo{
-			TaskARN:          taskArn,
+			TaskARN:          testconst.TaskARN,
 			AttachmentARN:    attachmentArn,
 			ExpiresAt:        expiresAt,
 			AttachStatusSent: false,
@@ -111,10 +108,7 @@ func testENIAckWithinTimeout(t *testing.T, attachmentType string) {
 		AttachmentType: attachmentType,
 		MACAddress:     testconst.RandomMAC,
 	}
-	eniHandler := &eniHandler{
-		state:      taskEngineState,
-		dataClient: dataClient,
-	}
+	eniHandler := NewENIHandler(taskEngineState, dataClient)
 
 	err := eniHandler.addENIAttachmentToState(eniAttachment)
 	assert.NoError(t, err)
@@ -130,12 +124,12 @@ func testENIAckWithinTimeout(t *testing.T, attachmentType string) {
 
 // TestHandleENIAttachmentTaskENI tests handling a new task eni
 func TestHandleENIAttachmentTaskENI(t *testing.T) {
-	testHandleENIAttachment(t, apieni.ENIAttachmentTypeTaskENI, taskArn)
+	testHandleENIAttachment(t, ni.ENIAttachmentTypeTaskENI, testconst.TaskARN)
 }
 
 // TestHandleENIAttachmentInstanceENI tests handling a new instance eni
 func TestHandleENIAttachmentInstanceENI(t *testing.T) {
-	testHandleENIAttachment(t, apieni.ENIAttachmentTypeInstanceENI, "")
+	testHandleENIAttachment(t, ni.ENIAttachmentTypeInstanceENI, "")
 }
 
 func testHandleENIAttachment(t *testing.T, attachmentType, taskArn string) {
@@ -146,7 +140,7 @@ func testHandleENIAttachment(t *testing.T, attachmentType, taskArn string) {
 
 	taskEngineState := dockerstate.NewTaskEngineState()
 	expiresAt := time.Now().Add(time.Millisecond * testconst.WaitTimeoutMillis)
-	eniAttachment := &apieni.ENIAttachment{
+	eniAttachment := &ni.ENIAttachment{
 		AttachmentInfo: attachmentinfo.AttachmentInfo{
 			TaskARN:          taskArn,
 			AttachmentARN:    attachmentArn,
@@ -156,10 +150,7 @@ func testHandleENIAttachment(t *testing.T, attachmentType, taskArn string) {
 		AttachmentType: attachmentType,
 		MACAddress:     testconst.RandomMAC,
 	}
-	eniHandler := &eniHandler{
-		state:      taskEngineState,
-		dataClient: dataClient,
-	}
+	eniHandler := NewENIHandler(taskEngineState, dataClient)
 
 	err := eniHandler.HandleENIAttachment(eniAttachment)
 	assert.NoError(t, err)
@@ -178,12 +169,12 @@ func testHandleENIAttachment(t *testing.T, attachmentType, taskArn string) {
 
 // TestHandleExpiredENIAttachmentTaskENI tests handling an expired task eni
 func TestHandleExpiredENIAttachmentTaskENI(t *testing.T) {
-	testHandleExpiredENIAttachment(t, apieni.ENIAttachmentTypeTaskENI, taskArn)
+	testHandleExpiredENIAttachment(t, ni.ENIAttachmentTypeTaskENI, testconst.TaskARN)
 }
 
 // TestHandleExpiredENIAttachmentInstanceENI tests handling an expired instance eni
 func TestHandleExpiredENIAttachmentInstanceENI(t *testing.T) {
-	testHandleExpiredENIAttachment(t, apieni.ENIAttachmentTypeInstanceENI, "")
+	testHandleExpiredENIAttachment(t, ni.ENIAttachmentTypeInstanceENI, "")
 }
 
 func testHandleExpiredENIAttachment(t *testing.T, attachmentType, taskArn string) {
@@ -196,7 +187,7 @@ func testHandleExpiredENIAttachment(t *testing.T, attachmentType, taskArn string
 	taskEngineState := dockerstate.NewTaskEngineState()
 	dataClient := data.NewNoopClient()
 
-	eniAttachment := &apieni.ENIAttachment{
+	eniAttachment := &ni.ENIAttachment{
 		AttachmentInfo: attachmentinfo.AttachmentInfo{
 			TaskARN:       taskArn,
 			AttachmentARN: attachmentArn,
@@ -205,10 +196,7 @@ func testHandleExpiredENIAttachment(t *testing.T, attachmentType, taskArn string
 		AttachmentType: attachmentType,
 		MACAddress:     testconst.RandomMAC,
 	}
-	eniHandler := &eniHandler{
-		state:      taskEngineState,
-		dataClient: dataClient,
-	}
+	eniHandler := NewENIHandler(taskEngineState, dataClient)
 
 	// Expect an error starting the timer because of <=0 duration.
 	err := eniHandler.HandleENIAttachment(eniAttachment)

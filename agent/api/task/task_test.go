@@ -50,10 +50,10 @@ import (
 	taskresourcevolume "github.com/aws/amazon-ecs-agent/agent/taskresource/volume"
 	"github.com/aws/amazon-ecs-agent/agent/utils"
 	"github.com/aws/amazon-ecs-agent/ecs-agent/acs/model/ecsacs"
-	apieni "github.com/aws/amazon-ecs-agent/ecs-agent/api/eni"
 	"github.com/aws/amazon-ecs-agent/ecs-agent/credentials"
 	mock_credentials "github.com/aws/amazon-ecs-agent/ecs-agent/credentials/mocks"
 	"github.com/aws/amazon-ecs-agent/ecs-agent/ecs_client/model/ecs"
+	ni "github.com/aws/amazon-ecs-agent/ecs-agent/netlib/model/networkinterface"
 	"github.com/aws/aws-sdk-go/service/secretsmanager"
 
 	"github.com/aws/amazon-ecs-agent/agent/taskresource/asmsecret"
@@ -716,7 +716,7 @@ func TestDockerHostConfigRawConfig(t *testing.T) {
 
 func TestDockerHostConfigPauseContainer(t *testing.T) {
 	testTask := &Task{
-		ENIs: []*apieni.ENI{
+		ENIs: []*ni.NetworkInterface{
 			{
 				ID: "eniID",
 			},
@@ -776,11 +776,11 @@ func TestDockerHostConfigPauseContainer(t *testing.T) {
 	assert.Equal(t, []string{"us-west-2.compute.internal"}, cfg.DNSSearch)
 
 	// Verify eni ExtraHosts  added to HostConfig for pause container
-	ipaddr := &apieni.ENIIPV4Address{Primary: true, Address: "10.0.1.1"}
-	testTask.ENIs[0].IPV4Addresses = []*apieni.ENIIPV4Address{ipaddr}
+	ipaddr := &ni.IPV4Address{Primary: true, Address: "10.0.1.1"}
+	testTask.ENIs[0].IPV4Addresses = []*ni.IPV4Address{ipaddr}
 	testTask.ENIs[0].PrivateDNSName = "eni.ip.region.compute.internal"
 
-	testTask.ENIs[0].IPV6Addresses = []*apieni.ENIIPV6Address{{Address: ipv6}}
+	testTask.ENIs[0].IPV6Addresses = []*ni.IPV6Address{{Address: ipv6}}
 	cfg, err = testTask.DockerHostConfig(pauseContainer, dockerMap(testTask), defaultDockerClientAPIVersion,
 		&config.Config{})
 	assert.Nil(t, err)
@@ -2157,7 +2157,7 @@ func TestGetIDHappyPath(t *testing.T) {
 
 // TestTaskGetPrimaryENI tests the eni can be correctly acquired by calling GetTaskPrimaryENI
 func TestTaskGetPrimaryENI(t *testing.T) {
-	enisOfTask := []*apieni.ENI{
+	enisOfTask := []*ni.NetworkInterface{
 		{
 			ID: "id",
 		},
@@ -3969,24 +3969,24 @@ func TestPopulateTaskARN(t *testing.T) {
 
 func TestShouldEnableIPv6(t *testing.T) {
 	task := &Task{
-		ENIs: []*apieni.ENI{getTestENI()},
+		ENIs: []*ni.NetworkInterface{getTestENI()},
 	}
 	assert.True(t, task.shouldEnableIPv6())
 	task.ENIs[0].IPV6Addresses = nil
 	assert.False(t, task.shouldEnableIPv6())
 }
 
-func getTestENI() *apieni.ENI {
-	return &apieni.ENI{
+func getTestENI() *ni.NetworkInterface {
+	return &ni.NetworkInterface{
 		ID: "test",
-		IPV4Addresses: []*apieni.ENIIPV4Address{
+		IPV4Addresses: []*ni.IPV4Address{
 			{
 				Primary: true,
 				Address: ipv4,
 			},
 		},
 		MacAddress: mac,
-		IPV6Addresses: []*apieni.ENIIPV6Address{
+		IPV6Addresses: []*ni.IPV6Address{
 			{
 				Address: ipv6,
 			},
@@ -4855,7 +4855,7 @@ func TestInitializeAndGetCredentialSpecResource(t *testing.T) {
 	assert.True(t, ok)
 }
 
-func getTestTaskResourceMap(cpu int64, mem int64, ports []*string, portsUdp []*string, numGPUs int64) map[string]*ecs.Resource {
+func getTestTaskResourceMap(cpu int64, mem int64, ports []*string, portsUdp []*string, gpuIDs []*string) map[string]*ecs.Resource {
 	taskResources := make(map[string]*ecs.Resource)
 	taskResources["CPU"] = &ecs.Resource{
 		Name:         utils.Strptr("CPU"),
@@ -4882,9 +4882,9 @@ func getTestTaskResourceMap(cpu int64, mem int64, ports []*string, portsUdp []*s
 	}
 
 	taskResources["GPU"] = &ecs.Resource{
-		Name:         utils.Strptr("GPU"),
-		Type:         utils.Strptr("INTEGER"),
-		IntegerValue: &numGPUs,
+		Name:           utils.Strptr("GPU"),
+		Type:           utils.Strptr("STRINGSET"),
+		StringSetValue: gpuIDs,
 	}
 
 	return taskResources
@@ -5076,6 +5076,7 @@ func TestToHostResources(t *testing.T) {
 
 	portsTCP := []uint16{10, 11}
 	portsUDP := []uint16{20, 21}
+	taskGpus := aws.StringSlice([]string{"gpu1", "gpu2"})
 
 	testCases := []struct {
 		task              *Task
@@ -5083,27 +5084,27 @@ func TestToHostResources(t *testing.T) {
 	}{
 		{
 			task:              testTask1,
-			expectedResources: getTestTaskResourceMap(int64(1024), int64(512), []*string{}, []*string{}, int64(2)),
+			expectedResources: getTestTaskResourceMap(int64(1024), int64(512), []*string{}, []*string{}, taskGpus),
 		},
 		{
 			task:              testTask2,
-			expectedResources: getTestTaskResourceMap(int64(2400), int64(1000), []*string{}, []*string{}, int64(0)),
+			expectedResources: getTestTaskResourceMap(int64(2400), int64(1000), []*string{}, []*string{}, []*string{}),
 		},
 		{
 			task:              testTask3,
-			expectedResources: getTestTaskResourceMap(int64(2400), int64(1700), []*string{}, []*string{}, int64(0)),
+			expectedResources: getTestTaskResourceMap(int64(2400), int64(1700), []*string{}, []*string{}, []*string{}),
 		},
 		{
 			task:              testTask4,
-			expectedResources: getTestTaskResourceMap(int64(1024), int64(512), utils.Uint16SliceToStringSlice(portsTCP), utils.Uint16SliceToStringSlice(portsUDP), int64(0)),
+			expectedResources: getTestTaskResourceMap(int64(1024), int64(512), utils.Uint16SliceToStringSlice(portsTCP), utils.Uint16SliceToStringSlice(portsUDP), []*string{}),
 		},
 		{
 			task:              testTask5,
-			expectedResources: getTestTaskResourceMap(int64(600), int64(1800), []*string{}, []*string{}, int64(0)),
+			expectedResources: getTestTaskResourceMap(int64(600), int64(1800), []*string{}, []*string{}, []*string{}),
 		},
 		{
 			task:              testTask6,
-			expectedResources: getTestTaskResourceMap(int64(1024), int64(512), []*string{}, []*string{}, int64(0)),
+			expectedResources: getTestTaskResourceMap(int64(1024), int64(512), []*string{}, []*string{}, []*string{}),
 		},
 	}
 
@@ -5121,7 +5122,17 @@ func TestToHostResources(t *testing.T) {
 		assert.Equal(t, *tc.expectedResources["MEMORY"].IntegerValue, *calcResources["MEMORY"].IntegerValue, "Error converting task Memory resources")
 
 		//GPU
-		assert.Equal(t, *tc.expectedResources["GPU"].IntegerValue, *calcResources["GPU"].IntegerValue, "Error converting task GPU resources")
+		for _, expectedGpu := range tc.expectedResources["GPU"].StringSetValue {
+			found := false
+			for _, calcGpu := range calcResources["GPU"].StringSetValue {
+				if *expectedGpu == *calcGpu {
+					found = true
+					break
+				}
+			}
+			assert.True(t, found, "Could not convert GPU port resources")
+		}
+		assert.Equal(t, len(tc.expectedResources["GPU"].StringSetValue), len(calcResources["GPU"].StringSetValue), "Error converting task GPU resources")
 
 		//PORTS
 		for _, expectedPort := range tc.expectedResources["PORTS_TCP"].StringSetValue {
@@ -5134,7 +5145,7 @@ func TestToHostResources(t *testing.T) {
 			}
 			assert.True(t, found, "Could not convert TCP port resources")
 		}
-		assert.Equal(t, len(tc.expectedResources["PORTS_TCP"].StringSetValue), len(calcResources["PORTS_TCP"].StringSetValue), "Error converting task TCP port tesources")
+		assert.Equal(t, len(tc.expectedResources["PORTS_TCP"].StringSetValue), len(calcResources["PORTS_TCP"].StringSetValue), "Error converting task TCP port resources")
 
 		//PORTS_UDP
 		for _, expectedPort := range tc.expectedResources["PORTS_UDP"].StringSetValue {
@@ -5147,6 +5158,6 @@ func TestToHostResources(t *testing.T) {
 			}
 			assert.True(t, found, "Could not convert UDP port resources")
 		}
-		assert.Equal(t, len(tc.expectedResources["PORTS_UDP"].StringSetValue), len(calcResources["PORTS_UDP"].StringSetValue), "Error converting task UDP port tesources")
+		assert.Equal(t, len(tc.expectedResources["PORTS_UDP"].StringSetValue), len(calcResources["PORTS_UDP"].StringSetValue), "Error converting task UDP port resources")
 	}
 }

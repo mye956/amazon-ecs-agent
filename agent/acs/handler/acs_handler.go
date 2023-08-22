@@ -21,10 +21,8 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 
-	updater "github.com/aws/amazon-ecs-agent/agent/acs/update_handler"
 	"github.com/aws/amazon-ecs-agent/agent/api"
 	"github.com/aws/amazon-ecs-agent/agent/config"
 	"github.com/aws/amazon-ecs-agent/agent/data"
@@ -37,6 +35,7 @@ import (
 	rolecredentials "github.com/aws/amazon-ecs-agent/ecs-agent/credentials"
 	"github.com/aws/amazon-ecs-agent/ecs-agent/doctor"
 	"github.com/aws/amazon-ecs-agent/ecs-agent/eventstream"
+	"github.com/aws/amazon-ecs-agent/ecs-agent/metrics"
 	"github.com/aws/amazon-ecs-agent/ecs-agent/utils/retry"
 	"github.com/aws/amazon-ecs-agent/ecs-agent/utils/ttime"
 	"github.com/aws/amazon-ecs-agent/ecs-agent/wsclient"
@@ -64,9 +63,6 @@ const (
 	connectionBackoffMax        = 2 * time.Minute
 	connectionBackoffJitter     = 0.2
 	connectionBackoffMultiplier = 1.5
-	// payloadMessageBufferSize is the maximum number of payload messages
-	// to queue up without having handled previous ones.
-	payloadMessageBufferSize = 10
 	// sendCredentialsURLParameterName is the name of the URL parameter
 	// in the ACS URL that is used to indicate if ACS should send
 	// credentials for all tasks on establishing the connection
@@ -76,10 +72,6 @@ const (
 	// 1: default protocol version
 	// 2: ACS will proactively close the connection when heartbeat acks are missing
 	acsProtocolVersion = 2
-	// numOfHandlersSendingAcks is the number of handlers that send acks back to ACS and that are not saved across
-	// sessions. We use this to send pending acks, before agent initiates a disconnect to ACS.
-	// they are: refreshCredentialsHandler, taskManifestHandler, and payloadHandler
-	numOfHandlersSendingAcks = 3
 )
 
 // Session defines an interface for handler's long-lived connection with ACS.
@@ -109,6 +101,7 @@ type session struct {
 	sendCredentials                 bool
 	latestSeqNumTaskManifest        *int64
 	doctor                          *doctor.Doctor
+	addUpdateRequestHandlers        func(wsclient.ClientServer)
 	_heartbeatTimeout               time.Duration
 	_heartbeatJitter                time.Duration
 	connectionTime                  time.Duration
@@ -133,6 +126,7 @@ func NewSession(
 	latestSeqNumTaskManifest *int64,
 	doctor *doctor.Doctor,
 	clientFactory wsclient.ClientFactory,
+	addUpdateRequestHandlers func(wsclient.ClientServer),
 ) Session {
 	backoff := retry.NewExponentialBackoff(connectionBackoffMin, connectionBackoffMax,
 		connectionBackoffJitter, connectionBackoffMultiplier)
@@ -156,6 +150,7 @@ func NewSession(
 		latestSeqNumTaskManifest:        latestSeqNumTaskManifest,
 		doctor:                          doctor,
 		clientFactory:                   clientFactory,
+		addUpdateRequestHandlers:        addUpdateRequestHandlers,
 		sendCredentials:                 true,
 		_heartbeatTimeout:               heartbeatTimeout,
 		_heartbeatJitter:                heartbeatJitter,
@@ -248,67 +243,43 @@ func (acsSession *session) startSessionOnce() error {
 // kinds of messages expected from ACS. It returns on server disconnection or when
 // the context is cancelled
 func (acsSession *session) startACSSession(client wsclient.ClientServer) error {
-	cfg := acsSession.agentConfig
+	payloadMsgHandler := NewPayloadMessageHandler(acsSession.taskEngine, acsSession.ecsClient, acsSession.dataClient,
+		acsSession.taskHandler, acsSession.credentialsManager, acsSession.latestSeqNumTaskManifest)
 
-	refreshCredsHandler := newRefreshCredentialsHandler(acsSession.ctx, cfg.Cluster, acsSession.containerInstanceARN,
-		client, acsSession.credentialsManager, acsSession.taskEngine)
-	defer refreshCredsHandler.clearAcks()
-	refreshCredsHandler.start()
-	defer refreshCredsHandler.stop()
+	credsMetadataSetter := NewCredentialsMetadataSetter(acsSession.taskEngine)
 
-	client.AddRequestHandler(refreshCredsHandler.handlerFunc())
+	eniHandler := NewENIHandler(acsSession.state, acsSession.dataClient)
 
-	eniHandler := &eniHandler{
-		state:      acsSession.state,
-		dataClient: acsSession.dataClient,
-	}
+	manifestMessageIDAccessor := NewManifestMessageIDAccessor()
 
-	manifestMessageIDAccessor := &manifestMessageIDAccessor{}
+	sequenceNumberAccessor := NewSequenceNumberAccessor(acsSession.latestSeqNumTaskManifest, acsSession.dataClient)
+	taskComparer := NewTaskComparer(acsSession.taskEngine)
 
-	// Add TaskManifestHandler
-	taskManifestHandler := newTaskManifestHandler(acsSession.ctx, cfg.Cluster, acsSession.containerInstanceARN,
-		client, acsSession.dataClient, acsSession.taskEngine, acsSession.latestSeqNumTaskManifest,
-		manifestMessageIDAccessor)
+	taskStopper := NewTaskStopper(acsSession.taskEngine)
 
-	defer taskManifestHandler.clearAcks()
-	taskManifestHandler.start()
-	defer taskManifestHandler.stop()
-
-	client.AddRequestHandler(taskManifestHandler.handlerFuncTaskManifestMessage())
-	client.AddRequestHandler(taskManifestHandler.handlerFuncTaskStopVerificationMessage())
-
-	// Add request handler for handling payload messages from ACS
-	payloadHandler := newPayloadRequestHandler(
-		acsSession.ctx,
-		acsSession.taskEngine,
-		acsSession.ecsClient,
-		cfg.Cluster,
-		acsSession.containerInstanceARN,
-		client,
-		acsSession.dataClient,
-		refreshCredsHandler,
-		acsSession.credentialsManager,
-		acsSession.taskHandler, acsSession.latestSeqNumTaskManifest)
-	// Clear the acks channel on return because acks of messageids don't have any value across sessions
-	defer payloadHandler.clearAcks()
-	payloadHandler.start()
-	defer payloadHandler.stop()
-
-	client.AddRequestHandler(payloadHandler.handlerFunc())
+	metricsFactory := metrics.NewNopEntryFactory()
 
 	responseSender := func(response interface{}) error {
 		return client.MakeRequest(response)
 	}
 	responders := []wsclient.RequestResponder{
+		acssession.NewPayloadResponder(payloadMsgHandler, responseSender),
+		acssession.NewRefreshCredentialsResponder(acsSession.credentialsManager, credsMetadataSetter, metricsFactory,
+			responseSender),
 		acssession.NewAttachTaskENIResponder(eniHandler, responseSender),
 		acssession.NewAttachInstanceENIResponder(eniHandler, responseSender),
 		acssession.NewHeartbeatResponder(acsSession.doctor, responseSender),
+		acssession.NewTaskManifestResponder(taskComparer, sequenceNumberAccessor, manifestMessageIDAccessor,
+			metricsFactory, responseSender),
+		acssession.NewTaskStopVerificationACKResponder(taskStopper, manifestMessageIDAccessor, metricsFactory),
 	}
 	for _, r := range responders {
 		client.AddRequestHandler(r.HandlerFunc())
 	}
 
-	updater.AddAgentUpdateHandlers(client, cfg, acsSession.state, acsSession.dataClient, acsSession.taskEngine)
+	if acsSession.addUpdateRequestHandlers != nil {
+		acsSession.addUpdateRequestHandlers(client)
+	}
 
 	err := client.Connect()
 	if err != nil {
@@ -317,10 +288,9 @@ func (acsSession *session) startACSSession(client wsclient.ClientServer) error {
 	}
 
 	seelog.Info("Connected to ACS endpoint")
-	// Start a connection timer; agent will send pending acks and close its ACS websocket connection
+	// Start a connection timer; agent close its ACS websocket connection
 	// after this timer expires
-	connectionTimer := newConnectionTimer(client, acsSession.connectionTime, acsSession.connectionJitter,
-		&refreshCredsHandler, &taskManifestHandler, &payloadHandler)
+	connectionTimer := newConnectionTimer(client, acsSession.connectionTime, acsSession.connectionJitter)
 	defer connectionTimer.Stop()
 
 	// Start a heartbeat timer for closing the connection
@@ -410,46 +380,12 @@ func newHeartbeatTimer(client wsclient.ClientServer, timeout time.Duration, jitt
 	return timer
 }
 
-// newConnectionTimer creates a new timer, after which agent sends any pending acks to ACS and closes
+// newConnectionTimer creates a new timer, after which agent closes
 // its websocket connection
-func newConnectionTimer(
-	client wsclient.ClientServer,
-	connectionTime time.Duration,
-	connectionJitter time.Duration,
-	refreshCredsHandler *refreshCredentialsHandler,
-	taskManifestHandler *taskManifestHandler,
-	payloadHandler *payloadRequestHandler,
-) ttime.Timer {
+func newConnectionTimer(client wsclient.ClientServer, connectionTime time.Duration,
+	connectionJitter time.Duration) ttime.Timer {
 	expiresAt := retry.AddJitter(connectionTime, connectionJitter)
 	timer := time.AfterFunc(expiresAt, func() {
-		seelog.Debugf("Sending pending acks to ACS before closing the connection")
-
-		wg := sync.WaitGroup{}
-		wg.Add(numOfHandlersSendingAcks)
-
-		// send pending creds refresh acks to ACS
-		go func() {
-			refreshCredsHandler.sendPendingAcks()
-			wg.Done()
-		}()
-
-		// send pending task manifest acks and task stop verification acks to ACS
-		go func() {
-			taskManifestHandler.sendPendingTaskManifestMessageAck()
-			taskManifestHandler.handlePendingTaskStopVerificationAck()
-			wg.Done()
-		}()
-
-		// send pending payload acks to ACS
-		go func() {
-			payloadHandler.sendPendingAcks()
-			wg.Done()
-		}()
-
-		// wait for acks from all the handlers above to be sent to ACS before closing the websocket connection.
-		// the methods used to read pending acks are non-blocking, so it is safe to wait here.
-		wg.Wait()
-
 		seelog.Infof("Closing ACS websocket connection after %v minutes", expiresAt.Minutes())
 		// WriteCloseMessage() writes a close message using websocket control messages
 		// Ref: https://pkg.go.dev/github.com/gorilla/websocket#hdr-Control_Messages

@@ -32,7 +32,7 @@ import (
 	acssession "github.com/aws/amazon-ecs-agent/ecs-agent/acs/session"
 	"github.com/aws/amazon-ecs-agent/ecs-agent/acs/session/testconst"
 	"github.com/aws/amazon-ecs-agent/ecs-agent/api/attachmentinfo"
-	apieni "github.com/aws/amazon-ecs-agent/ecs-agent/api/eni"
+	ni "github.com/aws/amazon-ecs-agent/ecs-agent/netlib/model/networkinterface"
 )
 
 var testAttachInstanceENIMessage = &ecsacs.AttachInstanceNetworkInterfacesMessage{
@@ -73,10 +73,7 @@ func TestInstanceENIAckHappyPath(t *testing.T) {
 		return nil
 	}
 	testAttachInstanceENIResponder := acssession.NewAttachInstanceENIResponder(
-		&eniHandler{
-			state:      taskEngineState,
-			dataClient: dataClient,
-		},
+		NewENIHandler(taskEngineState, dataClient),
 		testResponseSender)
 
 	handleAttachMessage :=
@@ -115,7 +112,7 @@ func TestInstanceENIAckSingleMessageWithDuplicateENIAttachment(t *testing.T) {
 		// the task engine state.
 		mockState.EXPECT().
 			ENIByMac(testconst.RandomMAC).
-			Return(&apieni.ENIAttachment{
+			Return(&ni.ENIAttachment{
 				AttachmentInfo: attachmentinfo.AttachmentInfo{
 					ExpiresAt: expiresAt,
 				},
@@ -131,10 +128,7 @@ func TestInstanceENIAckSingleMessageWithDuplicateENIAttachment(t *testing.T) {
 		return nil
 	}
 	testAttachInstanceENIResponder := acssession.NewAttachInstanceENIResponder(
-		&eniHandler{
-			state:      mockState,
-			dataClient: dataClient,
-		},
+		NewENIHandler(mockState, dataClient),
 		testResponseSender)
 
 	handleAttachMessage :=
