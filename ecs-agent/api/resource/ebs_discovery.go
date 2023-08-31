@@ -65,11 +65,10 @@ func ScanEBSVolumes[T GenericEBSAttachmentObject](pendingAttachments map[string]
 		deviceName := ebs.GetAttachmentProperties(DeviceName)
 		err = dc.ConfirmEBSVolumeIsAttached(deviceName, volumeId)
 		if err != nil {
-			if err == ErrInvalidVolumeID || errors.Cause(err) == ErrInvalidVolumeID {
-				log.Warnf("Expected EBS volume with device name: %v and volume ID: %v, Found a different EBS volume attached to the host.", deviceName, volumeId)
-			} else {
-				log.Warnf("Failed to confirm if EBS volume with volume ID: %v and device name: %v, is attached to the host. Error: %v", volumeId, deviceName, err)
+			if err != ErrInvalidVolumeID && errors.Cause(err) != ErrInvalidVolumeID {
+				err = errors.Wrapf(err, "failed to confirm if EBS volume with volume ID: %v and device name: %v, is attached to the host", volumeId, deviceName)
 			}
+			ebs.SetError(err)
 			continue
 		}
 		foundVolumes = append(foundVolumes, key)
