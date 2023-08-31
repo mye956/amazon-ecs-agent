@@ -21,22 +21,20 @@ import (
 	"fmt"
 	"os/exec"
 	"strings"
-	"time"
 
 	log "github.com/cihub/seelog"
 	"github.com/pkg/errors"
 )
 
 const (
-	volumeDiscoveryTimeoutDuration = 5 * time.Second
-	diskNumberOffset               = 0
-	volumeIdOffset                 = 1
-	deviceNameOffset               = 2
-	volumeInfoLength               = 3
+	diskNumberOffset = 0
+	volumeIdOffset   = 1
+	deviceNameOffset = 2
+	volumeInfoLength = 3
 )
 
-func (api EBSDiscoveryClient) ConfirmEBSVolumeIsAttached(deviceName, volumeID string) error {
-	ctxWithTimeout, cancel := context.WithTimeout(api.ctx, volumeDiscoveryTimeoutDuration)
+func (api *EBSDiscoveryClient) ConfirmEBSVolumeIsAttached(deviceName, volumeID string) error {
+	ctxWithTimeout, cancel := context.WithTimeout(api.ctx, ebsVolumeDiscoveryTimeout)
 	defer cancel()
 	output, err := exec.CommandContext(ctxWithTimeout,
 		"C:\\PROGRAMDATA\\Amazon\\Tools\\ebsnvme-id.exe").CombinedOutput()
