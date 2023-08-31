@@ -336,9 +336,9 @@ func (state *DockerTaskEngineState) AddEBSAttachment(ebsAttachment *apiresource.
 	volumeId := ebsAttachment.AttachmentProperties[apiresource.VolumeIdName]
 	if _, ok := state.ebsAttachments[volumeId]; !ok {
 		state.ebsAttachments[volumeId] = ebsAttachment
-		seelog.Debugf("Successfully added EBS attachment: %v", ebsAttachment)
+		seelog.Debugf("Successfully added EBS attachment: %v", ebsAttachment.EBSToString())
 	} else {
-		seelog.Debugf("Duplicate ebs attachment information: %v", ebsAttachment)
+		seelog.Debugf("Duplicate ebs attachment information: %v", ebsAttachment.EBSToString())
 	}
 }
 
@@ -352,7 +352,7 @@ func (state *DockerTaskEngineState) RemoveEBSAttachment(volumeId string) {
 	defer state.lock.Unlock()
 	if ebs, ok := state.ebsAttachments[volumeId]; ok {
 		delete(state.ebsAttachments, volumeId)
-		seelog.Debugf("Successfully deleted EBS attachment: %v", ebs)
+		seelog.Debugf("Successfully deleted EBS attachment: %v", ebs.EBSToString())
 	} else {
 		seelog.Debugf("RemoveEBSAttachment: The requested EBS attachment with volume ID: %v does not exist", volumeId)
 	}

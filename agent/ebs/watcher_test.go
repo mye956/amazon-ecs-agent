@@ -62,6 +62,7 @@ func TestHandleEBSAttachmentHappyCase(t *testing.T) {
 	defer mockCtrl.Finish()
 
 	ctx := context.Background()
+	// ctx, cancel := context.WithCancel(ctx)
 	taskEngineState := dockerstate.NewTaskEngineState()
 	eventChannel := make(chan statechange.Event)
 	scanTickerController := apiebs.NewScanTickerController()
@@ -151,14 +152,14 @@ func TestHandleDuplicateEBSAttachment(t *testing.T) {
 	scanTickerController := apiebs.NewScanTickerController()
 	mockDiscoveryClient := mock_ebs_discovery.NewMockEBSDiscovery(mockCtrl)
 
-	testAttachmentProperties := map[string]string{
+	testAttachmentProperties1 := map[string]string{
 		apiebs.ResourceTypeName: apiebs.ElasticBlockStorage,
 		apiebs.DeviceName:       deviceName,
 		apiebs.VolumeIdName:     volumeID,
 	}
 
 	expiresAt := time.Now().Add(time.Millisecond * testconst.WaitTimeoutMillis)
-	ebsAttachment := &apiebs.ResourceAttachment{
+	ebsAttachment1 := &apiebs.ResourceAttachment{
 		AttachmentInfo: attachmentinfo.AttachmentInfo{
 			TaskARN:              taskARN,
 			TaskClusterARN:       taskClusterARN,
@@ -167,7 +168,25 @@ func TestHandleDuplicateEBSAttachment(t *testing.T) {
 			Status:               status.AttachmentNone,
 			AttachmentARN:        resourceAttachmentARN,
 		},
-		AttachmentProperties: testAttachmentProperties,
+		AttachmentProperties: testAttachmentProperties1,
+	}
+
+	testAttachmentProperties2 := map[string]string{
+		apiebs.ResourceTypeName: apiebs.ElasticBlockStorage,
+		apiebs.DeviceName:       deviceName,
+		apiebs.VolumeIdName:     volumeID,
+	}
+
+	ebsAttachment2 := &apiebs.ResourceAttachment{
+		AttachmentInfo: attachmentinfo.AttachmentInfo{
+			TaskARN:              taskARN,
+			TaskClusterARN:       taskClusterARN,
+			ContainerInstanceARN: containerInstanceARN,
+			ExpiresAt:            expiresAt,
+			Status:               status.AttachmentNone,
+			AttachmentARN:        resourceAttachmentARN,
+		},
+		AttachmentProperties: testAttachmentProperties2,
 	}
 
 	watcher := newTestEBSWatcher(ctx, taskEngineState, eventChannel, mockDiscoveryClient, scanTickerController)
@@ -180,8 +199,8 @@ func TestHandleDuplicateEBSAttachment(t *testing.T) {
 		Return(nil).
 		MinTimes(1)
 
-	watcher.HandleResourceAttachment(ebsAttachment)
-	watcher.HandleResourceAttachment(ebsAttachment)
+	watcher.HandleResourceAttachment(ebsAttachment1)
+	watcher.HandleResourceAttachment(ebsAttachment2)
 	wg.Wait()
 
 	assert.Len(t, taskEngineState.(*dockerstate.DockerTaskEngineState).GetAllEBSAttachments(), 1)
