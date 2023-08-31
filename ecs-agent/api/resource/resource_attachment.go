@@ -40,7 +40,7 @@ type ResourceAttachment struct {
 	ackTimer ttime.Timer
 	// guard protects access to fields of this struct
 	guard sync.RWMutex
-	err   error
+	// err   error
 }
 
 // Agent Communication Service (ACS) can send messages of type ConfirmAttachmentMessage. These messages include
@@ -208,18 +208,18 @@ func (ra *ResourceAttachment) HasExpired() bool {
 	return time.Now().After(ra.ExpiresAt)
 }
 
-func (ra *ResourceAttachment) SetError(err error) {
-	ra.guard.Lock()
-	defer ra.guard.Unlock()
-	ra.err = err
-}
+// func (ra *ResourceAttachment) SetError(err error) {
+// 	ra.guard.Lock()
+// 	defer ra.guard.Unlock()
+// 	ra.err = err
+// }
 
-func (ra *ResourceAttachment) GetError() error {
-	ra.guard.RLock()
-	defer ra.guard.RUnlock()
+// func (ra *ResourceAttachment) GetError() error {
+// 	ra.guard.RLock()
+// 	defer ra.guard.RUnlock()
 
-	return ra.err
-}
+// 	return ra.err
+// }
 
 func (ra *ResourceAttachment) EBSToString() string {
 	ra.guard.RLock()
@@ -230,9 +230,9 @@ func (ra *ResourceAttachment) EBSToString() string {
 
 func (ra *ResourceAttachment) ebsToStringUnsafe() string {
 	return fmt.Sprintf(
-		"Resource Attachment: attachment=%s attachmentType=%s attachmentSent=%t volumeSizeInGiB=%s requestedSizeName=%s volumeId=%s deviceName=%s filesystemType=%s status=%s expiresAt=%s error=%v",
+		"Resource Attachment: attachment=%s attachmentType=%s attachmentSent=%t volumeSizeInGiB=%s requestedSizeName=%s volumeId=%s deviceName=%s filesystemType=%s status=%s expiresAt=%s",
 		ra.AttachmentARN, ra.AttachmentProperties[ResourceTypeName], ra.AttachStatusSent, ra.AttachmentProperties[VolumeSizeInGiBName], ra.AttachmentProperties[RequestedSizeName], ra.AttachmentProperties[VolumeIdName],
-		ra.AttachmentProperties[DeviceName], ra.AttachmentProperties[FileSystemTypeName], ra.Status.String(), ra.ExpiresAt.Format(time.RFC3339), ra.err)
+		ra.AttachmentProperties[DeviceName], ra.AttachmentProperties[FileSystemTypeName], ra.Status.String(), ra.ExpiresAt.Format(time.RFC3339))
 }
 
 func (ra *ResourceAttachment) GetAttachmentProperties(key string) string {

@@ -7,5 +7,5 @@ type EBSDiscovery interface {
 type GenericEBSAttachmentObject interface {
 	GetAttachmentProperties(key string) string
 	EBSToString() string
-	SetError(err error)
+	// SetError(err error)
 }
