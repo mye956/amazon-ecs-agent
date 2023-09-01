@@ -32,8 +32,9 @@ type EBSWatcher struct {
 	ebsChangeEvent chan<- statechange.Event
 	// TODO: The dataClient will be used to save to agent's data client as well as start the ACK timer. This will be added once the data client functionality have been added
 	// dataClient     data.Client
-	discoveryClient      apiebs.EBSDiscovery
-	scanTickerController *apiebs.ScanTickerController
+	discoveryClient apiebs.EBSDiscovery
+	// scanTickerController *apiebs.ScanTickerController
+	scanTicker *time.Ticker
 }
 
 // NewWatcher is used to return a new instance of the EBSWatcher struct
@@ -42,14 +43,13 @@ func NewWatcher(ctx context.Context,
 	stateChangeEvents chan<- statechange.Event) *EBSWatcher {
 	derivedContext, cancel := context.WithCancel(ctx)
 	discoveryClient := apiebs.NewDiscoveryClient(derivedContext)
-	scanTickerController := apiebs.NewScanTickerController()
+	// scanTickerController := apiebs.NewScanTickerController()
 	return &EBSWatcher{
-		ctx:                  derivedContext,
-		cancel:               cancel,
-		agentState:           state,
-		ebsChangeEvent:       stateChangeEvents,
-		discoveryClient:      discoveryClient,
-		scanTickerController: scanTickerController,
+		ctx:             derivedContext,
+		cancel:          cancel,
+		agentState:      state,
+		ebsChangeEvent:  stateChangeEvents,
+		discoveryClient: discoveryClient,
 	}
 }
 
@@ -57,35 +57,45 @@ func NewWatcher(ctx context.Context,
 // It will be start and continue to run whenever there's a pending EBS volume attachment that hasn't been found.
 // If there aren't any, the scan ticker will not start up/scan for volumes.
 func (w *EBSWatcher) Start() {
-	w.scanTickerController.TickerLock.Lock()
-	defer w.scanTickerController.TickerLock.Unlock()
-
-	if w.scanTickerController.Running || len(w.agentState.GetAllPendingEBSAttachments()) == 0 {
-		return
-	}
-
 	log.Info("Starting EBS watcher.")
-	w.scanTickerController.Running = true
-	w.scanTickerController.ScanTicker = time.NewTicker(apiebs.ScanPeriod)
-	go func() {
-		for {
-			select {
-			case <-w.scanTickerController.ScanTicker.C:
-				pendingEBS := w.agentState.GetAllPendingEBSAttachmentWithKey()
+	w.scanTicker = time.NewTicker(apiebs.ScanPeriod)
+
+	for {
+		select {
+		case <-w.scanTicker.C:
+			pendingEBS := w.agentState.GetAllPendingEBSAttachmentWithKey()
+			if len(pendingEBS) > 0 {
+				log.Info("Pending attachments to be found...")
 				foundVolumes := apiebs.ScanEBSVolumes(pendingEBS, w.discoveryClient)
 				w.NotifyFound(foundVolumes)
-			case <-w.scanTickerController.Done:
-				w.scanTickerController.Running = false
-				w.scanTickerController.ScanTicker.Stop()
-				return
-			case <-w.ctx.Done():
-				w.scanTickerController.StopScanTicker()
-				log.Info("EBS Watcher Stopped due to agent stop")
-				return
+			} else {
+				log.Info("No volumes to find.")
 			}
+		case <-w.ctx.Done():
+			w.scanTicker.Stop()
+			log.Info("EBS Watcher Stopped due to agent stop")
+			return
 		}
-	}()
-	log.Info("EBS watcher started.")
+	}
+
+	// go func() {
+	// 	for {
+	// 		select {
+	// 		case <-w.scanTickerController.ScanTicker.C:
+	// 			pendingEBS := w.agentState.GetAllPendingEBSAttachmentWithKey()
+	// 			foundVolumes := apiebs.ScanEBSVolumes(pendingEBS, w.discoveryClient)
+	// 			w.NotifyFound(foundVolumes)
+	// 		case <-w.scanTickerController.Done:
+	// 			w.scanTickerController.Running = false
+	// 			w.scanTickerController.ScanTicker.Stop()
+	// 			return
+	// 		case <-w.ctx.Done():
+	// 			w.scanTickerController.StopScanTicker()
+	// 			log.Info("EBS Watcher Stopped due to agent stop")
+	// 			return
+	// 		}
+	// 	}
+	// }()
 }
 
 // Stop will stop the EBS watcher
@@ -99,7 +109,7 @@ func (w *EBSWatcher) Stop() {
 // 2. Otherwise add the attachment to state, start its ack timer, and save to the agent state
 // If it's the first pending volume to be added to the agent state, then the EBS watcher will start scanning.
 func (w *EBSWatcher) HandleResourceAttachment(ebs *apiebs.ResourceAttachment) error {
-	wasEmpty := len(w.agentState.GetAllPendingEBSAttachments()) == 0
+	// wasEmpty := len(w.agentState.GetAllPendingEBSAttachments()) == 0
 	attachmentType := ebs.GetAttachmentProperties(apiebs.ResourceTypeName)
 	if attachmentType != apiebs.ElasticBlockStorage {
 		log.Warnf("Resource type not Elastic Block Storage. Skip handling resource attachment with type: %v.", attachmentType)
@@ -120,10 +130,10 @@ func (w *EBSWatcher) HandleResourceAttachment(ebs *apiebs.ResourceAttachment) er
 			err, attachmentType, ebs.EBSToString())
 	}
 
-	// If it was originally empty and now there's a pending EBS volume to scan for.
-	if wasEmpty && len(w.agentState.GetAllPendingEBSAttachments()) == 1 {
-		go w.Start()
-	}
+	// // If it was originally empty and now there's a pending EBS volume to scan for.
+	// if wasEmpty && len(w.agentState.GetAllPendingEBSAttachments()) == 1 {
+	// 	go w.Start()
+	// }
 	return nil
 }
 
@@ -133,7 +143,7 @@ func (w *EBSWatcher) NotifyFound(foundVolumes []string) {
 	for _, volumeId := range foundVolumes {
 		w.notifyFoundEBS(volumeId)
 	}
-	w.checkPendingEBSVolumes()
+	// w.checkPendingEBSVolumes()
 	// if len(w.agentState.GetAllPendingEBSAttachments()) == 0 {
 	// 	w.scanTickerController.StopScanTicker()
 	// }
@@ -172,18 +182,18 @@ func (w *EBSWatcher) notifyFoundEBS(volumeId string) {
 func (w *EBSWatcher) removeEBSAttachment(volumeID string) {
 	// TODO: Remove the EBS volume from the data client.
 	w.agentState.RemoveEBSAttachment(volumeID)
-	w.checkPendingEBSVolumes()
+	// w.checkPendingEBSVolumes()
 	// if len(w.agentState.GetAllPendingEBSAttachments()) == 0 {
 	// 	w.scanTickerController.StopScanTicker()
 	// }
 }
 
-func (w *EBSWatcher) checkPendingEBSVolumes() {
-	if len(w.agentState.GetAllPendingEBSAttachments()) == 0 {
-		// log.Info("No more attachments to scan for. Stopping scan ticker.")
-		w.scanTickerController.StopScanTicker()
-	}
-}
+// func (w *EBSWatcher) checkPendingEBSVolumes() {
+// 	if len(w.agentState.GetAllPendingEBSAttachments()) == 0 {
+// 		// log.Info("No more attachments to scan for. Stopping scan ticker.")
+// 		w.scanTickerController.StopScanTicker()
+// 	}
+// }
 
 // addEBSAttachmentToState adds an EBS attachment to state, and start its ack timer
 func (w *EBSWatcher) addEBSAttachmentToState(ebs *apiebs.ResourceAttachment) error {

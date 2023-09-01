@@ -44,16 +44,14 @@ const (
 )
 
 func newTestEBSWatcher(ctx context.Context, agentState dockerstate.TaskEngineState,
-	ebsChangeEvent chan<- statechange.Event, discoveryClient apiebs.EBSDiscovery,
-	scanTickerController *apiebs.ScanTickerController) *EBSWatcher {
+	ebsChangeEvent chan<- statechange.Event, discoveryClient apiebs.EBSDiscovery) *EBSWatcher {
 	derivedContext, cancel := context.WithCancel(ctx)
 	return &EBSWatcher{
-		ctx:                  derivedContext,
-		cancel:               cancel,
-		agentState:           agentState,
-		ebsChangeEvent:       ebsChangeEvent,
-		discoveryClient:      discoveryClient,
-		scanTickerController: scanTickerController,
+		ctx:             derivedContext,
+		cancel:          cancel,
+		agentState:      agentState,
+		ebsChangeEvent:  ebsChangeEvent,
+		discoveryClient: discoveryClient,
 	}
 }
 
@@ -62,11 +60,11 @@ func TestHandleEBSAttachmentHappyCase(t *testing.T) {
 	defer mockCtrl.Finish()
 
 	ctx := context.Background()
-	// ctx, cancel := context.WithCancel(ctx)
 	taskEngineState := dockerstate.NewTaskEngineState()
 	eventChannel := make(chan statechange.Event)
-	scanTickerController := apiebs.NewScanTickerController()
 	mockDiscoveryClient := mock_ebs_discovery.NewMockEBSDiscovery(mockCtrl)
+
+	watcher := newTestEBSWatcher(ctx, taskEngineState, eventChannel, mockDiscoveryClient)
 
 	testAttachmentProperties := map[string]string{
 		apiebs.ResourceTypeName: apiebs.ElasticBlockStorage,
@@ -86,7 +84,7 @@ func TestHandleEBSAttachmentHappyCase(t *testing.T) {
 		},
 		AttachmentProperties: testAttachmentProperties,
 	}
-	watcher := newTestEBSWatcher(ctx, taskEngineState, eventChannel, mockDiscoveryClient, scanTickerController)
+
 	var wg sync.WaitGroup
 	wg.Add(1)
 	mockDiscoveryClient.EXPECT().ConfirmEBSVolumeIsAttached(deviceName, volumeID).
@@ -96,7 +94,19 @@ func TestHandleEBSAttachmentHappyCase(t *testing.T) {
 		Return(nil).
 		MinTimes(1)
 
-	watcher.HandleResourceAttachment(ebsAttachment)
+	err := watcher.HandleResourceAttachment(ebsAttachment)
+	assert.NoError(t, err)
+
+	// We're mocking a scan tick of the EBS watcher here instead of actually starting up the EBS watcher.
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		pendingEBS := watcher.agentState.GetAllPendingEBSAttachmentWithKey()
+		if len(pendingEBS) > 0 {
+			foundVolumes := apiebs.ScanEBSVolumes(pendingEBS, watcher.discoveryClient)
+			watcher.NotifyFound(foundVolumes)
+		}
+	}()
 	wg.Wait()
 
 	assert.Len(t, taskEngineState.(*dockerstate.DockerTaskEngineState).GetAllEBSAttachments(), 1)
@@ -112,7 +122,6 @@ func TestHandleExpiredEBSAttachment(t *testing.T) {
 	ctx := context.Background()
 	taskEngineState := dockerstate.NewTaskEngineState()
 	eventChannel := make(chan statechange.Event)
-	scanTickerController := apiebs.NewScanTickerController()
 	mockDiscoveryClient := mock_ebs_discovery.NewMockEBSDiscovery(mockCtrl)
 
 	testAttachmentProperties := map[string]string{
@@ -133,7 +142,7 @@ func TestHandleExpiredEBSAttachment(t *testing.T) {
 		},
 		AttachmentProperties: testAttachmentProperties,
 	}
-	watcher := newTestEBSWatcher(ctx, taskEngineState, eventChannel, mockDiscoveryClient, scanTickerController)
+	watcher := newTestEBSWatcher(ctx, taskEngineState, eventChannel, mockDiscoveryClient)
 
 	err := watcher.HandleResourceAttachment(ebsAttachment)
 	assert.Error(t, err)
@@ -149,7 +158,6 @@ func TestHandleDuplicateEBSAttachment(t *testing.T) {
 	ctx := context.Background()
 	taskEngineState := dockerstate.NewTaskEngineState()
 	eventChannel := make(chan statechange.Event)
-	scanTickerController := apiebs.NewScanTickerController()
 	mockDiscoveryClient := mock_ebs_discovery.NewMockEBSDiscovery(mockCtrl)
 
 	testAttachmentProperties1 := map[string]string{
@@ -189,7 +197,8 @@ func TestHandleDuplicateEBSAttachment(t *testing.T) {
 		AttachmentProperties: testAttachmentProperties2,
 	}
 
-	watcher := newTestEBSWatcher(ctx, taskEngineState, eventChannel, mockDiscoveryClient, scanTickerController)
+	watcher := newTestEBSWatcher(ctx, taskEngineState, eventChannel, mockDiscoveryClient)
+
 	var wg sync.WaitGroup
 	wg.Add(1)
 	mockDiscoveryClient.EXPECT().ConfirmEBSVolumeIsAttached(deviceName, volumeID).
@@ -201,6 +210,17 @@ func TestHandleDuplicateEBSAttachment(t *testing.T) {
 
 	watcher.HandleResourceAttachment(ebsAttachment1)
 	watcher.HandleResourceAttachment(ebsAttachment2)
+
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		pendingEBS := watcher.agentState.GetAllPendingEBSAttachmentWithKey()
+		if len(pendingEBS) > 0 {
+			foundVolumes := apiebs.ScanEBSVolumes(pendingEBS, watcher.discoveryClient)
+			watcher.NotifyFound(foundVolumes)
+		}
+	}()
+
 	wg.Wait()
 
 	assert.Len(t, taskEngineState.(*dockerstate.DockerTaskEngineState).GetAllEBSAttachments(), 1)
@@ -216,7 +236,7 @@ func TestHandleInvalidTypeEBSAttachment(t *testing.T) {
 	ctx := context.Background()
 	taskEngineState := dockerstate.NewTaskEngineState()
 	eventChannel := make(chan statechange.Event)
-	scanTickerController := apiebs.NewScanTickerController()
+	// scanTickerController := apiebs.NewScanTickerController()
 	mockDiscoveryClient := mock_ebs_discovery.NewMockEBSDiscovery(mockCtrl)
 
 	testAttachmentProperties := map[string]string{
@@ -237,7 +257,7 @@ func TestHandleInvalidTypeEBSAttachment(t *testing.T) {
 		},
 		AttachmentProperties: testAttachmentProperties,
 	}
-	watcher := newTestEBSWatcher(ctx, taskEngineState, eventChannel, mockDiscoveryClient, scanTickerController)
+	watcher := newTestEBSWatcher(ctx, taskEngineState, eventChannel, mockDiscoveryClient)
 
 	watcher.HandleResourceAttachment(ebsAttachment)
 
@@ -253,7 +273,7 @@ func TestHandleEBSAckTimeout(t *testing.T) {
 	ctx := context.Background()
 	taskEngineState := dockerstate.NewTaskEngineState()
 	eventChannel := make(chan statechange.Event)
-	scanTickerController := apiebs.NewScanTickerController()
+
 	mockDiscoveryClient := mock_ebs_discovery.NewMockEBSDiscovery(mockCtrl)
 
 	testAttachmentProperties := map[string]string{
@@ -274,7 +294,7 @@ func TestHandleEBSAckTimeout(t *testing.T) {
 		},
 		AttachmentProperties: testAttachmentProperties,
 	}
-	watcher := newTestEBSWatcher(ctx, taskEngineState, eventChannel, mockDiscoveryClient, scanTickerController)
+	watcher := newTestEBSWatcher(ctx, taskEngineState, eventChannel, mockDiscoveryClient)
 
 	watcher.HandleResourceAttachment(ebsAttachment)
 	time.Sleep(10 * time.Millisecond)
