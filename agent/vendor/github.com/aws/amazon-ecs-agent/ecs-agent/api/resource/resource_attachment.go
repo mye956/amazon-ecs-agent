@@ -14,6 +14,7 @@
 package resource
 
 import (
+	"errors"
 	"fmt"
 	"sync"
 	"time"
@@ -22,8 +23,7 @@ import (
 	"github.com/aws/amazon-ecs-agent/ecs-agent/api/status"
 	"github.com/aws/amazon-ecs-agent/ecs-agent/logger"
 	"github.com/aws/amazon-ecs-agent/ecs-agent/utils/ttime"
-
-	"github.com/pkg/errors"
+	// "github.com/pkg/errors"
 )
 
 type ResourceAttachment struct {
@@ -130,7 +130,9 @@ func (ra *ResourceAttachment) StartTimer(timeoutFunc func()) error {
 	now := time.Now()
 	duration := ra.ExpiresAt.Sub(now)
 	if duration <= 0 {
-		return errors.Errorf("resource attachment: timer expiration is in the past; expiration [%s] < now [%s]",
+		// return errors.New(fmt.Sprintf("resource attachment: timer expiration is in the past; expiration [%s] < now [%s]",
+		// 	ra.ExpiresAt.String(), now.String()))
+		return fmt.Errorf("resource attachment: timer expiration is in the past; expiration [%s] < now [%s]",
 			ra.ExpiresAt.String(), now.String())
 	}
 	logger.Info("Starting resource attachment ack timer", getResourceAttachmentLogFields(ra, duration))

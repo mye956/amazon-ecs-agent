@@ -2,13 +2,14 @@ package resource
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"strings"
 	"sync"
 	"time"
 
 	log "github.com/cihub/seelog"
-
-	"github.com/pkg/errors"
+	// "github.com/pkg/errors"
 )
 
 const (
@@ -65,13 +66,10 @@ func ScanEBSVolumes[T GenericEBSAttachmentObject](pendingAttachments map[string]
 		deviceName := ebs.GetAttachmentProperties(DeviceName)
 		err = dc.ConfirmEBSVolumeIsAttached(deviceName, volumeId)
 		if err != nil {
-			if err != ErrInvalidVolumeID && errors.Cause(err) != ErrInvalidVolumeID {
-				// log.Warnf("Failed to confirm if EBS volume with volume ID: %v and device name: %v, is attached to the host. Error: %v", volumeId, deviceName, err)
-				err = errors.Wrapf(err, "failed to confirm if EBS volume with volume ID: %v and device name: %v, is attached to the host", volumeId, deviceName)
+			if !errors.Is(err, ErrInvalidVolumeID) {
+				err = fmt.Errorf("%w; failed to confirm if EBS volume is attached to the host", err)
+				// errors.New(fmt.Sprintf("%v: failed to confirm if EBS volume is attached to the host."))
 			}
-			// else {
-			// 	log.Warnf("Expected EBS volume with device name: %v and volume ID: %v, Found a different EBS volume attached to the host.", deviceName, volumeId)
-			// }
 			ebs.SetError(err)
 			continue
 		}

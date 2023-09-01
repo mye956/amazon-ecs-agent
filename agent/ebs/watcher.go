@@ -22,7 +22,6 @@ import (
 	"github.com/aws/amazon-ecs-agent/agent/statechange"
 	apiebs "github.com/aws/amazon-ecs-agent/ecs-agent/api/resource"
 	log "github.com/cihub/seelog"
-	"github.com/pkg/errors"
 )
 
 type EBSWatcher struct {
@@ -115,8 +114,10 @@ func (w *EBSWatcher) HandleResourceAttachment(ebs *apiebs.ResourceAttachment) er
 	}
 
 	if err := w.addEBSAttachmentToState(ebs); err != nil {
-		return errors.Wrapf(err, fmt.Sprintf("attach %s message handler: unable to add ebs attachment to engine state: %s",
-			attachmentType, ebs.EBSToString()))
+		// return errors.Wrapf(err, fmt.Sprintf("attach %s message handler: unable to add ebs attachment to engine state: %s",
+		// 	attachmentType, ebs.EBSToString()))
+		return fmt.Errorf("%w; attach %s message handler: unable to add ebs attachment to engine state: %s",
+			err, attachmentType, ebs.EBSToString())
 	}
 
 	// If it was originally empty and now there's a pending EBS volume to scan for.

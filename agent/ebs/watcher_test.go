@@ -121,7 +121,7 @@ func TestHandleExpiredEBSAttachment(t *testing.T) {
 		apiebs.VolumeIdName:     volumeID,
 	}
 
-	expiresAt := time.Now().Add(time.Millisecond * 5)
+	expiresAt := time.Now().Add(-1 * time.Millisecond)
 	ebsAttachment := &apiebs.ResourceAttachment{
 		AttachmentInfo: attachmentinfo.AttachmentInfo{
 			TaskARN:              taskARN,
@@ -135,10 +135,10 @@ func TestHandleExpiredEBSAttachment(t *testing.T) {
 	}
 	watcher := newTestEBSWatcher(ctx, taskEngineState, eventChannel, mockDiscoveryClient, scanTickerController)
 
-	watcher.HandleResourceAttachment(ebsAttachment)
-	time.Sleep(10 * time.Millisecond)
+	err := watcher.HandleResourceAttachment(ebsAttachment)
+	assert.Error(t, err)
 	assert.Len(t, taskEngineState.(*dockerstate.DockerTaskEngineState).GetAllEBSAttachments(), 0)
-	ebsAttachment, ok := taskEngineState.(*dockerstate.DockerTaskEngineState).GetEBSByVolumeId(volumeID)
+	_, ok := taskEngineState.(*dockerstate.DockerTaskEngineState).GetEBSByVolumeId(volumeID)
 	assert.False(t, ok)
 }
 
@@ -243,5 +243,42 @@ func TestHandleInvalidTypeEBSAttachment(t *testing.T) {
 
 	assert.Len(t, taskEngineState.(*dockerstate.DockerTaskEngineState).GetAllEBSAttachments(), 0)
 	_, ok := taskEngineState.(*dockerstate.DockerTaskEngineState).GetEBSByVolumeId(volumeID)
+	assert.False(t, ok)
+}
+
+func TestHandleEBSAckTimeout(t *testing.T) {
+	mockCtrl := gomock.NewController(t)
+	defer mockCtrl.Finish()
+
+	ctx := context.Background()
+	taskEngineState := dockerstate.NewTaskEngineState()
+	eventChannel := make(chan statechange.Event)
+	scanTickerController := apiebs.NewScanTickerController()
+	mockDiscoveryClient := mock_ebs_discovery.NewMockEBSDiscovery(mockCtrl)
+
+	testAttachmentProperties := map[string]string{
+		apiebs.ResourceTypeName: apiebs.ElasticBlockStorage,
+		apiebs.DeviceName:       deviceName,
+		apiebs.VolumeIdName:     volumeID,
+	}
+
+	expiresAt := time.Now().Add(time.Millisecond * 5)
+	ebsAttachment := &apiebs.ResourceAttachment{
+		AttachmentInfo: attachmentinfo.AttachmentInfo{
+			TaskARN:              taskARN,
+			TaskClusterARN:       taskClusterARN,
+			ContainerInstanceARN: containerInstanceARN,
+			ExpiresAt:            expiresAt,
+			Status:               status.AttachmentNone,
+			AttachmentARN:        resourceAttachmentARN,
+		},
+		AttachmentProperties: testAttachmentProperties,
+	}
+	watcher := newTestEBSWatcher(ctx, taskEngineState, eventChannel, mockDiscoveryClient, scanTickerController)
+
+	watcher.HandleResourceAttachment(ebsAttachment)
+	time.Sleep(10 * time.Millisecond)
+	assert.Len(t, taskEngineState.(*dockerstate.DockerTaskEngineState).GetAllEBSAttachments(), 0)
+	ebsAttachment, ok := taskEngineState.(*dockerstate.DockerTaskEngineState).GetEBSByVolumeId(volumeID)
 	assert.False(t, ok)
 }
