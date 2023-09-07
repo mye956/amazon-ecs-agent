@@ -407,6 +407,18 @@ func (mr *MockTaskEngineStateMockRecorder) RemoveENIAttachment(arg0 interface{})
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "RemoveENIAttachment", reflect.TypeOf((*MockTaskEngineState)(nil).RemoveENIAttachment), arg0)
 }
 
+// RemoveExpiredEBSVolumes mocks base method.
+func (m *MockTaskEngineState) RemoveExpiredEBSVolumes() {
+	m.ctrl.T.Helper()
+	m.ctrl.Call(m, "RemoveExpiredEBSVolumes")
+}
+
+// RemoveExpiredEBSVolumes indicates an expected call of RemoveExpiredEBSVolumes.
+func (mr *MockTaskEngineStateMockRecorder) RemoveExpiredEBSVolumes() *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "RemoveExpiredEBSVolumes", reflect.TypeOf((*MockTaskEngineState)(nil).RemoveExpiredEBSVolumes))
+}
+
 // RemoveImageState mocks base method.
 func (m *MockTaskEngineState) RemoveImageState(arg0 *image.ImageState) {
 	m.ctrl.T.Helper()

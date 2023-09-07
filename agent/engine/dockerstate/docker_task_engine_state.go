@@ -93,6 +93,8 @@ type TaskEngineState interface {
 	AddEBSAttachment(ebs *apiresource.ResourceAttachment)
 	// RemoveEBSAttachment removes an ebs attachment to stop tracking
 	RemoveEBSAttachment(volumeId string)
+	// RemoveExpiredEBSVolumes removes all expired ebs attachments
+	RemoveExpiredEBSVolumes()
 	// EBSByVolumeId returns the specific EBSAttachment of the given volume ID
 	GetEBSByVolumeId(volumeId string) (*apiresource.ResourceAttachment, bool)
 
@@ -355,6 +357,24 @@ func (state *DockerTaskEngineState) RemoveEBSAttachment(volumeId string) {
 		seelog.Debugf("Successfully deleted EBS attachment: %v", ebs.EBSToString())
 	} else {
 		seelog.Debugf("RemoveEBSAttachment: The requested EBS attachment with volume ID: %v does not exist", volumeId)
+	}
+}
+
+// RemoveExpiredEBSVolumes removes all expired ebs volumes from state.
+// This is helpful in the case where there's an agent restart
+func (state *DockerTaskEngineState) RemoveExpiredEBSVolumes() {
+	state.lock.Lock()
+	defer state.lock.Unlock()
+
+	state.removeExpiredEBSVolumesUnsafe()
+}
+
+func (state *DockerTaskEngineState) removeExpiredEBSVolumesUnsafe() {
+	for volumeId, ebs := range state.ebsAttachments {
+		if ebs.HasExpired() {
+			delete(state.ebsAttachments, volumeId)
+			seelog.Debugf("Successfully deleted expired EBS attachment: %v", ebs.EBSToString())
+		}
 	}
 }
 
