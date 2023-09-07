@@ -117,10 +117,12 @@ func (w *EBSWatcher) HandleResourceAttachment(ebs *apiebs.ResourceAttachment) er
 	}
 
 	volumeId := ebs.GetAttachmentProperties(apiebs.VolumeIdName)
-	_, ok := w.agentState.GetEBSByVolumeId(volumeId)
+	ebsAttachment, ok := w.agentState.GetEBSByVolumeId(volumeId)
 	if ok {
 		log.Infof("EBS Volume attachment already exists. Skip handling EBS attachment %v.", ebs.EBSToString())
-		return nil
+		return ebsAttachment.StartTimer(func() {
+			w.handleEBSAckTimeout(volumeId)
+		})
 	}
 
 	if err := w.addEBSAttachmentToState(ebs); err != nil {
