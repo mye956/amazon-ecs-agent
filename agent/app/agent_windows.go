@@ -25,7 +25,7 @@ import (
 	asmfactory "github.com/aws/amazon-ecs-agent/agent/asm/factory"
 	"github.com/aws/amazon-ecs-agent/agent/data"
 
-	// ebs "github.com/aws/amazon-ecs-agent/agent/ebs"
+	ebs "github.com/aws/amazon-ecs-agent/agent/ebs"
 	"github.com/aws/amazon-ecs-agent/agent/ecscni"
 	"github.com/aws/amazon-ecs-agent/agent/engine"
 	"github.com/aws/amazon-ecs-agent/agent/engine/dockerstate"
@@ -352,15 +352,15 @@ func (agent *ecsAgent) startENIWatcher(state dockerstate.TaskEngineState, stateC
 	return nil
 }
 
-// func (agent *ecsAgent) startEBSWatcher(state dockerstate.TaskEngineState, stateChangeEvents chan<- statechange.Event) error {
-// 	seelog.Debug("Setting up EBS Watcher...")
-// 	if agent.ebsWatcher == nil {
-// 		agent.ebsWatcher = ebs.NewWatcher(agent.ctx, state, stateChangeEvents)
+func (agent *ecsAgent) startEBSWatcher(state dockerstate.TaskEngineState, stateChangeEvents chan<- statechange.Event) error {
+	seelog.Debug("Setting up EBS Watcher...")
+	if agent.ebsWatcher == nil {
+		agent.ebsWatcher = ebs.NewWatcher(agent.ctx, state, stateChangeEvents)
 
-// 		go agent.ebsWatcher.Start()
-// 	}
-// 	return nil
-// }
+		go agent.ebsWatcher.Start()
+	}
+	return nil
+}
 
 // This function verifies that the plugins are available at the given path
 // When each plugin is executed with --capabilities then it returns a string representing its capabilities

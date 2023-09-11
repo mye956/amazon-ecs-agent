@@ -31,15 +31,15 @@ type LsblkOutput struct {
 	BlockDevies []BD `json:"blockdevices"`
 }
 type BD struct {
-	Name     string    `json:"name"`
-	Serial   string    `json:"serial"`
-	Children []BDChild `json:"children"`
+	Name     string `json:"name"`
+	Serial   string `json:"serial"`
+	Children []*BD  `json:"children,omitempty"`
 }
 
-type BDChild struct {
-	Name   string `json:"name"`
-	Serial string `json:"serial"`
-}
+// type BDChild struct {
+// 	Name   string `json:"name"`
+// 	Serial string `json:"serial"`
+// }
 
 func (api *EBSDiscoveryClient) ConfirmEBSVolumeIsAttached(deviceName, volumeID string) error {
 	var lsblkOut LsblkOutput

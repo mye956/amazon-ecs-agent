@@ -22,7 +22,7 @@ import (
 	asmfactory "github.com/aws/amazon-ecs-agent/agent/asm/factory"
 	"github.com/aws/amazon-ecs-agent/agent/config"
 
-	// ebs "github.com/aws/amazon-ecs-agent/agent/ebs"
+	ebs "github.com/aws/amazon-ecs-agent/agent/ebs"
 	"github.com/aws/amazon-ecs-agent/agent/ecscni"
 	"github.com/aws/amazon-ecs-agent/agent/engine"
 	"github.com/aws/amazon-ecs-agent/agent/engine/dockerstate"
@@ -151,16 +151,16 @@ func (agent *ecsAgent) startENIWatcher(state dockerstate.TaskEngineState, stateC
 	return nil
 }
 
-// func (agent *ecsAgent) startEBSWatcher(state dockerstate.TaskEngineState, stateChangeEvents chan<- statechange.Event) error {
-// 	seelog.Debug("Setting up EBS Watcher...")
-// 	if agent.ebsWatcher == nil {
-// 		seelog.Debug("Creating new EBS watcher...")
-// 		agent.ebsWatcher = ebs.NewWatcher(agent.ctx, state, stateChangeEvents)
+func (agent *ecsAgent) startEBSWatcher(state dockerstate.TaskEngineState, stateChangeEvents chan<- statechange.Event) error {
+	seelog.Debug("Setting up EBS Watcher...")
+	if agent.ebsWatcher == nil {
+		seelog.Debug("Creating new EBS watcher...")
+		agent.ebsWatcher = ebs.NewWatcher(agent.ctx, state, stateChangeEvents)
 
-// 		go agent.ebsWatcher.Start()
-// 	}
-// 	return nil
-// }
+		go agent.ebsWatcher.Start()
+	}
+	return nil
+}
 
 // initializeResourceFields exists mainly for testing doStart() to use mock Control
 // object

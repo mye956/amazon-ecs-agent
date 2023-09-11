@@ -68,7 +68,7 @@ func (w *EBSWatcher) Start() {
 				log.Info("Pending attachments to be found...")
 				foundVolumes := apiebs.ScanEBSVolumes(pendingEBS, w.discoveryClient)
 				w.NotifyFound(foundVolumes)
-				w.agentState.RemoveExpiredEBSVolumes()
+				// w.agentState.RemoveExpiredEBSVolumes()
 			} else {
 				log.Info("No volumes to find.")
 			}
