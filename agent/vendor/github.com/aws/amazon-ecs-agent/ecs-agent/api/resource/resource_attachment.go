@@ -14,6 +14,7 @@
 package resource
 
 import (
+	"errors"
 	"fmt"
 	"sync"
 	"time"
@@ -22,8 +23,7 @@ import (
 	"github.com/aws/amazon-ecs-agent/ecs-agent/api/status"
 	"github.com/aws/amazon-ecs-agent/ecs-agent/logger"
 	"github.com/aws/amazon-ecs-agent/ecs-agent/utils/ttime"
-
-	"github.com/pkg/errors"
+	// "github.com/pkg/errors"
 )
 
 type ResourceAttachment struct {
@@ -40,6 +40,7 @@ type ResourceAttachment struct {
 	ackTimer ttime.Timer
 	// guard protects access to fields of this struct
 	guard sync.RWMutex
+	err   error
 }
 
 // Agent Communication Service (ACS) can send messages of type ConfirmAttachmentMessage. These messages include
@@ -129,7 +130,9 @@ func (ra *ResourceAttachment) StartTimer(timeoutFunc func()) error {
 	now := time.Now()
 	duration := ra.ExpiresAt.Sub(now)
 	if duration <= 0 {
-		return errors.Errorf("resource attachment: timer expiration is in the past; expiration [%s] < now [%s]",
+		// return errors.New(fmt.Sprintf("resource attachment: timer expiration is in the past; expiration [%s] < now [%s]",
+		// 	ra.ExpiresAt.String(), now.String()))
+		return fmt.Errorf("resource attachment: timer expiration is in the past; expiration [%s] < now [%s]",
 			ra.ExpiresAt.String(), now.String())
 	}
 	logger.Info("Starting resource attachment ack timer", getResourceAttachmentLogFields(ra, duration))
@@ -207,18 +210,31 @@ func (ra *ResourceAttachment) HasExpired() bool {
 	return time.Now().After(ra.ExpiresAt)
 }
 
-func (ra *ResourceAttachment) String() string {
+func (ra *ResourceAttachment) SetError(err error) {
+	ra.guard.Lock()
+	defer ra.guard.Unlock()
+	ra.err = err
+}
+
+func (ra *ResourceAttachment) GetError() error {
 	ra.guard.RLock()
 	defer ra.guard.RUnlock()
 
-	return ra.stringUnsafe()
+	return ra.err
 }
 
-func (ra *ResourceAttachment) stringUnsafe() string {
+func (ra *ResourceAttachment) EBSToString() string {
+	ra.guard.RLock()
+	defer ra.guard.RUnlock()
+
+	return ra.ebsToStringUnsafe()
+}
+
+func (ra *ResourceAttachment) ebsToStringUnsafe() string {
 	return fmt.Sprintf(
-		"Resource Attachment: attachment=%s attachmentType=%s attachmentSent=%t volumeSizeInGiB=%s requestedSizeName=%s volumeId=%s deviceName=%s filesystemType=%s status=%s expiresAt=%s",
+		"Resource Attachment: attachment=%s attachmentType=%s attachmentSent=%t volumeSizeInGiB=%s requestedSizeName=%s volumeId=%s deviceName=%s filesystemType=%s status=%s expiresAt=%s error=%v",
 		ra.AttachmentARN, ra.AttachmentProperties[ResourceTypeName], ra.AttachStatusSent, ra.AttachmentProperties[VolumeSizeInGiBName], ra.AttachmentProperties[RequestedSizeName], ra.AttachmentProperties[VolumeIdName],
-		ra.AttachmentProperties[DeviceName], ra.AttachmentProperties[FileSystemTypeName], ra.Status.String(), ra.ExpiresAt.Format(time.RFC3339))
+		ra.AttachmentProperties[DeviceName], ra.AttachmentProperties[FileSystemTypeName], ra.Status.String(), ra.ExpiresAt.Format(time.RFC3339), ra.err)
 }
 
 func (ra *ResourceAttachment) GetAttachmentProperties(key string) string {

@@ -24,6 +24,7 @@ import (
 
 	asmfactory "github.com/aws/amazon-ecs-agent/agent/asm/factory"
 	"github.com/aws/amazon-ecs-agent/agent/data"
+
 	ebs "github.com/aws/amazon-ecs-agent/agent/ebs"
 	"github.com/aws/amazon-ecs-agent/agent/ecscni"
 	"github.com/aws/amazon-ecs-agent/agent/engine"
@@ -354,11 +355,7 @@ func (agent *ecsAgent) startENIWatcher(state dockerstate.TaskEngineState, stateC
 func (agent *ecsAgent) startEBSWatcher(state dockerstate.TaskEngineState, stateChangeEvents chan<- statechange.Event) error {
 	seelog.Debug("Setting up EBS Watcher...")
 	if agent.ebsWatcher == nil {
-		ebsWatcher, err := ebs.NewWatcher(agent.ctx, state, stateChangeEvents)
-		if err != nil {
-			return errors.Wrapf(err, "unable to create EBS watcher")
-		}
-		agent.ebsWatcher = ebsWatcher
+		agent.ebsWatcher = ebs.NewWatcher(agent.ctx, state, stateChangeEvents)
 
 		go agent.ebsWatcher.Start()
 	}

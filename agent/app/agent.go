@@ -55,10 +55,7 @@ import (
 	"github.com/aws/amazon-ecs-agent/agent/utils/mobypkgwrapper"
 	"github.com/aws/amazon-ecs-agent/agent/version"
 	acsclient "github.com/aws/amazon-ecs-agent/ecs-agent/acs/client"
-	"github.com/aws/amazon-ecs-agent/ecs-agent/api/attachmentinfo"
 	apierrors "github.com/aws/amazon-ecs-agent/ecs-agent/api/errors"
-	apira "github.com/aws/amazon-ecs-agent/ecs-agent/api/resource"
-	"github.com/aws/amazon-ecs-agent/ecs-agent/api/status"
 	"github.com/aws/amazon-ecs-agent/ecs-agent/credentials"
 	"github.com/aws/amazon-ecs-agent/ecs-agent/doctor"
 	"github.com/aws/amazon-ecs-agent/ecs-agent/ecs_client/model/ecs"
@@ -70,6 +67,10 @@ import (
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/aws/awserr"
 	aws_credentials "github.com/aws/aws-sdk-go/aws/credentials"
+
+	"github.com/aws/amazon-ecs-agent/ecs-agent/api/attachmentinfo"
+	apira "github.com/aws/amazon-ecs-agent/ecs-agent/api/resource"
+	"github.com/aws/amazon-ecs-agent/ecs-agent/api/status"
 
 	"github.com/cihub/seelog"
 	"github.com/pborman/uuid"
@@ -539,6 +540,26 @@ func (agent *ecsAgent) doStart(containerChangeEventStream *eventstream.EventStre
 			ContainerInstanceARN: "dummy-container-instance-arn3",
 		},
 		AttachmentProperties: tempAttachmentProperties3,
+	})
+
+	tempAttachmentProperties4 := map[string]string{
+		apira.ResourceTypeName:    apira.ElasticBlockStorage,
+		apira.RequestedSizeName:   "10",
+		apira.VolumeSizeInGiBName: "7",
+		apira.DeviceName:          "/dev/nvme4n1",
+		apira.VolumeIdName:        "vol-0797268b9cfec8c61",
+		apira.FileSystemTypeName:  "testXFS",
+	}
+	go agent.ebsWatcher.HandleResourceAttachment(&apira.ResourceAttachment{
+		AttachmentInfo: attachmentinfo.AttachmentInfo{
+			AttachmentARN:        "dummy-arn4",
+			Status:               status.AttachmentNone,
+			ExpiresAt:            time.Now().Add(20000 * time.Millisecond),
+			AttachStatusSent:     false,
+			ClusterARN:           "dummy-cluster-arn4",
+			ContainerInstanceARN: "dummy-container-instance-arn4",
+		},
+		AttachmentProperties: tempAttachmentProperties4,
 	})
 
 	// Start the acs session, which should block doStart

@@ -19,21 +19,21 @@ package resource
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"os/exec"
 	"strings"
 
 	log "github.com/cihub/seelog"
-
-	"github.com/pkg/errors"
+	// "github.com/pkg/errors"
 )
 
 type LsblkOutput struct {
-	BlockDevies []BD `json:"blockdevices"`
+	BlockDevies []BlockDevice `json:"blockdevices"`
 }
-type BD struct {
-	Name   string `json:"name"`
-	Serial string `json:"serial"`
-	// Children []BDChild `json:"children"`
+type BlockDevice struct {
+	Name     string         `json:"name"`
+	Serial   string         `json:"serial"`
+	Children []*BlockDevice `json:"children,omitempty"`
 }
 
 // type BDChild struct {
@@ -47,12 +47,17 @@ func (api *EBSDiscoveryClient) ConfirmEBSVolumeIsAttached(deviceName, volumeID s
 	defer cancel()
 	output, err := exec.CommandContext(ctxWithTimeout, "lsblk", "-o", "NAME,SERIAL", "-J").CombinedOutput()
 	if err != nil {
-		return errors.Wrapf(err, "failed to run lsblk: %s", string(output))
+		// err = errors.New(fmt.Errorf("%v: failed to run lsblk: %s", err, string(output)))
+		err = fmt.Errorf("%w; failed to run lsblk %s", err, string(output))
+		return err
 	}
 	log.Infof("lsblk output: %v", string(output))
 	err = json.Unmarshal(output, &lsblkOut)
 	if err != nil {
-		return errors.Wrapf(err, "Failed to unmarshal string: %s", string(output))
+		// err = errors.New(fmt.Sprintf("%v: failed to unmarshal string: %s", err, string(output)))
+		err = fmt.Errorf("%w; failed to unmarshal string: %s", err, string(output))
+		return err
+		// return errors.Wrapf(err, "Failed to unmarshal string: %s", string(output))
 	}
 	// log.Infof("Struct: %v", lsblkOut)
 	// actualVolumeID, err := parseEBSNVMeIDOutput(output)
@@ -66,9 +71,13 @@ func (api *EBSDiscoveryClient) ConfirmEBSVolumeIsAttached(deviceName, volumeID s
 	if err != nil {
 		return err
 	}
-	vid := strings.ReplaceAll(volumeID, "-", "")
-	if vid != actualVolumeID {
-		return errors.Wrapf(ErrInvalidVolumeID, "expected EBS volume %s but found %s", volumeID, actualVolumeID)
+
+	vId := strings.ReplaceAll(volumeID, "-", "")
+	if actualVolumeID != "" && vId != actualVolumeID {
+		// err = errors.New(fmt.Sprintf("%v: expected EBS volume %s but found %s", ErrInvalidVolumeID, volumeID, actualVolumeID))
+		err = fmt.Errorf("%w; expected EBS volume %s but found %s", ErrInvalidVolumeID, volumeID, actualVolumeID)
+		return err
+		// return errors.Wrapf(ErrInvalidVolumeID, "expected EBS volume %s but found %s", volumeID, actualVolumeID)
 	}
 
 	return nil
@@ -82,7 +91,7 @@ func parseLsblkOutput(output *LsblkOutput, deviceName string) (string, error) {
 			return block.Serial, nil
 		}
 	}
-	return "", errors.New("cannot find the EBS volume with device name: %v " + actualDeviceName)
+	return "", fmt.Errorf("cannot find EBS volume with device name: %v", actualDeviceName)
 }
 
 // func parseLsblkOutput(out []byte, deviceName string) (string, error) {

@@ -18,6 +18,7 @@ package ebs
 
 import (
 	"context"
+	"fmt"
 	"sync"
 	"testing"
 	"time"
@@ -28,6 +29,7 @@ import (
 	"github.com/aws/amazon-ecs-agent/ecs-agent/api/attachmentinfo"
 	apiebs "github.com/aws/amazon-ecs-agent/ecs-agent/api/resource"
 	mock_ebs_discovery "github.com/aws/amazon-ecs-agent/ecs-agent/api/resource/mocks"
+	"github.com/aws/amazon-ecs-agent/ecs-agent/api/status"
 
 	"github.com/golang/mock/gomock"
 	"github.com/stretchr/testify/assert"
@@ -42,71 +44,28 @@ const (
 	volumeID              = "vol-1234"
 )
 
-type TestGroup struct {
-	wg     sync.WaitGroup
-	cancel context.CancelFunc
-}
-
-// NewTestGroup creates a TestGroup with the given cancellation function.
-func NewTestGroup(cancel context.CancelFunc) TestGroup {
-	return TestGroup{cancel: cancel}
-}
-
-// Start the given actor in a new goroutine. The actor must be initialized with
-// the group's context.
-func (tg *TestGroup) Start(watcher *EBSWatcher) {
-	tg.wg.Add(1)
-	go func() {
-		defer tg.wg.Done()
-		watcher.Start()
-	}()
-}
-
-// Cancel all actors started by Start() by calling the associated context and wait its completion.
-func (tg *TestGroup) Cancel() {
-	// Stop the actors.
-	tg.cancel()
-
-	// Make sure all actors have been stopped.
-	tg.wg.Wait()
-}
-
-func setupWatcher(ctx context.Context, cancel context.CancelFunc, agentState dockerstate.TaskEngineState,
+func newTestEBSWatcher(ctx context.Context, agentState dockerstate.TaskEngineState,
 	ebsChangeEvent chan<- statechange.Event, discoveryClient apiebs.EBSDiscovery) *EBSWatcher {
+	derivedContext, cancel := context.WithCancel(ctx)
 	return &EBSWatcher{
-		ctx:             ctx,
+		ctx:             derivedContext,
 		cancel:          cancel,
 		agentState:      agentState,
 		ebsChangeEvent:  ebsChangeEvent,
 		discoveryClient: discoveryClient,
-		mailbox:         make(chan func(), 1),
 	}
 }
 
-func TestHandleEBSAttachment(t *testing.T) {
-	ctx, cancel := context.WithCancel(context.Background())
-	testGroup := NewTestGroup(cancel)
-	defer testGroup.Cancel()
-
+func TestHandleEBSAttachmentHappyCase(t *testing.T) {
 	mockCtrl := gomock.NewController(t)
 	defer mockCtrl.Finish()
 
-	// mockStateManager := mock_dockerstate.NewMockTaskEngineState(mockCtrl)
+	ctx := context.Background()
 	taskEngineState := dockerstate.NewTaskEngineState()
 	eventChannel := make(chan statechange.Event)
-
 	mockDiscoveryClient := mock_ebs_discovery.NewMockEBSDiscovery(mockCtrl)
 
-	// testGroup.Start(watcher)
-
-	var wg sync.WaitGroup
-	wg.Add(1)
-	mockDiscoveryClient.EXPECT().ConfirmEBSVolumeIsAttached(deviceName, volumeID).Return(nil).MinTimes(1).
-		Do(func(deviceName, volumeID string) {
-			wg.Done()
-		}).
-		Return(nil).
-		MinTimes(1)
+	watcher := newTestEBSWatcher(ctx, taskEngineState, eventChannel, mockDiscoveryClient)
 
 	testAttachmentProperties := map[string]string{
 		apiebs.ResourceTypeName: apiebs.ElasticBlockStorage,
@@ -121,91 +80,335 @@ func TestHandleEBSAttachment(t *testing.T) {
 			TaskClusterARN:       taskClusterARN,
 			ContainerInstanceARN: containerInstanceARN,
 			ExpiresAt:            expiresAt,
+			Status:               status.AttachmentNone,
 			AttachmentARN:        resourceAttachmentARN,
 		},
 		AttachmentProperties: testAttachmentProperties,
 	}
 
-	// err := watcher.addEBSAttachmentToState(ebsAttachment)
-	// assert.NoError(t, err)
-	// assert.Len(t, taskEngineState.(*dockerstate.DockerTaskEngineState).GetAllEBSAttachments(), 1)
-	// ebsAttachment, ok := taskEngineState.(*dockerstate.DockerTaskEngineState).GetEBSByVolumeId(volumeID)
-	// assert.True(t, ok)
+	var wg sync.WaitGroup
+	wg.Add(1)
+	mockDiscoveryClient.EXPECT().ConfirmEBSVolumeIsAttached(deviceName, volumeID).
+		Do(func(deviceName, volumeID string) {
+			wg.Done()
+		}).
+		Return(nil).
+		MinTimes(1)
 
-	// err := watcher.HandleResourceAttachment(ebsAttachment)
+	err := watcher.HandleResourceAttachment(ebsAttachment)
+	assert.NoError(t, err)
 
-	watcher := setupWatcher(ctx, cancel, taskEngineState, eventChannel, mockDiscoveryClient)
-	testGroup.Start(watcher)
+	// We're mocking a scan tick of the EBS watcher here instead of actually starting up the EBS watcher.
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		pendingEBS := watcher.agentState.GetAllPendingEBSAttachmentWithKey()
+		if len(pendingEBS) > 0 {
+			foundVolumes := apiebs.ScanEBSVolumes(pendingEBS, watcher.discoveryClient)
+			watcher.NotifyFound(foundVolumes)
+		}
+	}()
+	wg.Wait()
 
-	watcher.HandleResourceAttachment(ebsAttachment)
-	// assert.NoError(t, err)
+	assert.Len(t, taskEngineState.(*dockerstate.DockerTaskEngineState).GetAllEBSAttachments(), 1)
+	ebsAttachment, ok := taskEngineState.(*dockerstate.DockerTaskEngineState).GetEBSByVolumeId(volumeID)
+	assert.True(t, ok)
+	assert.True(t, ebsAttachment.IsAttached())
+}
+
+func TestHandleExpiredEBSAttachment(t *testing.T) {
+	mockCtrl := gomock.NewController(t)
+	defer mockCtrl.Finish()
+
+	ctx := context.Background()
+	taskEngineState := dockerstate.NewTaskEngineState()
+	eventChannel := make(chan statechange.Event)
+	mockDiscoveryClient := mock_ebs_discovery.NewMockEBSDiscovery(mockCtrl)
+
+	testAttachmentProperties := map[string]string{
+		apiebs.ResourceTypeName: apiebs.ElasticBlockStorage,
+		apiebs.DeviceName:       deviceName,
+		apiebs.VolumeIdName:     volumeID,
+	}
+
+	expiresAt := time.Now().Add(-1 * time.Millisecond)
+	ebsAttachment := &apiebs.ResourceAttachment{
+		AttachmentInfo: attachmentinfo.AttachmentInfo{
+			TaskARN:              taskARN,
+			TaskClusterARN:       taskClusterARN,
+			ContainerInstanceARN: containerInstanceARN,
+			ExpiresAt:            expiresAt,
+			Status:               status.AttachmentNone,
+			AttachmentARN:        resourceAttachmentARN,
+		},
+		AttachmentProperties: testAttachmentProperties,
+	}
+	watcher := newTestEBSWatcher(ctx, taskEngineState, eventChannel, mockDiscoveryClient)
+
+	err := watcher.HandleResourceAttachment(ebsAttachment)
+	assert.Error(t, err)
+	assert.Len(t, taskEngineState.(*dockerstate.DockerTaskEngineState).GetAllEBSAttachments(), 0)
+	_, ok := taskEngineState.(*dockerstate.DockerTaskEngineState).GetEBSByVolumeId(volumeID)
+	assert.False(t, ok)
+}
+
+func TestHandleDuplicateEBSAttachment(t *testing.T) {
+	mockCtrl := gomock.NewController(t)
+	defer mockCtrl.Finish()
+
+	ctx := context.Background()
+	taskEngineState := dockerstate.NewTaskEngineState()
+	eventChannel := make(chan statechange.Event)
+	mockDiscoveryClient := mock_ebs_discovery.NewMockEBSDiscovery(mockCtrl)
+
+	testAttachmentProperties1 := map[string]string{
+		apiebs.ResourceTypeName: apiebs.ElasticBlockStorage,
+		apiebs.DeviceName:       deviceName,
+		apiebs.VolumeIdName:     volumeID,
+	}
+
+	expiresAt := time.Now().Add(time.Millisecond * testconst.WaitTimeoutMillis)
+	ebsAttachment1 := &apiebs.ResourceAttachment{
+		AttachmentInfo: attachmentinfo.AttachmentInfo{
+			TaskARN:              taskARN,
+			TaskClusterARN:       taskClusterARN,
+			ContainerInstanceARN: containerInstanceARN,
+			ExpiresAt:            expiresAt,
+			Status:               status.AttachmentNone,
+			AttachmentARN:        resourceAttachmentARN,
+		},
+		AttachmentProperties: testAttachmentProperties1,
+	}
+
+	testAttachmentProperties2 := map[string]string{
+		apiebs.ResourceTypeName: apiebs.ElasticBlockStorage,
+		apiebs.DeviceName:       deviceName,
+		apiebs.VolumeIdName:     volumeID,
+	}
+
+	ebsAttachment2 := &apiebs.ResourceAttachment{
+		AttachmentInfo: attachmentinfo.AttachmentInfo{
+			TaskARN:              taskARN,
+			TaskClusterARN:       taskClusterARN,
+			ContainerInstanceARN: containerInstanceARN,
+			ExpiresAt:            expiresAt,
+			Status:               status.AttachmentNone,
+			AttachmentARN:        resourceAttachmentARN,
+		},
+		AttachmentProperties: testAttachmentProperties2,
+	}
+
+	watcher := newTestEBSWatcher(ctx, taskEngineState, eventChannel, mockDiscoveryClient)
+
+	var wg sync.WaitGroup
+	wg.Add(1)
+	mockDiscoveryClient.EXPECT().ConfirmEBSVolumeIsAttached(deviceName, volumeID).
+		Do(func(deviceName, volumeID string) {
+			wg.Done()
+		}).
+		Return(nil).
+		MinTimes(1)
+
+	watcher.HandleResourceAttachment(ebsAttachment1)
+	watcher.HandleResourceAttachment(ebsAttachment2)
+
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		pendingEBS := watcher.agentState.GetAllPendingEBSAttachmentWithKey()
+		if len(pendingEBS) > 0 {
+			foundVolumes := apiebs.ScanEBSVolumes(pendingEBS, watcher.discoveryClient)
+			watcher.NotifyFound(foundVolumes)
+		}
+	}()
 
 	wg.Wait()
 
 	assert.Len(t, taskEngineState.(*dockerstate.DockerTaskEngineState).GetAllEBSAttachments(), 1)
 	ebsAttachment, ok := taskEngineState.(*dockerstate.DockerTaskEngineState).GetEBSByVolumeId(volumeID)
 	assert.True(t, ok)
+	assert.True(t, ebsAttachment.IsAttached())
 }
 
-// func TestHandleEBSAttachment(t *testing.T) {
+func TestHandleInvalidTypeEBSAttachment(t *testing.T) {
+	mockCtrl := gomock.NewController(t)
+	defer mockCtrl.Finish()
+
+	ctx := context.Background()
+	taskEngineState := dockerstate.NewTaskEngineState()
+	eventChannel := make(chan statechange.Event)
+	// scanTickerController := apiebs.NewScanTickerController()
+	mockDiscoveryClient := mock_ebs_discovery.NewMockEBSDiscovery(mockCtrl)
+
+	testAttachmentProperties := map[string]string{
+		apiebs.ResourceTypeName: "InvalidResourceType",
+		apiebs.DeviceName:       deviceName,
+		apiebs.VolumeIdName:     volumeID,
+	}
+
+	expiresAt := time.Now().Add(time.Millisecond * testconst.WaitTimeoutMillis)
+	ebsAttachment := &apiebs.ResourceAttachment{
+		AttachmentInfo: attachmentinfo.AttachmentInfo{
+			TaskARN:              taskARN,
+			TaskClusterARN:       taskClusterARN,
+			ContainerInstanceARN: containerInstanceARN,
+			ExpiresAt:            expiresAt,
+			Status:               status.AttachmentNone,
+			AttachmentARN:        resourceAttachmentARN,
+		},
+		AttachmentProperties: testAttachmentProperties,
+	}
+	watcher := newTestEBSWatcher(ctx, taskEngineState, eventChannel, mockDiscoveryClient)
+
+	watcher.HandleResourceAttachment(ebsAttachment)
+
+	assert.Len(t, taskEngineState.(*dockerstate.DockerTaskEngineState).GetAllEBSAttachments(), 0)
+	_, ok := taskEngineState.(*dockerstate.DockerTaskEngineState).GetEBSByVolumeId(volumeID)
+	assert.False(t, ok)
+}
+
+func TestHandleEBSAckTimeout(t *testing.T) {
+	mockCtrl := gomock.NewController(t)
+	defer mockCtrl.Finish()
+
+	ctx := context.Background()
+	taskEngineState := dockerstate.NewTaskEngineState()
+	eventChannel := make(chan statechange.Event)
+
+	mockDiscoveryClient := mock_ebs_discovery.NewMockEBSDiscovery(mockCtrl)
+
+	testAttachmentProperties := map[string]string{
+		apiebs.ResourceTypeName: apiebs.ElasticBlockStorage,
+		apiebs.DeviceName:       deviceName,
+		apiebs.VolumeIdName:     volumeID,
+	}
+
+	expiresAt := time.Now().Add(time.Millisecond * 5)
+	ebsAttachment := &apiebs.ResourceAttachment{
+		AttachmentInfo: attachmentinfo.AttachmentInfo{
+			TaskARN:              taskARN,
+			TaskClusterARN:       taskClusterARN,
+			ContainerInstanceARN: containerInstanceARN,
+			ExpiresAt:            expiresAt,
+			Status:               status.AttachmentNone,
+			AttachmentARN:        resourceAttachmentARN,
+		},
+		AttachmentProperties: testAttachmentProperties,
+	}
+	watcher := newTestEBSWatcher(ctx, taskEngineState, eventChannel, mockDiscoveryClient)
+
+	watcher.HandleResourceAttachment(ebsAttachment)
+	for {
+		time.Sleep(time.Millisecond * 5)
+		if len(taskEngineState.(*dockerstate.DockerTaskEngineState).GetAllEBSAttachments()) == 0 {
+			// TODO Include data client check, this will be done in a near follow up PR
+			assert.Len(t, taskEngineState.(*dockerstate.DockerTaskEngineState).GetAllEBSAttachments(), 0)
+			ebsAttachment, ok := taskEngineState.(*dockerstate.DockerTaskEngineState).GetEBSByVolumeId(volumeID)
+			assert.False(t, ok)
+			break
+		}
+	}
+}
+
+func TestHandleMismatchEBSAttachment(t *testing.T) {
+	mockCtrl := gomock.NewController(t)
+	defer mockCtrl.Finish()
+
+	ctx := context.Background()
+	taskEngineState := dockerstate.NewTaskEngineState()
+	eventChannel := make(chan statechange.Event)
+	mockDiscoveryClient := mock_ebs_discovery.NewMockEBSDiscovery(mockCtrl)
+
+	watcher := newTestEBSWatcher(ctx, taskEngineState, eventChannel, mockDiscoveryClient)
+
+	testAttachmentProperties := map[string]string{
+		apiebs.ResourceTypeName: apiebs.ElasticBlockStorage,
+		apiebs.DeviceName:       deviceName,
+		apiebs.VolumeIdName:     volumeID,
+	}
+
+	expiresAt := time.Now().Add(time.Millisecond * testconst.WaitTimeoutMillis)
+	ebsAttachment := &apiebs.ResourceAttachment{
+		AttachmentInfo: attachmentinfo.AttachmentInfo{
+			TaskARN:              taskARN,
+			TaskClusterARN:       taskClusterARN,
+			ContainerInstanceARN: containerInstanceARN,
+			ExpiresAt:            expiresAt,
+			Status:               status.AttachmentNone,
+			AttachmentARN:        resourceAttachmentARN,
+		},
+		AttachmentProperties: testAttachmentProperties,
+	}
+
+	var wg sync.WaitGroup
+	wg.Add(1)
+	mockDiscoveryClient.EXPECT().ConfirmEBSVolumeIsAttached(deviceName, volumeID).
+		Do(func(deviceName, volumeID string) {
+			wg.Done()
+		}).
+		Return(fmt.Errorf("%w; expected EBS volume %s but found %s", apiebs.ErrInvalidVolumeID, volumeID, "vol-321")).
+		MinTimes(1)
+
+	err := watcher.HandleResourceAttachment(ebsAttachment)
+	assert.NoError(t, err)
+
+	pendingEBS := watcher.agentState.GetAllPendingEBSAttachmentWithKey()
+	foundVolumes := apiebs.ScanEBSVolumes(pendingEBS, watcher.discoveryClient)
+
+	assert.Empty(t, foundVolumes)
+	ebsAttachment, ok := taskEngineState.(*dockerstate.DockerTaskEngineState).GetEBSByVolumeId(volumeID)
+	assert.True(t, ok)
+	assert.ErrorIs(t, ebsAttachment.GetError(), apiebs.ErrInvalidVolumeID)
+}
+
+// func TestHandleMismatchEBSAttachment(t *testing.T) {
 // 	mockCtrl := gomock.NewController(t)
 // 	defer mockCtrl.Finish()
 
-// 	mockStateManager := mock_dockerstate.NewMockTaskEngineState(mockCtrl)
-// 	eventChannel := make(chan statechange.Event)
-// 	ctx := context.TODO()
-
-// 	gomock.InOrder(
-// 		mockStateManager.EXPECT().ENIByMac(randomMAC).Return(&apieni.ENIAttachment{
-// 			AttachmentInfo: attachmentinfo.AttachmentInfo{
-// 				ExpiresAt: time.Now().Add(expirationTimeAddition),
-// 			},
-// 		}, true),
-// 	)
-
-// 	watcher := setupWatcher(ctx, nil, mockStateManager, eventChannel)
-// }
-
-// func TestEBSAckTimeout(t *testing.T) {
-// 	ctrl := gomock.NewController(t)
-// 	defer ctrl.Finish()
-
+// 	ctx := context.Background()
 // 	taskEngineState := dockerstate.NewTaskEngineState()
-// 	dataClient := newTestDataClient(t)
+// 	eventChannel := make(chan statechange.Event)
+// 	mockDiscoveryClient := mock_ebs_discovery.NewMockEBSDiscovery(mockCtrl)
+
+// 	watcher := newTestEBSWatcher(ctx, taskEngineState, eventChannel, mockDiscoveryClient)
 
 // 	testAttachmentProperties := map[string]string{
-// 		apira.ResourceTypeName:    apira.ElasticBlockStorage,
-// 		apira.RequestedSizeName:   "5",
-// 		apira.VolumeSizeInGiBName: "7",
-// 		apira.DeviceName:          "/host/dev/nvme1n1",
-// 		apira.VolumeIdName:        "vol-123",
-// 		apira.FileSystemTypeName:  "testXFS",
+// 		apiebs.ResourceTypeName: apiebs.ElasticBlockStorage,
+// 		apiebs.DeviceName:       deviceName,
+// 		apiebs.VolumeIdName:     volumeID,
 // 	}
-// 	expiresAt := time.Now().Add(time.Millisecond * 1000)
-// 	ebsAttachment := &apira.ResourceAttachment{
+
+// 	expiresAt := time.Now().Add(time.Millisecond * testconst.WaitTimeoutMillis)
+// 	ebsAttachment := &apiebs.ResourceAttachment{
 // 		AttachmentInfo: attachmentinfo.AttachmentInfo{
-// 			AttachmentARN:        "dummy-arn",
-// 			Status:               status.AttachmentNone,
+// 			TaskARN:              taskARN,
+// 			TaskClusterARN:       taskClusterARN,
+// 			ContainerInstanceARN: containerInstanceARN,
 // 			ExpiresAt:            expiresAt,
-// 			AttachStatusSent:     false,
-// 			ClusterARN:           "dummy-cluster-arn",
-// 			ContainerInstanceARN: "dummy-container-instance-arn",
+// 			Status:               status.AttachmentNone,
+// 			AttachmentARN:        resourceAttachmentARN,
 // 		},
 // 		AttachmentProperties: testAttachmentProperties,
 // 	}
-// 	watcher := setupWatcher(ctx, nil, mockStateManager, eventChannel)
 
-// 	err := watcher.addEBSAttachmentToState(ebsAttachment)
+// 	var wg sync.WaitGroup
+// 	wg.Add(1)
+// 	mockDiscoveryClient.EXPECT().ConfirmEBSVolumeIsAttached(deviceName, volumeID).
+// 		Do(func(deviceName, volumeID string) {
+// 			wg.Done()
+// 		}).
+// 		Return(fmt.Errorf("%w; expected EBS volume %s but found %s", apiebs.ErrInvalidVolumeID, volumeID, "vol-321")).
+// 		MinTimes(1)
+
+// 	err := watcher.HandleResourceAttachment(ebsAttachment)
 // 	assert.NoError(t, err)
-// 	assert.Len(t, taskEngineState.(*dockerstate.DockerTaskEngineState).GetAllEBSAttachments(), 1)
 
-// 	for {
-// 		time.Sleep(time.Millisecond * 1000)
-// 		assert.Len(t, taskEngineState.(*dockerstate.DockerTaskEngineState).GetAllEBSAttachments(), 0)
-// 		break
-// 	}
-// }
+// 	pendingEBS := watcher.agentState.GetAllPendingEBSAttachmentWithKey()
+// 	foundVolumes := apiebs.ScanEBSVolumes(pendingEBS, watcher.discoveryClient)
 
-// func TestHandleResourceAttachment(t *testing.T) {
+// 	assert.Empty(t, foundVolumes)
+// 	ebsAttachment, ok := taskEngineState.(*dockerstate.DockerTaskEngineState).GetEBSByVolumeId(volumeID)
+// 	assert.True(t, ok)
+// 	assert.ErrorIs(t, ebsAttachment.GetError(), apiebs.ErrInvalidVolumeID)
 
 // }

@@ -190,7 +190,7 @@ func TestAddPendingEBSAttachment(t *testing.T) {
 	state.AddEBSAttachment(pendingAttachment)
 	state.AddEBSAttachment(sentAttachment)
 	assert.Len(t, state.(*DockerTaskEngineState).GetAllPendingEBSAttachments(), 1)
-	assert.Len(t, state.(*DockerTaskEngineState).GetAllPendingEBSAttachmentsWithKey(), 1)
+	assert.Len(t, state.(*DockerTaskEngineState).GetAllPendingEBSAttachmentWithKey(), 1)
 	assert.Len(t, state.(*DockerTaskEngineState).GetAllEBSAttachments(), 2)
 
 	_, ok := state.(*DockerTaskEngineState).GetAllPendingEBSAttachmentWithKey()["vol-123"]
