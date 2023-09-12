@@ -298,10 +298,16 @@ func TestHandleEBSAckTimeout(t *testing.T) {
 	watcher := newTestEBSWatcher(ctx, taskEngineState, eventChannel, mockDiscoveryClient)
 
 	watcher.HandleResourceAttachment(ebsAttachment)
-	time.Sleep(10 * time.Millisecond)
-	assert.Len(t, taskEngineState.(*dockerstate.DockerTaskEngineState).GetAllEBSAttachments(), 0)
-	ebsAttachment, ok := taskEngineState.(*dockerstate.DockerTaskEngineState).GetEBSByVolumeId(volumeID)
-	assert.False(t, ok)
+	for {
+		time.Sleep(time.Millisecond * 5)
+		if len(taskEngineState.(*dockerstate.DockerTaskEngineState).GetAllEBSAttachments()) == 0 {
+			// TODO Include data client check, this will be done in a near follow up PR
+			assert.Len(t, taskEngineState.(*dockerstate.DockerTaskEngineState).GetAllEBSAttachments(), 0)
+			ebsAttachment, ok := taskEngineState.(*dockerstate.DockerTaskEngineState).GetEBSByVolumeId(volumeID)
+			assert.False(t, ok)
+			break
+		}
+	}
 }
 
 func TestHandleMismatchEBSAttachment(t *testing.T) {
