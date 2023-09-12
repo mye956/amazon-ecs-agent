@@ -28,12 +28,12 @@ import (
 )
 
 type LsblkOutput struct {
-	BlockDevies []BD `json:"blockdevices"`
+	BlockDevies []BlockDevice `json:"blockdevices"`
 }
-type BD struct {
-	Name     string `json:"name"`
-	Serial   string `json:"serial"`
-	Children []*BD  `json:"children,omitempty"`
+type BlockDevice struct {
+	Name     string         `json:"name"`
+	Serial   string         `json:"serial"`
+	Children []*BlockDevice `json:"children,omitempty"`
 }
 
 // type BDChild struct {

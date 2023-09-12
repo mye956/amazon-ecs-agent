@@ -10,10 +10,9 @@ import (
 )
 
 const (
-	ebsnvmeIDTimeoutDuration = 5 * time.Second
+	ebsnvmeIDTimeoutDuration = 300 * time.Second
 	ebsResourceKeyPrefix     = "ebs-volume:"
 	ScanPeriod               = 500 * time.Millisecond
-	// ScanPeriod               = 300 * time.Second
 )
 
 var (
