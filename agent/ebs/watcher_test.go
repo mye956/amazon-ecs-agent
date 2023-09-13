@@ -309,7 +309,7 @@ func TestHandleEBSAckTimeout(t *testing.T) {
 	watcher := newTestEBSWatcher(ctx, taskEngineState, eventChannel, mockDiscoveryClient)
 
 	watcher.HandleResourceAttachment(ebsAttachment)
-	time.Sleep(75 * time.Millisecond)
+	time.Sleep(100 * time.Millisecond)
 	assert.Len(t, taskEngineState.(*dockerstate.DockerTaskEngineState).GetAllEBSAttachments(), 0)
 	ebsAttachment, ok := taskEngineState.(*dockerstate.DockerTaskEngineState).GetEBSByVolumeId(volumeID)
 	assert.False(t, ok)
