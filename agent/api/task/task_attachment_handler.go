@@ -17,6 +17,7 @@ import (
 	"fmt"
 
 	"github.com/aws/amazon-ecs-agent/agent/api/serviceconnect"
+	"github.com/aws/amazon-ecs-agent/agent/api/ebs"
 	"github.com/aws/amazon-ecs-agent/ecs-agent/acs/model/ecsacs"
 	"github.com/aws/amazon-ecs-agent/ecs-agent/logger"
 	"github.com/aws/aws-sdk-go/aws"
@@ -33,10 +34,15 @@ type ServiceConnectAttachmentHandler struct {
 	scConfig *serviceconnect.Config
 }
 
+type EBSVolumeAttachmentHandler struct {
+	ebsVolumes []*ebs.EBSVolumeConfig
+}
+
 // NewAttachmentHandlers returns all type of handlers to handle different types of attachment.
 func NewAttachmentHandlers() map[string]AttachmentHandler {
 	attachmentHandlers := make(map[string]AttachmentHandler)
 	attachmentHandlers[serviceConnectAttachmentType] = &ServiceConnectAttachmentHandler{}
+	attachmentHandlers[ebsAttachmentType] = &EBSVolumeAttachmentHandler{}
 	return attachmentHandlers
 }
 
@@ -72,14 +78,29 @@ func (scAttachment *ServiceConnectAttachmentHandler) validateAttachment(acsTask 
 	return serviceconnect.ValidateServiceConnectConfig(config, taskContainers, networkMode, ipv6Enabled)
 }
 
+func (ebsAttachment *EBSVolumeAttachmentHandler) parseAttachment(acsAttachment *ecsacs.Attachment) error {
+	// TODO: parse the attachment
+	ebsAttachmentConfig, err := ebs.ParseEBSAttachment(acsAttachment)
+	ebsAttachment.ebsVolumes = append(ebsAttachment.ebsVolumes, ebsAttachmentConfig)
+	return err
+}
+
+func (ebsAttachment *EBSVolumeAttachmentHandler) validateAttachment(acsTask *ecsacs.Task, task *Task) error {
+	// 
+	return nil
+}
+
 // handleTaskAttachments parses and validates attachments based on attachment type.
 func handleTaskAttachments(acsTask *ecsacs.Task, task *Task) error {
 	if acsTask.Attachments != nil {
 		var serviceConnectAttachment *ecsacs.Attachment
+		var ebsVolumeAttachments []*ecsacs.Attachment
 		for _, attachment := range acsTask.Attachments {
 			switch aws.StringValue(attachment.AttachmentType) {
 			case serviceConnectAttachmentType:
 				serviceConnectAttachment = attachment
+			case ebsAttachmentType :
+				ebsVolumeAttachments = append(ebsVolumeAttachments, attachment)
 			default:
 				logger.Debug("Received an attachment type", logger.Fields{
 					"attachmentType": attachment.AttachmentType,
@@ -104,6 +125,24 @@ func handleTaskAttachments(acsTask *ecsacs.Task, task *Task) error {
 			}
 			task.ServiceConnectConfig = scHandler.(*ServiceConnectAttachmentHandler).scConfig
 		}
+		
+		if len(ebsVolumeAttachments) > 0 {
+			ebsHandler, err := getHandlerByType(ebsAttachmentType, handlers)
+			if err != nil {
+				return err
+			}
+			for _, attachment := range ebsVolumeAttachments {
+				if err := ebsHandler.(*EBSVolumeAttachmentHandler).parseAttachment(attachment); err != nil {
+					return fmt.Errorf("error parsing ebs information from ebs attachment: %w", err)
+				}
+
+				if err := ebsHandler.(*EBSVolumeAttachmentHandler).validateAttachment(acsTask, task); err != nil {
+					return fmt.Errorf("ebs volume validation failed: %w", err)
+				}
+			}
+			task.EBSVolumeConfigs = ebsHandler.(*EBSVolumeAttachmentHandler).ebsVolumes
+		}
+
 	}
 	return nil
 }

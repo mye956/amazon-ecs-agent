@@ -53,6 +53,8 @@ import (
 	"github.com/aws/amazon-ecs-agent/ecs-agent/utils/arn"
 	"github.com/aws/amazon-ecs-agent/ecs-agent/utils/ttime"
 
+	"github.com/aws/amazon-ecs-agent/agent/api/ebs"
+
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/private/protocol/json/jsonutil"
 	"github.com/docker/docker/api/types"
@@ -159,6 +161,8 @@ const (
 	serviceConnectContainerMappingEnvVar    = "APPNET_CONTAINER_IP_MAPPING"
 	// ServiceConnectAttachmentType specifies attachment type for service connect
 	serviceConnectAttachmentType = "serviceconnectdetail"
+
+	ebsAttachmentType = "amazonebs"
 )
 
 // TaskOverrides are the overrides applied to a task
@@ -296,6 +300,8 @@ type Task struct {
 	NetworkMode string `json:"NetworkMode,omitempty"`
 
 	IsInternal bool `json:"IsInternal,omitempty"`
+
+	EBSVolumeConfigs []*ebs.EBSVolumeConfig
 }
 
 // TaskFromACS translates ecsacs.Task to apitask.Task by first marshaling the received
