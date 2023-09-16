@@ -4,9 +4,7 @@ import (
 	"fmt"
 
 	"github.com/aws/amazon-ecs-agent/ecs-agent/acs/model/ecsacs"
-	"github.com/sirupsen/logrus"
-
-	log "github.com/aws/amazon-ecs-agent/ecs-agent/logger"
+	"github.com/aws/amazon-ecs-agent/ecs-agent/logger"
 
 	"github.com/aws/aws-sdk-go/aws"
 )
@@ -35,11 +33,9 @@ func ParseEBSAttachment(ebsAttachment *ecsacs.Attachment) (*EBSVolumeConfig, err
 		case FileSystem:
 			ebsVolumeConfig.FileSystem = aws.StringValue(property.Value)
 		default:
-			log.WithFields(logrus.Fields{
-				"PropertyName":  aws.StringValue(property.Name),
-				"PropertyValue": aws.StringValue(property.Value),
-			}).Warn("Unknown property received from ACS")
-
+			logger.Warn("Received an unrecognized attachment property", logger.Fields{
+				"attachmentProperty": property.String(),
+			})
 		}
 	}
 	return ebsVolumeConfig, nil

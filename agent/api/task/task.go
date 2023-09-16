@@ -162,7 +162,7 @@ const (
 	// ServiceConnectAttachmentType specifies attachment type for service connect
 	serviceConnectAttachmentType = "serviceconnectdetail"
 
-	ebsAttachmentType = "amazonebs"
+	ebsAttachmentType = "AmazonElasticBlockStorage"
 )
 
 // TaskOverrides are the overrides applied to a task
@@ -3440,7 +3440,7 @@ func (task *Task) IsServiceConnectEnabled() bool {
 // Is EBS Task Attach enabled returns true if this task has EBS volume configuration in its ACS payload.
 // TODO as more daemons come online, we'll want a generic handler these bool checks and payload handling
 func (task *Task) IsEBSTaskAttachEnabled() bool {
-	return false
+	return len(task.EBSVolumeConfigs) > 0
 }
 
 func (task *Task) IsServiceConnectBridgeModeApplicationContainer(container *apicontainer.Container) bool {
