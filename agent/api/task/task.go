@@ -350,6 +350,10 @@ func (task *Task) initializeVolumes(cfg *config.Config, dockerClient dockerapi.D
 	if err != nil {
 		return apierrors.NewResourceInitError(task.Arn, err)
 	}
+	err = task.initializeEBSVolumes(cfg, dockerClient, ctx)
+	if err != nil {
+		return apierrors.NewResourceInitError(task.Arn, err)
+	}
 	return nil
 }
 
@@ -821,6 +825,33 @@ func (task *Task) addEFSVolumes(
 	vol.Volume = &volumeResource.VolumeConfig
 	task.AddResource(resourcetype.DockerVolumeKey, volumeResource)
 	task.updateContainerVolumeDependency(vol.Name)
+	return nil
+}
+
+func (task *Task) initializeEBSVolumes(cfg *config.Config, dockerClient dockerapi.DockerClient, ctx context.Context) error {
+	// client := csiclient.NewCSIClient("/var/run/ecs/ebs-csi-driver/csi-driver.sock")
+	// publishContext := map[string]string{"devicePath": "/dev/nvme1n1"}
+	// mockSecrets := make(map[string]string)
+	// mockVolumeContext := make(map[string]string)
+	// mockMountOptions := []string{}
+	// mockFsGroup, _ := strconv.ParseInt("123456", 10, 8)
+
+	// err := client.NodeStageVolume(ctx,
+	// 	"vol-03bde5a27631ad16b",
+	// 	publishContext,
+	// 	"/testebs",
+	// 	"xfs",
+	// 	v1.ReadWriteMany,
+	// 	mockSecrets,
+	// 	mockVolumeContext,
+	// 	mockMountOptions,
+	// 	&mockFsGroup)
+
+	// if err != nil {
+	// 	logger.Error("Failed to initialize EBS volume", logger.Fields{
+	// 		field.Error: err,
+	// 	})
+	// }
 	return nil
 }
 
