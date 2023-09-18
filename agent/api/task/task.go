@@ -53,8 +53,6 @@ import (
 	"github.com/aws/amazon-ecs-agent/ecs-agent/utils/arn"
 	"github.com/aws/amazon-ecs-agent/ecs-agent/utils/ttime"
 
-	"github.com/aws/amazon-ecs-agent/agent/api/ebs"
-
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/private/protocol/json/jsonutil"
 	"github.com/docker/docker/api/types"
@@ -301,7 +299,7 @@ type Task struct {
 
 	IsInternal bool `json:"IsInternal,omitempty"`
 
-	EBSVolumeConfigs []*ebs.EBSVolumeConfig
+	EBSVolumeConfigs []*taskresourcevolume.EBSTaskVolumeConfig
 }
 
 // TaskFromACS translates ecsacs.Task to apitask.Task by first marshaling the received
@@ -829,6 +827,20 @@ func (task *Task) addEFSVolumes(
 }
 
 func (task *Task) initializeEBSVolumes(cfg *config.Config, dockerClient dockerapi.DockerClient, ctx context.Context) error {
+	for _, ebsVolumeConfig := range task.EBSVolumeConfigs {
+		taskVolume := TaskVolume{
+			Name:   ebsVolumeConfig.VolumeName,
+			Type:   ebsAttachmentType,
+			Volume: ebsVolumeConfig,
+		}
+		task.Volumes = append(task.Volumes, taskVolume)
+	}
+	if task.IsEBSTaskAttachEnabled() {
+		logger.Info("Task is EBS task attach enabled")
+	} else {
+		logger.Info("Task is not EBS task attach enabled")
+	}
+
 	// client := csiclient.NewCSIClient("/var/run/ecs/ebs-csi-driver/csi-driver.sock")
 	// publishContext := map[string]string{"devicePath": "/dev/nvme1n1"}
 	// mockSecrets := make(map[string]string)

@@ -17,9 +17,10 @@ import (
 	"fmt"
 
 	"github.com/aws/amazon-ecs-agent/agent/api/serviceconnect"
-	"github.com/aws/amazon-ecs-agent/agent/api/ebs"
+	taskresourcevolume "github.com/aws/amazon-ecs-agent/agent/taskresource/volume"
 	"github.com/aws/amazon-ecs-agent/ecs-agent/acs/model/ecsacs"
 	"github.com/aws/amazon-ecs-agent/ecs-agent/logger"
+
 	"github.com/aws/aws-sdk-go/aws"
 )
 
@@ -35,14 +36,14 @@ type ServiceConnectAttachmentHandler struct {
 }
 
 type EBSVolumeAttachmentHandler struct {
-	ebsVolumes []*ebs.EBSVolumeConfig
+	ebsVolumes []*taskresourcevolume.EBSTaskVolumeConfig
 }
 
 // NewAttachmentHandlers returns all type of handlers to handle different types of attachment.
 func NewAttachmentHandlers() map[string]AttachmentHandler {
 	attachmentHandlers := make(map[string]AttachmentHandler)
 	attachmentHandlers[serviceConnectAttachmentType] = &ServiceConnectAttachmentHandler{}
-	attachmentHandlers[ebsAttachmentType] = &EBSVolumeAttachmentHandler{}
+	// attachmentHandlers[ebsAttachmentType] = &EBSVolumeAttachmentHandler{}
 	return attachmentHandlers
 }
 
@@ -78,17 +79,17 @@ func (scAttachment *ServiceConnectAttachmentHandler) validateAttachment(acsTask 
 	return serviceconnect.ValidateServiceConnectConfig(config, taskContainers, networkMode, ipv6Enabled)
 }
 
-func (ebsAttachment *EBSVolumeAttachmentHandler) parseAttachment(acsAttachment *ecsacs.Attachment) error {
-	// TODO: parse the attachment
-	ebsAttachmentConfig, err := ebs.ParseEBSAttachment(acsAttachment)
-	ebsAttachment.ebsVolumes = append(ebsAttachment.ebsVolumes, ebsAttachmentConfig)
-	return err
-}
+// func (ebsAttachment *EBSVolumeAttachmentHandler) parseAttachment(acsAttachment *ecsacs.Attachment) error {
+// 	// TODO: parse the attachment
+// 	ebsAttachmentConfig, err := ebs.ParseEBSAttachment(acsAttachment)
+// 	ebsAttachment.ebsVolumes = append(ebsAttachment.ebsVolumes, ebsAttachmentConfig)
+// 	return err
+// }
 
-func (ebsAttachment *EBSVolumeAttachmentHandler) validateAttachment(acsTask *ecsacs.Task, task *Task) error {
-	// 
-	return nil
-}
+// func (ebsAttachment *EBSVolumeAttachmentHandler) validateAttachment(acsTask *ecsacs.Task, task *Task) error {
+// 	//
+// 	return nil
+// }
 
 // handleTaskAttachments parses and validates attachments based on attachment type.
 func handleTaskAttachments(acsTask *ecsacs.Task, task *Task) error {
@@ -99,7 +100,7 @@ func handleTaskAttachments(acsTask *ecsacs.Task, task *Task) error {
 			switch aws.StringValue(attachment.AttachmentType) {
 			case serviceConnectAttachmentType:
 				serviceConnectAttachment = attachment
-			case ebsAttachmentType :
+			case ebsAttachmentType:
 				ebsVolumeAttachments = append(ebsVolumeAttachments, attachment)
 			default:
 				logger.Debug("Received an attachment type", logger.Fields{
@@ -125,22 +126,27 @@ func handleTaskAttachments(acsTask *ecsacs.Task, task *Task) error {
 			}
 			task.ServiceConnectConfig = scHandler.(*ServiceConnectAttachmentHandler).scConfig
 		}
-		
-		if len(ebsVolumeAttachments) > 0 {
-			ebsHandler, err := getHandlerByType(ebsAttachmentType, handlers)
-			if err != nil {
-				return err
-			}
-			for _, attachment := range ebsVolumeAttachments {
-				if err := ebsHandler.(*EBSVolumeAttachmentHandler).parseAttachment(attachment); err != nil {
-					return fmt.Errorf("error parsing ebs information from ebs attachment: %w", err)
-				}
 
-				if err := ebsHandler.(*EBSVolumeAttachmentHandler).validateAttachment(acsTask, task); err != nil {
-					return fmt.Errorf("ebs volume validation failed: %w", err)
+		if len(ebsVolumeAttachments) > 0 {
+			// ebsHandler, err := getHandlerByType(ebsAttachmentType, handlers)
+			// if err != nil {
+			// 	return err
+			// }
+			var ebsVolumeConfigs []*taskresourcevolume.EBSTaskVolumeConfig
+			for _, attachment := range ebsVolumeAttachments {
+				ebs, err := taskresourcevolume.ParseEBSTaskVolumeAttachment(attachment)
+				if err != nil {
+					continue
 				}
+				// taskVolume := TaskVolume {
+				// 	Name: ebsVolume.VolumeName,
+				// 	Type: ebsAttachmentType,
+				// 	Volume: ebsVolume,
+				// }
+				ebsVolumeConfigs = append(ebsVolumeConfigs, ebs)
+				// task.Volumes = append(task.Volumes, taskVolume)
 			}
-			task.EBSVolumeConfigs = ebsHandler.(*EBSVolumeAttachmentHandler).ebsVolumes
+			task.EBSVolumeConfigs = ebsVolumeConfigs
 		}
 
 	}
