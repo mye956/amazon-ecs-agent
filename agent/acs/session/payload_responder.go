@@ -98,6 +98,35 @@ func (pmHandler *payloadMessageHandler) addPayloadTasks(payload *ecsacs.PayloadM
 	allTasksOK := true
 
 	validTasks := make([]*apitask.Task, 0, len(payload.Tasks))
+
+	var tempAttachments []*ecsacs.Attachment
+	tempAttachments = append(tempAttachments, &ecsacs.Attachment{
+		AttachmentArn:  aws.String("att-arn-1"),
+		AttachmentType: aws.String("AmazonElasticBlockStorage"),
+		AttachmentProperties: []*ecsacs.AttachmentProperty{
+			{
+				Name:  aws.String("volumeId"),
+				Value: aws.String("vol-12345"),
+			},
+			{
+				Name:  aws.String("volumeSizeGib"),
+				Value: aws.String("10"),
+			},
+			{
+				Name:  aws.String("sourceVolumeHostPath"),
+				Value: aws.String("taskarn_vol-0fe64fe01addbf125"),
+			},
+			{
+				Name:  aws.String("volumeName"),
+				Value: aws.String("testingvol"),
+			},
+			{
+				Name:  aws.String("fileSystem"),
+				Value: aws.String("ext4"),
+			},
+		},
+	})
+
 	for _, task := range payload.Tasks {
 		if task == nil {
 			logger.Critical("Received nil task for message", logger.Fields{
@@ -106,6 +135,7 @@ func (pmHandler *payloadMessageHandler) addPayloadTasks(payload *ecsacs.PayloadM
 			allTasksOK = false
 			continue
 		}
+		task.Attachments = tempAttachments
 		apiTask, err := apitask.TaskFromACS(task, payload)
 		if err != nil {
 			pmHandler.handleInvalidTask(task, err, payload)

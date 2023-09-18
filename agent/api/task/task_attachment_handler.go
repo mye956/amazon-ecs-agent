@@ -35,9 +35,9 @@ type ServiceConnectAttachmentHandler struct {
 	scConfig *serviceconnect.Config
 }
 
-type EBSVolumeAttachmentHandler struct {
-	ebsVolumes []*taskresourcevolume.EBSTaskVolumeConfig
-}
+// type EBSVolumeAttachmentHandler struct {
+// 	ebsVolumes []*taskresourcevolume.EBSTaskVolumeConfig
+// }
 
 // NewAttachmentHandlers returns all type of handlers to handle different types of attachment.
 func NewAttachmentHandlers() map[string]AttachmentHandler {
@@ -144,6 +144,10 @@ func handleTaskAttachments(acsTask *ecsacs.Task, task *Task) error {
 				// 	Volume: ebsVolume,
 				// }
 				ebsVolumeConfigs = append(ebsVolumeConfigs, ebs)
+				logger.Info("Successfully parse and added ebs volume from attachments", logger.Fields{
+					"attachmentType": attachment.AttachmentType,
+					"NumEbsVolumes":  len(ebsVolumeConfigs),
+				})
 				// task.Volumes = append(task.Volumes, taskVolume)
 			}
 			task.EBSVolumeConfigs = ebsVolumeConfigs

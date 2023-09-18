@@ -58,6 +58,6 @@ func ParseEBSTaskVolumeAttachment(ebsAttachment *ecsacs.Attachment) (*EBSTaskVol
 	return ebsTaskVolumeConfig, nil
 }
 
-func (ebs *EBSTaskVolumeConfig) Source () string {
+func (ebs *EBSTaskVolumeConfig) Source() string {
 	return ebs.SourceVolumeHostPath
 }
