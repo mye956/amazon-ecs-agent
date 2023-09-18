@@ -27,7 +27,7 @@ type EBSTaskVolumeConfig struct {
 }
 
 func ParseEBSTaskVolumeAttachment(ebsAttachment *ecsacs.Attachment) (*EBSTaskVolumeConfig, error) {
-	var ebsTaskVolumeConfig *EBSTaskVolumeConfig
+	ebsTaskVolumeConfig := &EBSTaskVolumeConfig{}
 	for _, property := range ebsAttachment.AttachmentProperties {
 		if property == nil {
 			return nil, fmt.Errorf("failed to parse task ebs attachment, encountered nil property")
@@ -36,6 +36,7 @@ func ParseEBSTaskVolumeAttachment(ebsAttachment *ecsacs.Attachment) (*EBSTaskVol
 		if property.Value == nil {
 			return nil, fmt.Errorf("failed to parse task ebs attachment, encountered nil property.value")
 		}
+		logger.Debug(fmt.Sprintf("Property value: %s", aws.StringValue(property.Value)))
 		switch aws.StringValue(property.Name) {
 		case VolumeId:
 			ebsTaskVolumeConfig.VolumeId = aws.StringValue(property.Value)

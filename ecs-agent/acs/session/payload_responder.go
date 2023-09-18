@@ -66,7 +66,7 @@ func (r *payloadResponder) handlePayloadMessage(message *ecsacs.PayloadMessage) 
 		})
 		return
 	}
-
+	logger.Debug("Validated Payload message")
 	// Handle payload message.
 	err := r.payloadMessageHandler.ProcessMessage(message, r.ackFunc)
 	if err != nil {
@@ -75,6 +75,7 @@ func (r *payloadResponder) handlePayloadMessage(message *ecsacs.PayloadMessage) 
 			field.Error:     err,
 		})
 	}
+	logger.Debug("Processed Payload message")
 }
 
 // ackFunc sends ACKs of the payload message and of the credentials associated with the tasks contained in the payload
