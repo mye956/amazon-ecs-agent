@@ -159,6 +159,8 @@ const (
 	serviceConnectContainerMappingEnvVar    = "APPNET_CONTAINER_IP_MAPPING"
 	// ServiceConnectAttachmentType specifies attachment type for service connect
 	serviceConnectAttachmentType = "serviceconnectdetail"
+
+	EBSVolumeType = "AmazonElasticBlockStorage"
 )
 
 // TaskOverrides are the overrides applied to a task
