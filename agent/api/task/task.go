@@ -859,19 +859,19 @@ func (task *Task) initializeEBSVolumes(cfg *config.Config, dockerClient dockerap
 		logger.Info("Task is not EBS task attach enabled")
 	}
 
-	for i, vol := range task.Volumes {
-		if vol.Type != EBSVolumeType {
-			continue
-		}
-		ebsVol, ok := vol.Volume.(*taskresourcevolume.EBSTaskVolumeConfig)
-		if !ok {
-			return errors.New("task volume: volume configuration does not match the type 'ebs'")
-		}
-		err := task.addEBSVolume(ctx, dockerClient, &task.Volumes[i], ebsVol)
-		if err != nil {
-			return err
-		}
-	}
+	// for i, vol := range task.Volumes {
+	// 	if vol.Type != EBSVolumeType {
+	// 		continue
+	// 	}
+	// 	ebsVol, ok := vol.Volume.(*taskresourcevolume.EBSTaskVolumeConfig)
+	// 	if !ok {
+	// 		return errors.New("task volume: volume configuration does not match the type 'ebs'")
+	// 	}
+	// 	err := task.addEBSVolume(ctx, dockerClient, &task.Volumes[i], ebsVol)
+	// 	if err != nil {
+	// 		return err
+	// 	}
+	// }
 
 	// client := csiclient.NewCSIClient("/var/run/ecs/ebs-csi-driver/csi-driver.sock")
 	// publishContext := map[string]string{"devicePath": "/dev/nvme1n1"}
