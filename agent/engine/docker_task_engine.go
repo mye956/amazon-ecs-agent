@@ -1198,6 +1198,7 @@ func (engine *DockerTaskEngine) AddTask(task *apitask.Task) {
 
 	existingTask, exists := engine.state.TaskByArn(task.Arn)
 	if !exists {
+		logger.Info("New task!")
 		// This will update the container desired status
 		task.UpdateDesiredStatus()
 
@@ -1206,6 +1207,7 @@ func (engine *DockerTaskEngine) AddTask(task *apitask.Task) {
 
 		engine.state.AddTask(task)
 		if dependencygraph.ValidDependencies(task, engine.cfg) {
+			logger.Info("Task has valid dependencies, looking to start...")
 			engine.startTask(task)
 		} else {
 			logger.Error("Task has circular dependencies; unable to start", logger.Fields{

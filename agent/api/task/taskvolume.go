@@ -46,6 +46,7 @@ type TaskVolume struct {
 // unmarshals it into the appropriate HostVolume fulfilling interfaces
 func (tv *TaskVolume) UnmarshalJSON(b []byte) error {
 	// Format: {name: volumeName, host: HostVolume, dockerVolumeConfiguration {}}
+	seelog.Debugf(string(b[:]))
 	intermediate := make(map[string]json.RawMessage)
 	if err := json.Unmarshal(b, &intermediate); err != nil {
 		return err
@@ -66,6 +67,8 @@ func (tv *TaskVolume) UnmarshalJSON(b []byte) error {
 	if err := json.Unmarshal(volumeType, &tv.Type); err != nil {
 		return err
 	}
+
+	seelog.Debug("unmarshling JSON for task volume...")
 
 	switch tv.Type {
 	case HostVolumeType:
@@ -93,6 +96,8 @@ func (tv *TaskVolume) MarshalJSON() ([]byte, error) {
 
 	result["name"] = tv.Name
 	result["type"] = tv.Type
+
+	seelog.Debug("marshaling JSON for task volume")
 
 	switch tv.Type {
 	case DockerVolumeType:

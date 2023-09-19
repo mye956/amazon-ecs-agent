@@ -306,6 +306,7 @@ type Task struct {
 // ecsacs.Task to json and unmarshaling it as apitask.Task
 func TaskFromACS(acsTask *ecsacs.Task, envelope *ecsacs.PayloadMessage) (*Task, error) {
 	data, err := jsonutil.BuildJSON(acsTask)
+	logger.Info(fmt.Sprint(string(data[:])))
 	if err != nil {
 		return nil, err
 	}
@@ -820,6 +821,13 @@ func (task *Task) addEFSVolumes(
 		return err
 	}
 
+	data, err := json.Marshal(volumeResource)
+	if err == nil {
+		logger.Debug(fmt.Sprintf("EFS Volume resource: %s", string(data[:])))
+	} else {
+		logger.Debug("unable to unmarshal volume resource")
+	}
+
 	vol.Volume = &volumeResource.VolumeConfig
 	task.AddResource(resourcetype.DockerVolumeKey, volumeResource)
 	task.updateContainerVolumeDependency(vol.Name)
@@ -891,7 +899,7 @@ func (task *Task) addEBSVolume(ctx context.Context, dockerClient dockerapi.Docke
 		task.volumeName(vol.Name),
 		"task",
 		false,
-		"",
+		"amazon-ecs-volume-plugin",
 		map[string]string{},
 		map[string]string{},
 		dockerClient,
@@ -899,6 +907,13 @@ func (task *Task) addEBSVolume(ctx context.Context, dockerClient dockerapi.Docke
 
 	if err != nil {
 		return err
+	}
+
+	data, err := json.Marshal(volumeResource)
+	if err == nil {
+		logger.Debug(fmt.Sprintf("EBS Volume resource: %s", string(data[:])))
+	} else {
+		logger.Debug("unable to unmarshal volume resource")
 	}
 
 	vol.Volume = &volumeResource.VolumeConfig
