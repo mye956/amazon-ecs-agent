@@ -1018,7 +1018,9 @@ func (task *Task) updateContainerVolumeDependency(name string) {
 	// Find all the container that depends on the volume
 	for _, container := range task.Containers {
 		for _, mountpoint := range container.MountPoints {
+			logger.Info(fmt.Sprintf("mount point source volume is: %s", mountpoint.SourceVolume))
 			if mountpoint.SourceVolume == name {
+				logger.Info(fmt.Sprintf("Updating container volume dependency with source volume: %s", name))
 				container.BuildResourceDependency(name,
 					resourcestatus.ResourceCreated,
 					apicontainerstatus.ContainerPulled)
@@ -1978,6 +1980,7 @@ func (task *Task) dockerHostConfig(container *apicontainer.Container, dockerCont
 		if err != nil {
 			return nil, &apierrors.HostConfigError{Msg: "Unable to decode given host config: " + err.Error()}
 		}
+		logger.Info(fmt.Sprintf("Host binds for container: %v", hostConfig))
 	}
 
 	if err := task.platformHostConfigOverride(hostConfig); err != nil {
