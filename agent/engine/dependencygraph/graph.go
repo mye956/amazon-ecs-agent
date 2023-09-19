@@ -147,6 +147,7 @@ func DependenciesAreResolved(target *apicontainer.Container,
 	resources []taskresource.TaskResource,
 	cfg *config.Config) (*apicontainer.DependsOn, DependencyError) {
 	if !executionCredentialsResolved(target, id, manager) {
+		log.Debug("can't resolve creds")
 		return nil, CredentialsNotResolvedErr
 	}
 
@@ -335,9 +336,11 @@ func verifyContainerDependenciesResolved(target *apicontainer.Container, existin
 	for _, containerDependency := range containerDependencies {
 		dep, exists := existingContainers[containerDependency.ContainerName]
 		if !exists {
+			log.Debug("container does not exists")
 			return false
 		}
 		if dep.GetKnownStatus() < containerDependency.SatisfiedStatus {
+			log.Debugf("container known status: %v", dep.GetKnownStatus())
 			return false
 		}
 	}

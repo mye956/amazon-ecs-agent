@@ -138,13 +138,14 @@ func handleTaskAttachments(acsTask *ecsacs.Task, task *Task) error {
 				if err != nil {
 					continue
 				}
-				taskVolume := TaskVolume{
-					Name:   ebs.VolumeName,
-					Type:   ebsAttachmentType,
-					Volume: ebs,
-				}
-				// ebsVolumeConfigs = append(ebsVolumeConfigs, ebs)
-				task.Volumes = append(task.Volumes, taskVolume)
+				// taskVolume := TaskVolume{
+				// 	Name:   ebs.VolumeName,
+				// 	Type:   ebsAttachmentType,
+				// 	Volume: ebs,
+				// }
+
+				// task.Volumes = append(task.Volumes, taskVolume)
+				ebsVolumeConfigs = append(ebsVolumeConfigs, ebs)
 				logger.Info("Successfully parse and added ebs volume from attachments", logger.Fields{
 					"attachmentType": attachment.AttachmentType,
 					"NumEbsVolumes":  len(ebsVolumeConfigs),
