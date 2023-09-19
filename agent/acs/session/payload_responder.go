@@ -106,7 +106,7 @@ func (pmHandler *payloadMessageHandler) addPayloadTasks(payload *ecsacs.PayloadM
 		AttachmentProperties: []*ecsacs.AttachmentProperty{
 			{
 				Name:  aws.String("volumeId"),
-				Value: aws.String("vol-12345"),
+				Value: aws.String("vol-0924e2cdb96bf966d"),
 			},
 			{
 				Name:  aws.String("volumeSizeGib"),
@@ -114,11 +114,11 @@ func (pmHandler *payloadMessageHandler) addPayloadTasks(payload *ecsacs.PayloadM
 			},
 			{
 				Name:  aws.String("sourceVolumeHostPath"),
-				Value: aws.String("taskarn_vol-0fe64fe01addbf125"),
+				Value: aws.String("taskarn_vol-0924e2cdb96bf966d"),
 			},
 			{
 				Name:  aws.String("volumeName"),
-				Value: aws.String("testingvol"),
+				Value: aws.String("testvolume"),
 			},
 			{
 				Name:  aws.String("fileSystem"),
@@ -126,7 +126,11 @@ func (pmHandler *payloadMessageHandler) addPayloadTasks(payload *ecsacs.PayloadM
 			},
 		},
 	})
-
+	// var mountPoints []ecsacs.MountPoint
+	// mountPoints = append(mountPoints, ecsacs.MountPoint{
+	// 	SourceVolume:  aws.String("testvolume"),
+	// 	ContainerPath: aws.String("/path/to/mount_volume/webapp"),
+	// })
 	for _, task := range payload.Tasks {
 		if task == nil {
 			logger.Critical("Received nil task for message", logger.Fields{
@@ -136,6 +140,18 @@ func (pmHandler *payloadMessageHandler) addPayloadTasks(payload *ecsacs.PayloadM
 			continue
 		}
 		task.Attachments = tempAttachments
+
+		for _, container := range task.Containers {
+			if *container.Name == "webapp" {
+				container.MountPoints = []*ecsacs.MountPoint{
+					{
+						SourceVolume:  aws.String("testvolume"),
+						ContainerPath: aws.String("/path/to/mount_volume/webapp"),
+					},
+				}
+			}
+		}
+
 		apiTask, err := apitask.TaskFromACS(task, payload)
 		if err != nil {
 			pmHandler.handleInvalidTask(task, err, payload)

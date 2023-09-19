@@ -834,11 +834,26 @@ func (task *Task) initializeEBSVolumes(cfg *config.Config, dockerClient dockerap
 			Volume: ebsVolumeConfig,
 		}
 		task.Volumes = append(task.Volumes, taskVolume)
+
 	}
 	if task.IsEBSTaskAttachEnabled() {
 		logger.Info("Task is EBS task attach enabled")
 	} else {
 		logger.Info("Task is not EBS task attach enabled")
+	}
+
+	for i, vol := range task.Volumes {
+		if vol.Type != EBSVolumeType {
+			continue
+		}
+		ebsVol, ok := vol.Volume.(*taskresourcevolume.EBSTaskVolumeConfig)
+		if !ok {
+			return errors.New("task volume: volume configuration does not match the type 'ebs'")
+		}
+		err := task.addEBSVolume(ctx, dockerClient, &task.Volumes[i], ebsVol)
+		if err != nil {
+			return err
+		}
 	}
 
 	// client := csiclient.NewCSIClient("/var/run/ecs/ebs-csi-driver/csi-driver.sock")
@@ -864,6 +879,30 @@ func (task *Task) initializeEBSVolumes(cfg *config.Config, dockerClient dockerap
 	// 		field.Error: err,
 	// 	})
 	// }
+	return nil
+}
+
+func (task *Task) addEBSVolume(ctx context.Context, dockerClient dockerapi.DockerClient, vol *TaskVolume, ebsVol *taskresourcevolume.EBSTaskVolumeConfig) error {
+
+	volumeResource, err := taskresourcevolume.NewVolumeResource(
+		ctx,
+		vol.Name,
+		EBSVolumeType,
+		task.volumeName(vol.Name),
+		"task",
+		false,
+		"",
+		map[string]string{},
+		map[string]string{},
+		dockerClient,
+	)
+
+	if err != nil {
+		return err
+	}
+
+	vol.Volume = &volumeResource.VolumeConfig
+	task.updateContainerVolumeDependency(vol.Name)
 	return nil
 }
 
