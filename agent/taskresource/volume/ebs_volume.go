@@ -24,6 +24,8 @@ type EBSTaskVolumeConfig struct {
 	SourceVolumeHostPath string `json:"sourceVolumeHostPath"`
 	DeviceName           string `json:"deviceName"`
 	FileSystem           string `json:"fileSystem"`
+	// DockerVolumeName is internal docker name for this volume.
+	DockerVolumeName string `json:"dockerVolumeName"`
 }
 
 func ParseEBSTaskVolumeAttachment(ebsAttachment *ecsacs.Attachment) (*EBSTaskVolumeConfig, error) {
@@ -59,6 +61,6 @@ func ParseEBSTaskVolumeAttachment(ebsAttachment *ecsacs.Attachment) (*EBSTaskVol
 	return ebsTaskVolumeConfig, nil
 }
 
-func (ebs *EBSTaskVolumeConfig) Source() string {
-	return ebs.SourceVolumeHostPath
-}
+// func (ebs *EBSTaskVolumeConfig) Source() string {
+// 	return ebs.SourceVolumeHostPath
+// }

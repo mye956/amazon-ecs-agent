@@ -156,6 +156,10 @@ func (cfg *DockerVolumeConfig) Source() string {
 	return cfg.DockerVolumeName
 }
 
+func (cfg *EBSTaskVolumeConfig) Source() string {
+	return cfg.DockerVolumeName
+}
+
 // GetName returns the name of the volume resource
 func (vol *VolumeResource) GetName() string {
 	return vol.Name

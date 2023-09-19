@@ -300,6 +300,8 @@ type Task struct {
 	IsInternal bool `json:"IsInternal,omitempty"`
 
 	EBSVolumeConfigs []*taskresourcevolume.EBSTaskVolumeConfig
+
+	IsEBSTaskEnabled bool
 }
 
 // TaskFromACS translates ecsacs.Task to apitask.Task by first marshaling the received
@@ -364,6 +366,13 @@ func (task *Task) PostUnmarshalTask(cfg *config.Config,
 	dockerClient dockerapi.DockerClient, ctx context.Context, options ...Option) error {
 
 	task.adjustForPlatform(cfg)
+
+	data, err := json.Marshal(task)
+	if err != nil {
+		logger.Info("Unableto marshal task")
+	} else {
+		logger.Info(fmt.Sprintf("JSON version of api task: %s", string(data[:])))
+	}
 
 	// TODO, add rudimentary plugin support and call any plugins that want to
 	// hook into this
@@ -835,15 +844,15 @@ func (task *Task) addEFSVolumes(
 }
 
 func (task *Task) initializeEBSVolumes(cfg *config.Config, dockerClient dockerapi.DockerClient, ctx context.Context) error {
-	for _, ebsVolumeConfig := range task.EBSVolumeConfigs {
-		taskVolume := TaskVolume{
-			Name:   ebsVolumeConfig.VolumeName,
-			Type:   ebsAttachmentType,
-			Volume: ebsVolumeConfig,
-		}
-		task.Volumes = append(task.Volumes, taskVolume)
+	// for _, ebsVolumeConfig := range task.EBSVolumeConfigs {
+	// 	taskVolume := TaskVolume{
+	// 		Name:   ebsVolumeConfig.VolumeName,
+	// 		Type:   ebsAttachmentType,
+	// 		Volume: ebsVolumeConfig,
+	// 	}
+	// 	task.Volumes = append(task.Volumes, taskVolume)
 
-	}
+	// }
 	if task.IsEBSTaskAttachEnabled() {
 		logger.Info("Task is EBS task attach enabled")
 	} else {
@@ -3541,7 +3550,8 @@ func (task *Task) IsServiceConnectEnabled() bool {
 // Is EBS Task Attach enabled returns true if this task has EBS volume configuration in its ACS payload.
 // TODO as more daemons come online, we'll want a generic handler these bool checks and payload handling
 func (task *Task) IsEBSTaskAttachEnabled() bool {
-	return len(task.EBSVolumeConfigs) > 0
+	// return len(task.EBSVolumeConfigs) > 0
+	return task.IsEBSTaskEnabled
 }
 
 func (task *Task) IsServiceConnectBridgeModeApplicationContainer(container *apicontainer.Container) bool {

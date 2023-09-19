@@ -1009,6 +1009,10 @@ func (mtask *managedTask) progressTask() {
 	// its impossible for containers to move forward. We will do an additional check to see if we are waiting for ACS
 	// execution credentials. If not, then we will abort the task progression.
 	if !atLeastOneTransitionStarted && !blockedByOrderingDependencies {
+		logger.Debug("Unable to progress task", logger.Fields{
+			"startedTransition":   atLeastOneTransitionStarted,
+			"blockedByDependency": blockedByOrderingDependencies,
+		})
 		if !mtask.isWaitingForACSExecutionCredentials(reasons) {
 			mtask.handleContainersUnableToTransitionState()
 		}
