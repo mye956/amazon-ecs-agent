@@ -32,6 +32,9 @@ const (
 	EFSVolumeType                  = "efs"
 	FSxWindowsFileServerVolumeType = "fsxWindowsFileServer"
 	EBSVolumeType                  = "AmazonElasticBlockStorage"
+
+	// All EBS volumes from EBS backed tasks will be mounted to its subdirectories.
+	ParentSourceVolumeHostPath = "/mnt/ecs/ebs/"
 )
 
 // TaskVolume is a definition of all the volumes available for containers to

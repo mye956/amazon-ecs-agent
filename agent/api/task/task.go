@@ -891,7 +891,6 @@ func (task *Task) initializeEBSVolumes(cfg *config.Config, dockerClient dockerap
 }
 
 func (task *Task) addEBSVolume(ctx context.Context, dockerClient dockerapi.DockerClient, vol *TaskVolume, ebsVol *taskresourcevolume.EBSTaskVolumeConfig) error {
-
 	volumeResource, err := taskresourcevolume.NewVolumeResource(
 		ctx,
 		vol.Name,
@@ -900,7 +899,9 @@ func (task *Task) addEBSVolume(ctx context.Context, dockerClient dockerapi.Docke
 		"task",
 		false,
 		"amazon-ecs-volume-plugin",
-		map[string]string{},
+		map[string]string{
+			"device": "/dev/nvme1n1:/mnt/ecs/ebs/taskarn_vol-0924e2cdb96bf966d",
+		},
 		map[string]string{},
 		dockerClient,
 	)
