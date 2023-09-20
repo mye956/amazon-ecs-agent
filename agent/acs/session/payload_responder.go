@@ -139,7 +139,7 @@ func (pmHandler *payloadMessageHandler) addPayloadTasks(payload *ecsacs.PayloadM
 		task.Attachments = tempAttachments
 
 		for _, container := range task.Containers {
-			if *container.Name == "ebs-write" {
+			if *container.Name == "webapp" {
 				container.MountPoints = []*ecsacs.MountPoint{
 					{
 						SourceVolume:  aws.String("testvolume"),
