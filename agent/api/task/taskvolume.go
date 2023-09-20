@@ -75,6 +75,8 @@ func (tv *TaskVolume) UnmarshalJSON(b []byte) error {
 		return tv.unmarshalEFSVolume(intermediate["efsVolumeConfiguration"])
 	case FSxWindowsFileServerVolumeType:
 		return tv.unmarshalFSxWindowsFileServerVolume(intermediate["fsxWindowsFileServerVolumeConfiguration"])
+	case EBSVolumeType:
+		return tv.unmarshalEBSVolume(intermediate["ebsVolumeConfiguration"])
 	default:
 		return errors.Errorf("unrecognized volume type: %q", tv.Type)
 	}
@@ -100,6 +102,8 @@ func (tv *TaskVolume) MarshalJSON() ([]byte, error) {
 		result["efsVolumeConfiguration"] = tv.Volume
 	case FSxWindowsFileServerVolumeType:
 		result["fsxWindowsFileServerVolumeConfiguration"] = tv.Volume
+	case EBSVolumeType:
+		result["ebsVolumeConfiguration"] = tv.Volume
 	default:
 		return nil, errors.Errorf("unrecognized volume type: %q", tv.Type)
 	}
@@ -132,6 +136,20 @@ func (tv *TaskVolume) unmarshalEFSVolume(data json.RawMessage) error {
 	}
 
 	tv.Volume = &efsVolumeConfig
+	return nil
+}
+
+func (tv *TaskVolume) unmarshalEBSVolume(data json.RawMessage) error {
+	if data == nil {
+		return errors.New("invalid volume: empty volume configuration")
+	}
+	var ebsVoumeConfig taskresourcevolume.EBSTaskVolumeConfig
+	err := json.Unmarshal(data, &ebsVoumeConfig)
+	if err != nil {
+		return err
+	}
+
+	tv.Volume = &ebsVoumeConfig
 	return nil
 }
 

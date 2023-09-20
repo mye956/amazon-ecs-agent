@@ -295,6 +295,7 @@ func (pmHandler *payloadMessageHandler) addTasks(payload *ecsacs.PayloadMessage,
 				})
 				allTasksOK = false
 			}
+			logger.Debug("Task saved to backend")
 		}
 
 		ackCredentials := func(id string, description string) {

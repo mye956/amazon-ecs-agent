@@ -820,6 +820,28 @@ func (task *Task) addEFSVolumes(
 	return nil
 }
 
+// func (task *Task) addEBSVolumes(ctx context.Context, dockerClient dockerapi.DockerClient, vol *TaskVolume) error {
+// 	ebsCoonfig := vol.Volume.(*taskresourcevolume.EBSTaskVolumeConfig)
+// 	volumeResource, err := taskresourcevolume.NewVolumeResource(
+// 		ctx,
+// 		vol.Name,
+// 		EBSVolumeType,
+// 		task.volumeName(vol.Name),
+// 		"task",
+// 		false,
+// 		"",
+// 		map[string]string{},
+// 		map[string]string{},
+// 		dockerClient,
+// 	)
+
+// 	if err != nil {
+
+// 	}
+
+// 	return nil
+// }
+
 // addTaskScopedVolumes adds the task scoped volume into task resources and updates container dependency
 func (task *Task) addTaskScopedVolumes(ctx context.Context, dockerClient dockerapi.DockerClient,
 	vol *TaskVolume) error {

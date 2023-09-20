@@ -350,6 +350,7 @@ func verifyResourceDependenciesResolved(target *apicontainer.Container, existing
 	for _, resourceDependency := range resourceDependencies {
 		log.Debugf("Resource dependency: %s", resourceDependency.Name)
 		dep, exists := existingResources[resourceDependency.Name]
+		log.Debugf("Dependency: %s", dep.GetName())
 		if !exists {
 			log.Debugf("Dependency does not exists: %s", dep.GetName())
 			return false
