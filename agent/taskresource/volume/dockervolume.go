@@ -157,7 +157,7 @@ func (cfg *DockerVolumeConfig) Source() string {
 }
 
 func (cfg *EBSTaskVolumeConfig) Source() string {
-	return "/mnt/ecs/ebs" + cfg.SourceVolumeHostPath
+	return "/mnt/ecs/ebs/" + cfg.SourceVolumeHostPath
 }
 
 // GetName returns the name of the volume resource
