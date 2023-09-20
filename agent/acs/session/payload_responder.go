@@ -286,6 +286,7 @@ func (pmHandler *payloadMessageHandler) addTasks(payload *ecsacs.PayloadMessage,
 		// to manage). When its desired status is STOPPED, the task is already in the DB and the desired status change
 		// will be saved by task manager.
 		if task.GetDesiredStatus() == apitaskstatus.TaskRunning {
+			logger.Debug("Attempting to save to state")
 			err := pmHandler.dataClient.SaveTask(task)
 			if err != nil {
 				logger.Error("Failed to save data for task", logger.Fields{

@@ -348,11 +348,14 @@ func verifyResourceDependenciesResolved(target *apicontainer.Container, existing
 	targetNext := target.GetNextKnownStateProgression()
 	resourceDependencies := target.TransitionDependenciesMap[targetNext].ResourceDependencies
 	for _, resourceDependency := range resourceDependencies {
+		log.Debugf("Resource dependency: %s", resourceDependency.Name)
 		dep, exists := existingResources[resourceDependency.Name]
 		if !exists {
+			log.Debugf("Dependency does not exists: %s", dep.GetName())
 			return false
 		}
 		if dep.GetKnownStatus() < resourceDependency.GetRequiredStatus() {
+			log.Debugf("Dependency know status: %v, Required status: %v", dep.GetKnownStatus(), resourceDependency.GetRequiredStatus())
 			return false
 		}
 	}
