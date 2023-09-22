@@ -138,6 +138,7 @@ func TestAddRemoveEBSAttachment(t *testing.T) {
 			AttachmentARN: "ebs1",
 		},
 		AttachmentProperties: testAttachmentProperties,
+		AttachmentType:       apiresource.AmazonElasticBlockStorage,
 	}
 
 	state.AddEBSAttachment(attachment)
@@ -168,6 +169,7 @@ func TestAddPendingEBSAttachment(t *testing.T) {
 			Status:           status.AttachmentNone,
 		},
 		AttachmentProperties: testAttachmentProperties,
+		AttachmentType:       apiresource.AmazonElasticBlockStorage,
 	}
 
 	testSentAttachmentProperties := map[string]string{
@@ -187,6 +189,7 @@ func TestAddPendingEBSAttachment(t *testing.T) {
 			Status:           status.AttachmentAttached,
 		},
 		AttachmentProperties: testSentAttachmentProperties,
+		AttachmentType:       apiresource.AmazonElasticBlockStorage,
 	}
 
 	state.AddEBSAttachment(pendingAttachment)

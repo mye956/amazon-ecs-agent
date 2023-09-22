@@ -85,6 +85,7 @@ func TestHandleEBSAttachmentHappyCase(t *testing.T) {
 			AttachmentARN:        resourceAttachmentARN,
 		},
 		AttachmentProperties: testAttachmentProperties,
+		AttachmentType:       apiebs.AmazonElasticBlockStorage,
 	}
 	watcher := newTestEBSWatcher(ctx, taskEngineState, eventChannel, mockDiscoveryClient)
 	var wg sync.WaitGroup
@@ -147,6 +148,7 @@ func TestHandleExpiredEBSAttachment(t *testing.T) {
 			AttachmentARN:        resourceAttachmentARN,
 		},
 		AttachmentProperties: testAttachmentProperties,
+		AttachmentType:       apiebs.AmazonElasticBlockStorage,
 	}
 	watcher := newTestEBSWatcher(ctx, taskEngineState, eventChannel, mockDiscoveryClient)
 
@@ -186,6 +188,7 @@ func TestHandleDuplicateEBSAttachment(t *testing.T) {
 			AttachmentARN:        resourceAttachmentARN,
 		},
 		AttachmentProperties: testAttachmentProperties1,
+		AttachmentType:       apiebs.AmazonElasticBlockStorage,
 	}
 
 	testAttachmentProperties2 := map[string]string{
@@ -204,6 +207,7 @@ func TestHandleDuplicateEBSAttachment(t *testing.T) {
 			AttachmentARN:        resourceAttachmentARN,
 		},
 		AttachmentProperties: testAttachmentProperties2,
+		AttachmentType:       apiebs.AmazonElasticBlockStorage,
 	}
 
 	watcher := newTestEBSWatcher(ctx, taskEngineState, eventChannel, mockDiscoveryClient)
@@ -267,6 +271,7 @@ func TestHandleInvalidTypeEBSAttachment(t *testing.T) {
 			AttachmentARN:        resourceAttachmentARN,
 		},
 		AttachmentProperties: testAttachmentProperties,
+		AttachmentType:       "InvalidResourceType",
 	}
 	watcher := newTestEBSWatcher(ctx, taskEngineState, eventChannel, mockDiscoveryClient)
 
@@ -307,6 +312,7 @@ func TestHandleEBSAckTimeout(t *testing.T) {
 			AttachmentARN:        resourceAttachmentARN,
 		},
 		AttachmentProperties: testAttachmentProperties,
+		AttachmentType:       apiebs.AmazonElasticBlockStorage,
 	}
 	watcher := newTestEBSWatcher(ctx, taskEngineState, eventChannel, mockDiscoveryClient)
 
@@ -347,6 +353,7 @@ func TestHandleMismatchEBSAttachment(t *testing.T) {
 			AttachmentARN:        resourceAttachmentARN,
 		},
 		AttachmentProperties: testAttachmentProperties,
+		AttachmentType:       apiebs.AmazonElasticBlockStorage,
 	}
 
 	var wg sync.WaitGroup

@@ -258,8 +258,15 @@ func (ra *ResourceAttachment) EBSToString() string {
 func (ra *ResourceAttachment) ebsToStringUnsafe() string {
 	return fmt.Sprintf(
 		"Resource Attachment: attachment=%s attachmentType=%s attachmentSent=%t volumeSizeInGiB=%s requestedSizeName=%s volumeId=%s deviceName=%s filesystemType=%s status=%s expiresAt=%s error=%v",
-		ra.AttachmentARN, ra.AttachmentProperties[ResourceTypeName], ra.AttachStatusSent, ra.AttachmentProperties[VolumeSizeInGiBName], ra.AttachmentProperties[RequestedSizeName], ra.AttachmentProperties[VolumeIdName],
+		ra.AttachmentARN, ra.AttachmentType, ra.AttachStatusSent, ra.AttachmentProperties[VolumeSizeInGiBName], ra.AttachmentProperties[RequestedSizeName], ra.AttachmentProperties[VolumeIdName],
 		ra.AttachmentProperties[DeviceName], ra.AttachmentProperties[FileSystemTypeName], ra.Status.String(), ra.ExpiresAt.Format(time.RFC3339), ra.err)
+}
+
+func (ra *ResourceAttachment) GetAttachmentType() string {
+	ra.guard.RLock()
+	defer ra.guard.RUnlock()
+
+	return ra.AttachmentType
 }
 
 // GetAttachmentProperties returns the specific attachment property of the resource attachment object

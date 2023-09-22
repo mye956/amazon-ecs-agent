@@ -83,8 +83,8 @@ func (w *EBSWatcher) Stop() {
 // 1. Check whether we already have this attachment in state and if so it's a noop.
 // 2. Otherwise add the attachment to state, start its ack timer, and save to the agent state.
 func (w *EBSWatcher) HandleResourceAttachment(ebs *apiebs.ResourceAttachment) error {
-	attachmentType := ebs.GetAttachmentProperties(apiebs.ResourceTypeName)
-	if attachmentType != apiebs.ElasticBlockStorage {
+	attachmentType := ebs.GetAttachmentType()
+	if attachmentType != apiebs.AmazonElasticBlockStorage {
 		log.Warnf("Resource type not Elastic Block Storage. Skip handling resource attachment with type: %v.", attachmentType)
 		return nil
 	}
