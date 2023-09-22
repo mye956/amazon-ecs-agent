@@ -37,6 +37,7 @@ import (
 	"github.com/aws/amazon-ecs-agent/agent/dockerclient/dockerapi"
 	ecsengine "github.com/aws/amazon-ecs-agent/agent/engine"
 	"github.com/aws/amazon-ecs-agent/agent/stats/resolver"
+	"github.com/aws/amazon-ecs-agent/ecs-agent/csiclient"
 	"github.com/aws/amazon-ecs-agent/ecs-agent/eventstream"
 	"github.com/aws/amazon-ecs-agent/ecs-agent/stats"
 	"github.com/aws/amazon-ecs-agent/ecs-agent/tcs/model/ecstcs"
@@ -112,6 +113,8 @@ type DockerStatsEngine struct {
 	// channels to send metrics to TACS Client
 	metricsChannel chan<- ecstcs.TelemetryMessage
 	healthChannel  chan<- ecstcs.HealthMessage
+
+	csiClient csiclient.CSIClient
 }
 
 // ResolveTask resolves the api task object, given container id.
