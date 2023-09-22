@@ -45,11 +45,12 @@ func (engine *DockerStatsEngine) getEBSVolumeMetrics(taskArn string) []*ecstcs.V
 }
 
 func (engine *DockerStatsEngine) fetchEBSVolumeMetrics(task *apitask.Task, taskArn string) []*ecstcs.VolumeMetric {
-	// if !task.IsEBSTaskAttachEnabled() {
-	// 	logger.Debug("Task not EBS-backed, skip gathering EBS volume metrics.", logger.Fields{
-	// 		"taskArn": taskArn,
-	// 	})
-	// }
+	if !task.IsEBSTaskAttachEnabled() {
+		logger.Debug("Task not EBS-backed, skip gathering EBS volume metrics.", logger.Fields{
+			"taskArn": taskArn,
+		})
+		return nil
+	}
 	logger.Debug("Fetching EBS volume metrics...")
 	var metrics []*ecstcs.VolumeMetric
 	for _, tv := range task.Volumes {

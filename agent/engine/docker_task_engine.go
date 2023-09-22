@@ -1144,32 +1144,33 @@ func (engine *DockerTaskEngine) AddTask(task *apitask.Task) {
 		return
 	}
 	if task.IsEBSTaskAttachEnabled() {
-		if csiTask, ok := engine.loadedDaemonTasks["ebs-csi-driver"]; ok {
-			logger.Info("engine ebs CSI driver is running", logger.Fields{
-				field.TaskID: csiTask.GetID(),
-			})
-		} else {
-			// TODO update 'ebs-csi-driver' as config param or const
-			var csiStartErr error
-			if ebsCsiDaemonManager, ok := engine.daemonManagers["ebs-csi-driver"]; ok {
-				csiTask, csiStartErr = ebsCsiDaemonManager.CreateDaemonTask()
-				engine.loadedDaemonTasks["ebs-csi-driver"] = csiTask
-				engine.AddTask(csiTask)
-				logger.Info("docker_task_engine: Added EBS CSI task to engine")
-			} else {
-				csiStartErr = errors.New("Unable to find ebs-csi-driver in engine")
-			}
-			if csiStartErr != nil {
-				logger.Error("Unable to start ebsCsiDaemon for task in the engine", logger.Fields{
-					field.TaskID: task.GetID(),
-					field.Error:  err,
-				})
-				task.SetKnownStatus(apitaskstatus.TaskStopped)
-				task.SetDesiredStatus(apitaskstatus.TaskStopped)
-				engine.emitTaskEvent(task, err.Error())
-				return
-			}
-		}
+		logger.Debug("Task is EBS-backed")
+		// if csiTask, ok := engine.loadedDaemonTasks["ebs-csi-driver"]; ok {
+		// 	logger.Info("engine ebs CSI driver is running", logger.Fields{
+		// 		field.TaskID: csiTask.GetID(),
+		// 	})
+		// } else {
+		// 	// TODO update 'ebs-csi-driver' as config param or const
+		// 	var csiStartErr error
+		// 	if ebsCsiDaemonManager, ok := engine.daemonManagers["ebs-csi-driver"]; ok {
+		// 		csiTask, csiStartErr = ebsCsiDaemonManager.CreateDaemonTask()
+		// 		engine.loadedDaemonTasks["ebs-csi-driver"] = csiTask
+		// 		engine.AddTask(csiTask)
+		// 		logger.Info("docker_task_engine: Added EBS CSI task to engine")
+		// 	} else {
+		// 		csiStartErr = errors.New("Unable to find ebs-csi-driver in engine")
+		// 	}
+		// 	if csiStartErr != nil {
+		// 		logger.Error("Unable to start ebsCsiDaemon for task in the engine", logger.Fields{
+		// 			field.TaskID: task.GetID(),
+		// 			field.Error:  err,
+		// 		})
+		// 		task.SetKnownStatus(apitaskstatus.TaskStopped)
+		// 		task.SetDesiredStatus(apitaskstatus.TaskStopped)
+		// 		engine.emitTaskEvent(task, err.Error())
+		// 		return
+		// 	}
+		// }
 	}
 	// Check if ServiceConnect is Needed
 	if task.IsServiceConnectEnabled() {
