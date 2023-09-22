@@ -575,12 +575,15 @@ func (engine *DockerStatsEngine) GetInstanceMetrics(includeServiceConnectStats b
 			continue
 		}
 
+		volMetrics := engine.getEBSVolumeMetrics(taskArn)
+
 		metricTaskArn := taskArn
 		taskMetric := &ecstcs.TaskMetric{
 			TaskArn:               &metricTaskArn,
 			TaskDefinitionFamily:  &taskDef.family,
 			TaskDefinitionVersion: &taskDef.version,
 			ContainerMetrics:      containerMetrics,
+			VolumeMetrics:         volMetrics,
 		}
 
 		if includeServiceConnectStats {
