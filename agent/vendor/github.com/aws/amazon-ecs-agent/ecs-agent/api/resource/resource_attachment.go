@@ -124,17 +124,18 @@ func getExtensibleEphemeralStorageProperties() (ephemeralStorageProperties []str
 
 func getResourceAttachmentLogFields(ra *ResourceAttachment, duration time.Duration) logger.Fields {
 	fields := logger.Fields{
-		"duration":          duration.String(),
-		"attachmentARN":     ra.AttachmentARN,
-		"attachmentType":    ra.AttachmentProperties[ResourceTypeName],
-		"attachmentSent":    ra.AttachStatusSent,
-		"volumeSizeInGiB":   ra.AttachmentProperties[VolumeSizeInGiBName],
-		"requestedSizeName": ra.AttachmentProperties[RequestedSizeName],
-		"volumeId":          ra.AttachmentProperties[VolumeIdName],
-		"deviceName":        ra.AttachmentProperties[DeviceName],
-		"filesystemType":    ra.AttachmentProperties[FileSystemTypeName],
-		"status":            ra.Status.String(),
-		"expiresAt":         ra.ExpiresAt.Format(time.RFC3339),
+		"duration":             duration.String(),
+		"attachmentARN":        ra.AttachmentARN,
+		"attachmentType":       ra.AttachmentType,
+		"attachmentSent":       ra.AttachStatusSent,
+		"volumeName":           ra.AttachmentProperties[VolumeNameKey],
+		"volumeSizeInGib":      ra.AttachmentProperties[VolumeSizeGibKey],
+		"sourceVolumeHostPath": ra.AttachmentProperties[SourceVolumeHostPathKey],
+		"volumeId":             ra.AttachmentProperties[VolumeIdKey],
+		"deviceName":           ra.AttachmentProperties[DeviceNameKey],
+		"fileSystem":           ra.AttachmentProperties[FileSystemKey],
+		"status":               ra.Status.String(),
+		"expiresAt":            ra.ExpiresAt.Format(time.RFC3339),
 	}
 
 	return fields
@@ -257,9 +258,9 @@ func (ra *ResourceAttachment) EBSToString() string {
 
 func (ra *ResourceAttachment) ebsToStringUnsafe() string {
 	return fmt.Sprintf(
-		"Resource Attachment: attachment=%s attachmentType=%s attachmentSent=%t volumeSizeInGiB=%s requestedSizeName=%s volumeId=%s deviceName=%s filesystemType=%s status=%s expiresAt=%s error=%v",
-		ra.AttachmentARN, ra.AttachmentProperties[ResourceTypeName], ra.AttachStatusSent, ra.AttachmentProperties[VolumeSizeInGiBName], ra.AttachmentProperties[RequestedSizeName], ra.AttachmentProperties[VolumeIdName],
-		ra.AttachmentProperties[DeviceName], ra.AttachmentProperties[FileSystemTypeName], ra.Status.String(), ra.ExpiresAt.Format(time.RFC3339), ra.err)
+		"Resource Attachment: arn=%s attachmentType=%s attachmentSent=%t volumeName=%s fileSystem=%s volumeId=%s volumeSizeInGib=%s deviceName=%s sourceVolumeHostPath=%s status=%s expiresAt=%s error=%v",
+		ra.AttachmentARN, ra.AttachmentType, ra.AttachStatusSent, ra.AttachmentProperties[VolumeNameKey], ra.AttachmentProperties[FileSystemKey], ra.AttachmentProperties[VolumeIdKey], ra.AttachmentProperties[VolumeSizeGibKey],
+		ra.AttachmentProperties[DeviceNameKey], ra.AttachmentProperties[SourceVolumeHostPathKey], ra.Status.String(), ra.ExpiresAt.Format(time.RFC3339), ra.err)
 }
 
 // GetAttachmentProperties returns the specific attachment property of the resource attachment object
