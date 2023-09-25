@@ -1145,6 +1145,7 @@ func (engine *DockerTaskEngine) AddTask(task *apitask.Task) {
 	}
 	if task.IsEBSTaskAttachEnabled() {
 		logger.Debug("Task is EBS-backed")
+		logger.Debug(fmt.Sprintf("Number of daemon tasks: %v", len(engine.loadedDaemonTasks)))
 		// if csiTask, ok := engine.loadedDaemonTasks["ebs-csi-driver"]; ok {
 		// 	logger.Info("engine ebs CSI driver is running", logger.Fields{
 		// 		field.TaskID: csiTask.GetID(),
