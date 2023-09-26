@@ -21,5 +21,5 @@ const (
 	// EBS volume on firecracker.
 	ElasticBlockStorage = "ElasticBlockStorage"
 	// AmazonElasticBlockStorage is one of the attachment types in the attachment payload message for EBS attach tasks.
-	AmazonElasticBlockStorage = "AmazonElasticBlockStorage"
+	AmazonElasticBlockStorage = "amazonebs"
 )

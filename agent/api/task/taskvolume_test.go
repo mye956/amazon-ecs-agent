@@ -230,7 +230,7 @@ func TestMarshalEBSVolumes(t *testing.T) {
 				"dockerVolumeName": ""
 			},
 			"name": "1",
-			"type": "AmazonElasticBlockStorage"
+			"type": "amazonebs"
 		  }
 		],
 		"DesiredStatus": "NONE",
@@ -275,7 +275,7 @@ func TestUnmarshalEBSVolumes(t *testing.T) {
 				"dockerVolumeName": ""
 			},
 			"name": "1",
-			"type": "AmazonElasticBlockStorage"
+			"type": "amazonebs"
 		  }
 		],
 		"DesiredStatus": "NONE",
