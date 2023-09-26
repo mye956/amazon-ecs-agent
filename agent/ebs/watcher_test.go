@@ -33,6 +33,7 @@ import (
 
 	"github.com/golang/mock/gomock"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 const (
@@ -381,6 +382,7 @@ func TestHandleMismatchEBSAttachment(t *testing.T) {
 			AttachmentARN:        resourceAttachmentARN,
 		},
 		AttachmentProperties: testAttachmentProperties,
+		AttachmentType:       apiebs.AmazonElasticBlockStorage,
 	}
 
 	var wg sync.WaitGroup
@@ -397,9 +399,9 @@ func TestHandleMismatchEBSAttachment(t *testing.T) {
 
 	pendingEBS := watcher.agentState.GetAllPendingEBSAttachmentsWithKey()
 	foundVolumes := apiebs.ScanEBSVolumes(pendingEBS, watcher.discoveryClient)
-
+	wg.Wait()
 	assert.Empty(t, foundVolumes)
 	ebsAttachment, ok := taskEngineState.(*dockerstate.DockerTaskEngineState).GetEBSByVolumeId(TestVolumeId)
-	assert.True(t, ok)
+	require.True(t, ok)
 	assert.ErrorIs(t, ebsAttachment.GetError(), apiebs.ErrInvalidVolumeID)
 }

@@ -31,6 +31,7 @@ import (
 	"github.com/aws/amazon-ecs-agent/ecs-agent/credentials"
 	"github.com/aws/amazon-ecs-agent/ecs-agent/ecs_client/model/ecs"
 
+	ebs "github.com/aws/amazon-ecs-agent/agent/ebs"
 	"github.com/aws/amazon-ecs-agent/agent/statechange"
 	"github.com/aws/amazon-ecs-agent/agent/taskresource"
 	cgroup "github.com/aws/amazon-ecs-agent/agent/taskresource/cgroup/control"
@@ -146,6 +147,17 @@ func (agent *ecsAgent) startENIWatcher(state dockerstate.TaskEngineState, stateC
 			return errors.Wrapf(err, "unable to initialize eni watcher")
 		}
 		go agent.eniWatcher.Start()
+	}
+	return nil
+}
+
+func (agent *ecsAgent) startEBSWatcher(state dockerstate.TaskEngineState, stateChangeEvents chan<- statechange.Event) error {
+	seelog.Debug("Setting up EBS Watcher...")
+	if agent.ebsWatcher == nil {
+		seelog.Debug("Creating new EBS watcher...")
+		agent.ebsWatcher = ebs.NewWatcher(agent.ctx, state, stateChangeEvents)
+
+		go agent.ebsWatcher.Start()
 	}
 	return nil
 }
