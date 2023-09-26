@@ -273,3 +273,10 @@ func (ra *ResourceAttachment) GetAttachmentProperties(key string) string {
 	}
 	return ""
 }
+
+func (ra *ResourceAttachment) GetAttachmentType() string {
+	ra.guard.RLock()
+	defer ra.guard.RUnlock()
+
+	return ra.AttachmentType
+}

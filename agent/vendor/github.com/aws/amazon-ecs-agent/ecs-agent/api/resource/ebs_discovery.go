@@ -49,7 +49,7 @@ func ScanEBSVolumes[T GenericEBSAttachmentObject](pendingAttachments map[string]
 	var foundVolumes []string
 	for key, ebs := range pendingAttachments {
 		volumeId := strings.TrimPrefix(key, ebsResourceKeyPrefix)
-		deviceName := ebs.GetAttachmentProperties(DeviceName)
+		deviceName := ebs.GetAttachmentProperties(DeviceNameKey)
 		err = dc.ConfirmEBSVolumeIsAttached(deviceName, volumeId)
 		if err != nil {
 			if !errors.Is(err, ErrInvalidVolumeID) {

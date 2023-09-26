@@ -40,8 +40,16 @@ const (
 	containerInstanceARN  = "arn:aws:ecs:us-west-2:123456789012:container-instance/a1b2c3d4-5678-90ab-cdef-11111EXAMPLE"
 	taskARN               = "task1"
 	taskClusterARN        = "arn:aws:ecs:us-west-2:123456789012:cluster/customer-task-cluster"
-	deviceName            = "/dev/xvdba"
-	volumeID              = "vol-1234"
+	// deviceName            = "/dev/xvdba"
+	// volumeID              = "vol-1234"
+	// volumeName = "test-volume"
+
+	TestVolumeId             = "vol-12345"
+	TestVolumeSizeGib        = "10"
+	TestSourceVolumeHostPath = "taskarn_vol-12345"
+	TestVolumeName           = "test-volume"
+	TestFileSystem           = "ext4"
+	TestDeviceName           = "/dev/nvme1n1"
 )
 
 // newTestEBSWatcher creates a new EBSWatcher object for testing
@@ -69,9 +77,12 @@ func TestHandleEBSAttachmentHappyCase(t *testing.T) {
 	mockDiscoveryClient := mock_ebs_discovery.NewMockEBSDiscovery(mockCtrl)
 
 	testAttachmentProperties := map[string]string{
-		apiebs.ResourceTypeName: apiebs.ElasticBlockStorage,
-		apiebs.DeviceName:       deviceName,
-		apiebs.VolumeIdName:     volumeID,
+		apiebs.DeviceNameKey:           TestDeviceName,
+		apiebs.VolumeIdKey:             TestVolumeId,
+		apiebs.VolumeNameKey:           TestVolumeName,
+		apiebs.SourceVolumeHostPathKey: TestSourceVolumeHostPath,
+		apiebs.FileSystemKey:           TestFileSystem,
+		apiebs.VolumeSizeGibKey:        TestVolumeSizeGib,
 	}
 
 	expiresAt := time.Now().Add(time.Millisecond * testconst.WaitTimeoutMillis)
@@ -85,11 +96,12 @@ func TestHandleEBSAttachmentHappyCase(t *testing.T) {
 			AttachmentARN:        resourceAttachmentARN,
 		},
 		AttachmentProperties: testAttachmentProperties,
+		AttachmentType:       apiebs.AmazonElasticBlockStorage,
 	}
 	watcher := newTestEBSWatcher(ctx, taskEngineState, eventChannel, mockDiscoveryClient)
 	var wg sync.WaitGroup
 	wg.Add(1)
-	mockDiscoveryClient.EXPECT().ConfirmEBSVolumeIsAttached(deviceName, volumeID).
+	mockDiscoveryClient.EXPECT().ConfirmEBSVolumeIsAttached(TestDeviceName, TestVolumeId).
 		Do(func(deviceName, volumeID string) {
 			wg.Done()
 		}).
@@ -114,7 +126,7 @@ func TestHandleEBSAttachmentHappyCase(t *testing.T) {
 	wg.Wait()
 
 	assert.Len(t, taskEngineState.(*dockerstate.DockerTaskEngineState).GetAllEBSAttachments(), 1)
-	ebsAttachment, ok := taskEngineState.(*dockerstate.DockerTaskEngineState).GetEBSByVolumeId(volumeID)
+	ebsAttachment, ok := taskEngineState.(*dockerstate.DockerTaskEngineState).GetEBSByVolumeId(TestVolumeId)
 	assert.True(t, ok)
 	assert.True(t, ebsAttachment.IsAttached())
 }
@@ -131,9 +143,12 @@ func TestHandleExpiredEBSAttachment(t *testing.T) {
 	mockDiscoveryClient := mock_ebs_discovery.NewMockEBSDiscovery(mockCtrl)
 
 	testAttachmentProperties := map[string]string{
-		apiebs.ResourceTypeName: apiebs.ElasticBlockStorage,
-		apiebs.DeviceName:       deviceName,
-		apiebs.VolumeIdName:     volumeID,
+		apiebs.DeviceNameKey:           TestDeviceName,
+		apiebs.VolumeIdKey:             TestVolumeId,
+		apiebs.VolumeNameKey:           TestVolumeName,
+		apiebs.SourceVolumeHostPathKey: TestSourceVolumeHostPath,
+		apiebs.FileSystemKey:           TestFileSystem,
+		apiebs.VolumeSizeGibKey:        TestVolumeSizeGib,
 	}
 
 	expiresAt := time.Now().Add(-1 * time.Millisecond)
@@ -147,13 +162,14 @@ func TestHandleExpiredEBSAttachment(t *testing.T) {
 			AttachmentARN:        resourceAttachmentARN,
 		},
 		AttachmentProperties: testAttachmentProperties,
+		AttachmentType:       apiebs.AmazonElasticBlockStorage,
 	}
 	watcher := newTestEBSWatcher(ctx, taskEngineState, eventChannel, mockDiscoveryClient)
 
 	err := watcher.HandleResourceAttachment(ebsAttachment)
 	assert.Error(t, err)
 	assert.Len(t, taskEngineState.(*dockerstate.DockerTaskEngineState).GetAllEBSAttachments(), 0)
-	_, ok := taskEngineState.(*dockerstate.DockerTaskEngineState).GetEBSByVolumeId(volumeID)
+	_, ok := taskEngineState.(*dockerstate.DockerTaskEngineState).GetEBSByVolumeId(TestVolumeId)
 	assert.False(t, ok)
 }
 
@@ -171,9 +187,12 @@ func TestHandleDuplicateEBSAttachment(t *testing.T) {
 	expiresAt := time.Now().Add(time.Millisecond * testconst.WaitTimeoutMillis)
 
 	testAttachmentProperties1 := map[string]string{
-		apiebs.ResourceTypeName: apiebs.ElasticBlockStorage,
-		apiebs.DeviceName:       deviceName,
-		apiebs.VolumeIdName:     volumeID,
+		apiebs.DeviceNameKey:           TestDeviceName,
+		apiebs.VolumeIdKey:             TestVolumeId,
+		apiebs.VolumeNameKey:           TestVolumeName,
+		apiebs.SourceVolumeHostPathKey: TestSourceVolumeHostPath,
+		apiebs.FileSystemKey:           TestFileSystem,
+		apiebs.VolumeSizeGibKey:        TestVolumeSizeGib,
 	}
 
 	ebsAttachment1 := &apiebs.ResourceAttachment{
@@ -186,12 +205,16 @@ func TestHandleDuplicateEBSAttachment(t *testing.T) {
 			AttachmentARN:        resourceAttachmentARN,
 		},
 		AttachmentProperties: testAttachmentProperties1,
+		AttachmentType:       apiebs.AmazonElasticBlockStorage,
 	}
 
 	testAttachmentProperties2 := map[string]string{
-		apiebs.ResourceTypeName: apiebs.ElasticBlockStorage,
-		apiebs.DeviceName:       deviceName,
-		apiebs.VolumeIdName:     volumeID,
+		apiebs.DeviceNameKey:           TestDeviceName,
+		apiebs.VolumeIdKey:             TestVolumeId,
+		apiebs.VolumeNameKey:           TestVolumeName,
+		apiebs.SourceVolumeHostPathKey: TestSourceVolumeHostPath,
+		apiebs.FileSystemKey:           TestFileSystem,
+		apiebs.VolumeSizeGibKey:        TestVolumeSizeGib,
 	}
 
 	ebsAttachment2 := &apiebs.ResourceAttachment{
@@ -204,12 +227,13 @@ func TestHandleDuplicateEBSAttachment(t *testing.T) {
 			AttachmentARN:        resourceAttachmentARN,
 		},
 		AttachmentProperties: testAttachmentProperties2,
+		AttachmentType:       apiebs.AmazonElasticBlockStorage,
 	}
 
 	watcher := newTestEBSWatcher(ctx, taskEngineState, eventChannel, mockDiscoveryClient)
 	var wg sync.WaitGroup
 	wg.Add(1)
-	mockDiscoveryClient.EXPECT().ConfirmEBSVolumeIsAttached(deviceName, volumeID).
+	mockDiscoveryClient.EXPECT().ConfirmEBSVolumeIsAttached(TestDeviceName, TestVolumeId).
 		Do(func(deviceName, volumeID string) {
 			wg.Done()
 		}).
@@ -234,7 +258,7 @@ func TestHandleDuplicateEBSAttachment(t *testing.T) {
 	wg.Wait()
 
 	assert.Len(t, taskEngineState.(*dockerstate.DockerTaskEngineState).GetAllEBSAttachments(), 1)
-	ebsAttachment, ok := taskEngineState.(*dockerstate.DockerTaskEngineState).GetEBSByVolumeId(volumeID)
+	ebsAttachment, ok := taskEngineState.(*dockerstate.DockerTaskEngineState).GetEBSByVolumeId(TestVolumeId)
 	assert.True(t, ok)
 	assert.True(t, ebsAttachment.IsAttached())
 }
@@ -251,9 +275,12 @@ func TestHandleInvalidTypeEBSAttachment(t *testing.T) {
 	mockDiscoveryClient := mock_ebs_discovery.NewMockEBSDiscovery(mockCtrl)
 
 	testAttachmentProperties := map[string]string{
-		apiebs.ResourceTypeName: "InvalidResourceType",
-		apiebs.DeviceName:       deviceName,
-		apiebs.VolumeIdName:     volumeID,
+		apiebs.DeviceNameKey:           TestDeviceName,
+		apiebs.VolumeIdKey:             TestVolumeId,
+		apiebs.VolumeNameKey:           TestVolumeName,
+		apiebs.SourceVolumeHostPathKey: TestSourceVolumeHostPath,
+		apiebs.FileSystemKey:           TestFileSystem,
+		apiebs.VolumeSizeGibKey:        TestVolumeSizeGib,
 	}
 
 	expiresAt := time.Now().Add(time.Millisecond * testconst.WaitTimeoutMillis)
@@ -267,13 +294,14 @@ func TestHandleInvalidTypeEBSAttachment(t *testing.T) {
 			AttachmentARN:        resourceAttachmentARN,
 		},
 		AttachmentProperties: testAttachmentProperties,
+		AttachmentType:       "InvalidResourceType",
 	}
 	watcher := newTestEBSWatcher(ctx, taskEngineState, eventChannel, mockDiscoveryClient)
 
 	watcher.HandleResourceAttachment(ebsAttachment)
 
 	assert.Len(t, taskEngineState.(*dockerstate.DockerTaskEngineState).GetAllEBSAttachments(), 0)
-	_, ok := taskEngineState.(*dockerstate.DockerTaskEngineState).GetEBSByVolumeId(volumeID)
+	_, ok := taskEngineState.(*dockerstate.DockerTaskEngineState).GetEBSByVolumeId(TestVolumeId)
 	assert.False(t, ok)
 }
 
@@ -291,9 +319,12 @@ func TestHandleEBSAckTimeout(t *testing.T) {
 	mockDiscoveryClient := mock_ebs_discovery.NewMockEBSDiscovery(mockCtrl)
 
 	testAttachmentProperties := map[string]string{
-		apiebs.ResourceTypeName: apiebs.ElasticBlockStorage,
-		apiebs.DeviceName:       deviceName,
-		apiebs.VolumeIdName:     volumeID,
+		apiebs.DeviceNameKey:           TestDeviceName,
+		apiebs.VolumeIdKey:             TestVolumeId,
+		apiebs.VolumeNameKey:           TestVolumeName,
+		apiebs.SourceVolumeHostPathKey: TestSourceVolumeHostPath,
+		apiebs.FileSystemKey:           TestFileSystem,
+		apiebs.VolumeSizeGibKey:        TestVolumeSizeGib,
 	}
 
 	expiresAt := time.Now().Add(time.Millisecond * testconst.WaitTimeoutMillis)
@@ -313,7 +344,7 @@ func TestHandleEBSAckTimeout(t *testing.T) {
 	watcher.HandleResourceAttachment(ebsAttachment)
 	time.Sleep(time.Millisecond * testconst.WaitTimeoutMillis * 2)
 	assert.Len(t, taskEngineState.(*dockerstate.DockerTaskEngineState).GetAllEBSAttachments(), 0)
-	ebsAttachment, ok := taskEngineState.(*dockerstate.DockerTaskEngineState).GetEBSByVolumeId(volumeID)
+	ebsAttachment, ok := taskEngineState.(*dockerstate.DockerTaskEngineState).GetEBSByVolumeId(TestVolumeId)
 	assert.False(t, ok)
 }
 
@@ -331,9 +362,12 @@ func TestHandleMismatchEBSAttachment(t *testing.T) {
 	watcher := newTestEBSWatcher(ctx, taskEngineState, eventChannel, mockDiscoveryClient)
 
 	testAttachmentProperties := map[string]string{
-		apiebs.ResourceTypeName: apiebs.ElasticBlockStorage,
-		apiebs.DeviceName:       deviceName,
-		apiebs.VolumeIdName:     volumeID,
+		apiebs.DeviceNameKey:           TestDeviceName,
+		apiebs.VolumeIdKey:             TestVolumeId,
+		apiebs.VolumeNameKey:           TestVolumeName,
+		apiebs.SourceVolumeHostPathKey: TestSourceVolumeHostPath,
+		apiebs.FileSystemKey:           TestFileSystem,
+		apiebs.VolumeSizeGibKey:        TestVolumeSizeGib,
 	}
 
 	expiresAt := time.Now().Add(time.Millisecond * testconst.WaitTimeoutMillis)
@@ -351,11 +385,11 @@ func TestHandleMismatchEBSAttachment(t *testing.T) {
 
 	var wg sync.WaitGroup
 	wg.Add(1)
-	mockDiscoveryClient.EXPECT().ConfirmEBSVolumeIsAttached(deviceName, volumeID).
+	mockDiscoveryClient.EXPECT().ConfirmEBSVolumeIsAttached(TestDeviceName, TestVolumeId).
 		Do(func(deviceName, volumeID string) {
 			wg.Done()
 		}).
-		Return(fmt.Errorf("%w; expected EBS volume %s but found %s", apiebs.ErrInvalidVolumeID, volumeID, "vol-321")).
+		Return(fmt.Errorf("%w; expected EBS volume %s but found %s", apiebs.ErrInvalidVolumeID, TestVolumeId, "vol-321")).
 		MinTimes(1)
 
 	err := watcher.HandleResourceAttachment(ebsAttachment)
@@ -365,7 +399,7 @@ func TestHandleMismatchEBSAttachment(t *testing.T) {
 	foundVolumes := apiebs.ScanEBSVolumes(pendingEBS, watcher.discoveryClient)
 
 	assert.Empty(t, foundVolumes)
-	ebsAttachment, ok := taskEngineState.(*dockerstate.DockerTaskEngineState).GetEBSByVolumeId(volumeID)
+	ebsAttachment, ok := taskEngineState.(*dockerstate.DockerTaskEngineState).GetEBSByVolumeId(TestVolumeId)
 	assert.True(t, ok)
 	assert.ErrorIs(t, ebsAttachment.GetError(), apiebs.ErrInvalidVolumeID)
 }
