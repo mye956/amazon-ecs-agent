@@ -280,3 +280,10 @@ func (ra *ResourceAttachment) GetAttachmentType() string {
 
 	return ra.AttachmentType
 }
+
+func (ra *ResourceAttachment) SetDeviceName(deviceName string) {
+	ra.guard.Lock()
+	defer ra.guard.Unlock()
+
+	ra.AttachmentProperties[DeviceNameKey] = deviceName
+}

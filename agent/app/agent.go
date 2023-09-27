@@ -513,7 +513,7 @@ func (agent *ecsAgent) doStart(containerChangeEventStream *eventstream.EventStre
 
 	tempAttachmentProperties := map[string]string{
 		apira.VolumeSizeGibKey:        "7",
-		apira.DeviceNameKey:           "/dev/nvme1n1",
+		apira.DeviceNameKey:           "/dev/sde",
 		apira.VolumeIdKey:             "vol-09b1fc99d3b9654a5",
 		apira.FileSystemKey:           "testXFS",
 		apira.SourceVolumeHostPathKey: "/mnt/ecs/ebs/mocktaskID_vol-09b1fc99d3b9654a5",

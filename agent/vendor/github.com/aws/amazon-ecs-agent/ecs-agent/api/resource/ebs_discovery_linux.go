@@ -21,6 +21,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os/exec"
+	"path/filepath"
 	"strings"
 )
 
@@ -67,7 +68,7 @@ func (api *EBSDiscoveryClient) ConfirmEBSVolumeIsAttached(deviceName, volumeID s
 	// 	return err
 	// }
 
-	return actualDeviceName, nil
+	return filepath.Join("/dev", actualDeviceName), nil
 }
 
 // parseLsblkOutput will parse the `lsblk` output and search for a EBS volume with a specific device name.

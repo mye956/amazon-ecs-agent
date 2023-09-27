@@ -63,6 +63,7 @@ func (w *EBSWatcher) Start() {
 			pendingEBS := w.agentState.GetAllPendingEBSAttachmentsWithKey()
 			if len(pendingEBS) > 0 {
 				foundVolumes := apiebs.ScanEBSVolumes(pendingEBS, w.discoveryClient)
+				w.overrideDeviceName(foundVolumes)
 				w.NotifyFound(foundVolumes)
 			}
 		case <-w.ctx.Done():
@@ -104,6 +105,17 @@ func (w *EBSWatcher) HandleResourceAttachment(ebs *apiebs.ResourceAttachment) er
 	}
 
 	return nil
+}
+
+func (w *EBSWatcher) overrideDeviceName(foundVolumes map[string]string) {
+	for volumeId, deviceName := range foundVolumes {
+		ebs, ok := w.agentState.GetEBSByVolumeId(volumeId)
+		if !ok {
+			log.Warnf("Unable to find EBS volume with volume ID: %s", volumeId)
+			continue
+		}
+		ebs.SetDeviceName(deviceName)
+	}
 }
 
 // NotifyFound will go through the list of found EBS volumes from the scanning process and mark them as found.
