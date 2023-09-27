@@ -531,7 +531,7 @@ func (agent *ecsAgent) doStart(containerChangeEventStream *eventstream.EventStre
 	// 		ContainerInstanceARN: "dummy-container-instance-arn",
 	// 	},
 	// 	AttachmentProperties: tempAttachmentProperties,
-	// 	AttachmentType:       apira.AmazonElasticBlockStorage,
+	// 	AttachmentType:       apira.EBSTaskAttach,
 	// })
 
 	// Start the acs session, which should block doStart

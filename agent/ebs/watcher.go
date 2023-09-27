@@ -84,7 +84,7 @@ func (w *EBSWatcher) Stop() {
 // 2. Otherwise add the attachment to state, start its ack timer, and save to the agent state.
 func (w *EBSWatcher) HandleResourceAttachment(ebs *apiebs.ResourceAttachment) error {
 	attachmentType := ebs.GetAttachmentType()
-	if attachmentType != apiebs.AmazonElasticBlockStorage {
+	if attachmentType != apiebs.EBSTaskAttach {
 		log.Warnf("Resource type not Elastic Block Storage. Skip handling resource attachment with type: %v.", attachmentType)
 		return nil
 	}

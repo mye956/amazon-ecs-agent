@@ -56,7 +56,7 @@ func TestMarshalUnmarshal(t *testing.T) {
 			ExpiresAt:        expiresAt,
 		},
 		AttachmentProperties: testAttachmentProperties,
-		AttachmentType:       AmazonElasticBlockStorage,
+		AttachmentType:       EBSTaskAttach,
 	}
 	bytes, err := json.Marshal(attachment)
 	assert.NoError(t, err)
@@ -94,7 +94,7 @@ func TestStartTimerErrorWhenExpiresAtIsInThePast(t *testing.T) {
 			ExpiresAt:        time.Unix(expiresAt, 0),
 		},
 		AttachmentProperties: testAttachmentProperties,
-		AttachmentType:       AmazonElasticBlockStorage,
+		AttachmentType:       EBSTaskAttach,
 	}
 	assert.Error(t, attachment.StartTimer(func() {}))
 }
@@ -118,7 +118,7 @@ func TestHasExpired(t *testing.T) {
 					ExpiresAt:        time.Unix(tc.expiresAt, 0),
 				},
 				AttachmentProperties: testAttachmentProperties,
-				AttachmentType:       AmazonElasticBlockStorage,
+				AttachmentType:       EBSTaskAttach,
 			}
 			assert.Equal(t, tc.expected, attachment.HasExpired())
 		})
@@ -141,7 +141,7 @@ func TestInitialize(t *testing.T) {
 			ExpiresAt:     time.Unix(expiresAt, 0),
 		},
 		AttachmentProperties: testAttachmentProperties,
-		AttachmentType:       AmazonElasticBlockStorage,
+		AttachmentType:       EBSTaskAttach,
 	}
 	assert.NoError(t, attachment.Initialize(timeoutFunc))
 	wg.Wait()
@@ -157,7 +157,7 @@ func TestInitializeExpired(t *testing.T) {
 			ExpiresAt:     time.Unix(expiresAt, 0),
 		},
 		AttachmentProperties: testAttachmentProperties,
-		AttachmentType:       AmazonElasticBlockStorage,
+		AttachmentType:       EBSTaskAttach,
 	}
 	assert.Error(t, attachment.Initialize(func() {}))
 }
@@ -173,7 +173,7 @@ func TestInitializeExpiredButAlreadySent(t *testing.T) {
 			ExpiresAt:        time.Unix(expiresAt, 0),
 		},
 		AttachmentProperties: testAttachmentProperties,
-		AttachmentType:       AmazonElasticBlockStorage,
+		AttachmentType:       EBSTaskAttach,
 	}
 	assert.NoError(t, attachment.Initialize(func() {}))
 }
