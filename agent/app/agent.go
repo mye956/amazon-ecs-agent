@@ -73,10 +73,10 @@ import (
 	"github.com/aws/aws-sdk-go/aws/awserr"
 	aws_credentials "github.com/aws/aws-sdk-go/aws/credentials"
 
-	// "github.com/aws/amazon-ecs-agent/ecs-agent/api/attachmentinfo"
-	// apira "github.com/aws/amazon-ecs-agent/ecs-agent/api/resource"
-	// "github.com/aws/amazon-ecs-agent/ecs-agent/api/status"
-	// ebs "github.com/aws/amazon-ecs-agent/agent/ebs"
+	ebs "github.com/aws/amazon-ecs-agent/agent/ebs"
+	"github.com/aws/amazon-ecs-agent/ecs-agent/api/attachmentinfo"
+	apira "github.com/aws/amazon-ecs-agent/ecs-agent/api/resource"
+	"github.com/aws/amazon-ecs-agent/ecs-agent/api/status"
 
 	"github.com/cihub/seelog"
 	"github.com/pborman/uuid"
@@ -143,22 +143,22 @@ type agent interface {
 // after creating it via
 // the newAgent() method
 type ecsAgent struct {
-	ctx                   context.Context
-	cancel                context.CancelFunc
-	ec2MetadataClient     ec2.EC2MetadataClient
-	ec2Client             ec2.Client
-	cfg                   *config.Config
-	dataClient            data.Client
-	dockerClient          dockerapi.DockerClient
-	containerInstanceARN  string
-	credentialProvider    *aws_credentials.Credentials
-	stateManagerFactory   factory.StateManager
-	saveableOptionFactory factory.SaveableOption
-	pauseLoader           loader.Loader
-	serviceconnectManager engineserviceconnect.Manager
-	daemonManagers        map[string]dm.DaemonManager
-	eniWatcher            *watcher.ENIWatcher
-	// ebsWatcher                  *ebs.EBSWatcher
+	ctx                         context.Context
+	cancel                      context.CancelFunc
+	ec2MetadataClient           ec2.EC2MetadataClient
+	ec2Client                   ec2.Client
+	cfg                         *config.Config
+	dataClient                  data.Client
+	dockerClient                dockerapi.DockerClient
+	containerInstanceARN        string
+	credentialProvider          *aws_credentials.Credentials
+	stateManagerFactory         factory.StateManager
+	saveableOptionFactory       factory.SaveableOption
+	pauseLoader                 loader.Loader
+	serviceconnectManager       engineserviceconnect.Manager
+	daemonManagers              map[string]dm.DaemonManager
+	eniWatcher                  *watcher.ENIWatcher
+	ebsWatcher                  *ebs.EBSWatcher
 	cniClient                   ecscni.CNIClient
 	vpc                         string
 	subnet                      string
@@ -506,33 +506,33 @@ func (agent *ecsAgent) doStart(containerChangeEventStream *eventstream.EventStre
 	agent.startAsyncRoutines(containerChangeEventStream, credentialsManager, imageManager,
 		taskEngine, deregisterInstanceEventStream, client, taskHandler, attachmentEventHandler, state, doctor)
 
-	// if err := agent.startEBSWatcher(state, taskEngine.StateChangeEvents()); err != nil {
-	// 	seelog.Criticalf("Unable to start EBS watcher")
-	// 	return exitcodes.ExitTerminal
-	// }
+	if err := agent.startEBSWatcher(state, taskEngine.StateChangeEvents()); err != nil {
+		seelog.Criticalf("Unable to start EBS watcher")
+		return exitcodes.ExitTerminal
+	}
 
-	// tempAttachmentProperties := map[string]string{
-	// 	apira.VolumeSizeGibKey:        "7",
-	// 	apira.DeviceNameKey:           "/dev/nvme1n1",
-	// 	apira.VolumeIdKey:             "vol-09b1fc99d3b9654a5",
-	// 	apira.FileSystemKey:           "testXFS",
-	// 	apira.SourceVolumeHostPathKey: "/mnt/ecs/ebs/mocktaskID_vol-09b1fc99d3b9654a5",
-	// 	apira.VolumeNameKey:           "test-volume",
-	// }
+	tempAttachmentProperties := map[string]string{
+		apira.VolumeSizeGibKey:        "7",
+		apira.DeviceNameKey:           "/dev/nvme1n1",
+		apira.VolumeIdKey:             "vol-09b1fc99d3b9654a5",
+		apira.FileSystemKey:           "testXFS",
+		apira.SourceVolumeHostPathKey: "/mnt/ecs/ebs/mocktaskID_vol-09b1fc99d3b9654a5",
+		apira.VolumeNameKey:           "test-volume",
+	}
 
-	// duration := time.Now().Add(2000000 * time.Millisecond)
-	// go agent.ebsWatcher.HandleResourceAttachment(&apira.ResourceAttachment{
-	// 	AttachmentInfo: attachmentinfo.AttachmentInfo{
-	// 		AttachmentARN:        "dummy-arn",
-	// 		Status:               status.AttachmentNone,
-	// 		ExpiresAt:            duration,
-	// 		AttachStatusSent:     false,
-	// 		ClusterARN:           "dummy-cluster-arn",
-	// 		ContainerInstanceARN: "dummy-container-instance-arn",
-	// 	},
-	// 	AttachmentProperties: tempAttachmentProperties,
-	// 	AttachmentType:       apira.EBSTaskAttach,
-	// })
+	duration := time.Now().Add(2000000 * time.Millisecond)
+	go agent.ebsWatcher.HandleResourceAttachment(&apira.ResourceAttachment{
+		AttachmentInfo: attachmentinfo.AttachmentInfo{
+			AttachmentARN:        "dummy-arn",
+			Status:               status.AttachmentNone,
+			ExpiresAt:            duration,
+			AttachStatusSent:     false,
+			ClusterARN:           "dummy-cluster-arn",
+			ContainerInstanceARN: "dummy-container-instance-arn",
+		},
+		AttachmentProperties: tempAttachmentProperties,
+		AttachmentType:       apira.EBSTaskAttach,
+	})
 
 	// Start the acs session, which should block doStart
 	return agent.startACSSession(credentialsManager, taskEngine,
