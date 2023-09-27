@@ -107,8 +107,9 @@ func (w *EBSWatcher) HandleResourceAttachment(ebs *apiebs.ResourceAttachment) er
 }
 
 // NotifyFound will go through the list of found EBS volumes from the scanning process and mark them as found.
-func (w *EBSWatcher) NotifyFound(foundVolumes []string) {
-	for _, volumeId := range foundVolumes {
+func (w *EBSWatcher) NotifyFound(foundVolumes map[string]string) {
+	for volumeId, deviceName := range foundVolumes {
+		log.Debugf("Found volume with device name: %s", deviceName)
 		w.notifyFoundEBS(volumeId)
 	}
 }
