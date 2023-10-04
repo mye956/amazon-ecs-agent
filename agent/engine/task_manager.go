@@ -256,7 +256,8 @@ func (mtask *managedTask) overseeTask() {
 	// TODO: make this idempotent on agent restart
 	go mtask.releaseIPInIPAM()
 
-	err := mtask.UnstageVolumes()
+	csiClient := csiclient.NewCSIClient(filepath.Join(csiclient.SocketHostPath, csiclient.ImageName, csiclient.SocketName))
+	err := mtask.UnstageVolumes(&csiClient)
 	if err != nil {
 		logger.Error(fmt.Sprintf("Unable to unstage volumes: %v", err))
 	}
@@ -1569,7 +1570,7 @@ func (mtask *managedTask) waitForStopReported() bool {
 	return taskStopped
 }
 
-func (mtask *managedTask) UnstageVolumes() error {
+func (mtask *managedTask) UnstageVolumes(csiClient csiclient.CSIClient) error {
 	task := mtask.Task
 	if task == nil {
 		return fmt.Errorf("task not is not managed")
@@ -1578,14 +1579,14 @@ func (mtask *managedTask) UnstageVolumes() error {
 		logger.Debug("Task is not EBS-backed. Skip NodeUnstageVolume.")
 		return nil
 	}
-	csiClient := csiclient.NewCSIClient(filepath.Join(csiclient.SocketHostPath, csiclient.ImageName, csiclient.SocketName))
+	
 	for _, tv := range task.Volumes {
 		switch tv.Volume.(type) {
 		case *taskresourcevolume.EBSTaskVolumeConfig:
 			ebsCfg := tv.Volume.(*taskresourcevolume.EBSTaskVolumeConfig)
 			volumeId := ebsCfg.VolumeId
 			hostPath := ebsCfg.Source()
-			err := mtask.unstageVolumeWithTimeout(&csiClient, volumeId, hostPath)
+			err := mtask.unstageVolumeWithTimeout(csiClient, volumeId, hostPath)
 			if err != nil {
 				logger.Error("Unable to unstage volume", logger.Fields{
 					"Task":  task.String(),
