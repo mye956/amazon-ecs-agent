@@ -36,9 +36,7 @@ import (
 
 	"github.com/aws/amazon-ecs-agent/agent/api"
 	apicontainer "github.com/aws/amazon-ecs-agent/agent/api/container"
-	apicontainerstatus "github.com/aws/amazon-ecs-agent/agent/api/container/status"
 	apitask "github.com/aws/amazon-ecs-agent/agent/api/task"
-	apitaskstatus "github.com/aws/amazon-ecs-agent/agent/api/task/status"
 	"github.com/aws/amazon-ecs-agent/agent/dockerclient"
 	"github.com/aws/amazon-ecs-agent/agent/dockerclient/dockerapi"
 	"github.com/aws/amazon-ecs-agent/agent/dockerclient/sdkclientfactory"
@@ -46,9 +44,14 @@ import (
 	"github.com/aws/amazon-ecs-agent/agent/taskresource"
 	taskresourcevolume "github.com/aws/amazon-ecs-agent/agent/taskresource/volume"
 	"github.com/aws/amazon-ecs-agent/agent/utils"
-	"github.com/aws/amazon-ecs-agent/agent/utils/ttime"
+	apicontainerstatus "github.com/aws/amazon-ecs-agent/ecs-agent/api/container/status"
+	apitaskstatus "github.com/aws/amazon-ecs-agent/ecs-agent/api/task/status"
+	"github.com/aws/amazon-ecs-agent/ecs-agent/utils/ttime"
 	"github.com/aws/aws-sdk-go/aws"
+
+	"github.com/containerd/cgroups/v3"
 	sdkClient "github.com/docker/docker/client"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
@@ -153,14 +156,11 @@ func createNamespaceSharingTask(arn, pidMode, ipcMode, testImage string, theComm
 	return testTask
 }
 
-func createVolumeTask(scope, arn, volume string, autoprovision bool) (*apitask.Task, string, error) {
-	tmpDirectory, err := ioutil.TempDir("", "ecs_test")
+func createVolumeTask(t *testing.T, scope, arn, volume string, autoprovision bool) (*apitask.Task, error) {
+	tmpDirectory := t.TempDir()
+	err := ioutil.WriteFile(filepath.Join(tmpDirectory, "volume-data"), []byte("volume"), 0666)
 	if err != nil {
-		return nil, "", err
-	}
-	err = ioutil.WriteFile(filepath.Join(tmpDirectory, "volume-data"), []byte("volume"), 0666)
-	if err != nil {
-		return nil, "", err
+		return nil, err
 	}
 
 	testTask := createTestTask(arn)
@@ -196,7 +196,65 @@ func createVolumeTask(scope, arn, volume string, autoprovision bool) (*apitask.T
 	}
 	testTask.ResourcesMapUnsafe = make(map[string][]taskresource.TaskResource)
 	testTask.Containers[0].Command = []string{"sh", "-c", "if [[ $(cat /ecs/volume-data) != \"volume\" ]]; then cat /ecs/volume-data; exit 1; fi; exit 0"}
-	return testTask, tmpDirectory, nil
+	return testTask, nil
+}
+
+func TestSharedAutoprovisionVolume(t *testing.T) {
+	taskEngine, done, _ := setupWithDefaultConfig(t)
+	defer done()
+	stateChangeEvents := taskEngine.StateChangeEvents()
+	// Set the task clean up duration to speed up the test
+	taskEngine.(*DockerTaskEngine).cfg.TaskCleanupWaitDuration = 1 * time.Second
+
+	testTask, err := createVolumeTask(t, "shared", "TestSharedAutoprovisionVolume", "TestSharedAutoprovisionVolume", true)
+	require.NoError(t, err, "creating test task failed")
+
+	go taskEngine.AddTask(testTask)
+
+	verifyTaskIsRunning(stateChangeEvents, testTask)
+	verifyTaskIsStopped(stateChangeEvents, testTask)
+	assert.Equal(t, *testTask.Containers[0].GetKnownExitCode(), 0)
+	assert.Equal(t, testTask.ResourcesMapUnsafe["dockerVolume"][0].(*taskresourcevolume.VolumeResource).VolumeConfig.DockerVolumeName, "TestSharedAutoprovisionVolume", "task volume name is not the same as specified in task definition")
+	// Wait for task to be cleaned up
+	testTask.SetSentStatus(apitaskstatus.TaskStopped)
+	waitForTaskCleanup(t, taskEngine, testTask.Arn, 5)
+	client := taskEngine.(*DockerTaskEngine).client
+	response := client.InspectVolume(context.TODO(), "TestSharedAutoprovisionVolume", 1*time.Second)
+	assert.NoError(t, response.Error, "expect shared volume not removed")
+
+	cleanVolumes(testTask, taskEngine)
+}
+
+func TestSharedDoNotAutoprovisionVolume(t *testing.T) {
+	taskEngine, done, _ := setupWithDefaultConfig(t)
+	defer done()
+	stateChangeEvents := taskEngine.StateChangeEvents()
+	client := taskEngine.(*DockerTaskEngine).client
+	// Set the task clean up duration to speed up the test
+	taskEngine.(*DockerTaskEngine).cfg.TaskCleanupWaitDuration = 1 * time.Second
+
+	testTask, err := createVolumeTask(t, "shared", "TestSharedDoNotAutoprovisionVolume", "TestSharedDoNotAutoprovisionVolume", false)
+	require.NoError(t, err, "creating test task failed")
+
+	// creating volume to simulate previously provisioned volume
+	volumeConfig := testTask.Volumes[0].Volume.(*taskresourcevolume.DockerVolumeConfig)
+	volumeMetadata := client.CreateVolume(context.TODO(), "TestSharedDoNotAutoprovisionVolume",
+		volumeConfig.Driver, volumeConfig.DriverOpts, volumeConfig.Labels, 1*time.Minute)
+	require.NoError(t, volumeMetadata.Error)
+
+	go taskEngine.AddTask(testTask)
+
+	verifyTaskIsRunning(stateChangeEvents, testTask)
+	verifyTaskIsStopped(stateChangeEvents, testTask)
+	assert.Equal(t, *testTask.Containers[0].GetKnownExitCode(), 0)
+	assert.Len(t, testTask.ResourcesMapUnsafe["dockerVolume"], 0, "volume that has been provisioned does not require the agent to create it again")
+	// Wait for task to be cleaned up
+	testTask.SetSentStatus(apitaskstatus.TaskStopped)
+	waitForTaskCleanup(t, taskEngine, testTask.Arn, 5)
+	response := client.InspectVolume(context.TODO(), "TestSharedDoNotAutoprovisionVolume", 1*time.Second)
+	assert.NoError(t, response.Error, "expect shared volume not removed")
+
+	cleanVolumes(testTask, taskEngine)
 }
 
 // TestStartStopUnpulledImage ensures that an unpulled image is successfully
@@ -404,7 +462,7 @@ func TestDynamicPortForward(t *testing.T) {
 	}
 	var bindingForcontainerPortOne uint16
 	for _, binding := range validPortBindings {
-		if binding.ContainerPort == port {
+		if port == binding.ContainerPort {
 			bindingForcontainerPortOne = binding.HostPort
 		}
 	}
@@ -460,7 +518,7 @@ func TestMultipleDynamicPortForward(t *testing.T) {
 	var bindingForcontainerPortOne_1 uint16
 	var bindingForcontainerPortOne_2 uint16
 	for _, binding := range validPortBindings {
-		if binding.ContainerPort == port {
+		if port == binding.ContainerPort {
 			if bindingForcontainerPortOne_1 == 0 {
 				bindingForcontainerPortOne_1 = binding.HostPort
 			} else {
@@ -799,8 +857,7 @@ func TestTaskLevelVolume(t *testing.T) {
 	defer done()
 	stateChangeEvents := taskEngine.StateChangeEvents()
 
-	testTask, tmpDirectory, err := createVolumeTask("task", "TestTaskLevelVolume", "TestTaskLevelVolume", true)
-	defer os.Remove(tmpDirectory)
+	testTask, err := createVolumeTask(t, "task", "TestTaskLevelVolume", "TestTaskLevelVolume", true)
 	require.NoError(t, err, "creating test task failed")
 
 	go taskEngine.AddTask(testTask)
@@ -836,7 +893,10 @@ func TestSwapConfigurationTask(t *testing.T) {
 	cid := containerMap[testTask.Containers[0].Name].DockerID
 	state, _ := client.ContainerInspect(ctx, cid)
 	require.EqualValues(t, 314572800, state.HostConfig.MemorySwap)
-	require.EqualValues(t, 90, *state.HostConfig.MemorySwappiness)
+	// skip testing memory swappiness for cgroupv2, since this control has been removed in cgroupv2
+	if cgroups.Mode() != cgroups.Unified {
+		require.EqualValues(t, 90, *state.HostConfig.MemorySwappiness)
+	}
 
 	// Kill the existing container now
 	taskUpdate := createTestTask(testArn)
@@ -1070,4 +1130,351 @@ func TestDockerExecAPI(t *testing.T) {
 	}()
 
 	waitFinished(t, finished, testTimeout)
+}
+
+// This integ test checks for task queuing behavior in waitingTaskQueue which is dependent on hostResourceManager.
+// First two tasks totally consume the available memory resource on the host. So the third task queued up needs to wait
+// until resources gets freed up (i.e. any running tasks stops and frees enough resources) before it can start progressing.
+func TestHostResourceManagerTrickleQueue(t *testing.T) {
+	testTimeout := 1 * time.Minute
+	taskEngine, done, _ := setupWithDefaultConfig(t)
+	defer done()
+
+	stateChangeEvents := taskEngine.StateChangeEvents()
+
+	tasks := []*apitask.Task{}
+	for i := 0; i < 3; i++ {
+		taskArn := fmt.Sprintf("taskArn-%d", i)
+		testTask := createTestTask(taskArn)
+
+		// create container
+		A := createTestContainerWithImageAndName(baseImageForOS, "A")
+		A.EntryPoint = &entryPointForOS
+		A.Command = []string{"sleep 10"}
+		A.Essential = true
+		testTask.Containers = []*apicontainer.Container{
+			A,
+		}
+
+		// task memory so that only 2 such tasks can run - 1024 total memory available on instance by getTestHostResources()
+		testTask.Memory = int64(512)
+
+		tasks = append(tasks, testTask)
+	}
+
+	// goroutine to trickle tasks to enforce queueing order
+	go func() {
+		taskEngine.AddTask(tasks[0])
+		time.Sleep(2 * time.Second)
+		taskEngine.AddTask(tasks[1])
+		time.Sleep(2 * time.Second)
+		taskEngine.AddTask(tasks[2])
+	}()
+
+	finished := make(chan interface{})
+
+	// goroutine to verify task running order
+	go func() {
+		// Tasks go RUNNING in order
+		verifyContainerRunningStateChange(t, taskEngine)
+		verifyTaskIsRunning(stateChangeEvents, tasks[0])
+
+		verifyContainerRunningStateChange(t, taskEngine)
+		verifyTaskIsRunning(stateChangeEvents, tasks[1])
+
+		// First task should stop before 3rd task goes RUNNING
+		verifyContainerStoppedStateChange(t, taskEngine)
+		verifyTaskIsStopped(stateChangeEvents, tasks[0])
+
+		verifyContainerRunningStateChange(t, taskEngine)
+		verifyTaskIsRunning(stateChangeEvents, tasks[2])
+
+		verifyContainerStoppedStateChange(t, taskEngine)
+		verifyTaskIsStopped(stateChangeEvents, tasks[1])
+
+		verifyContainerStoppedStateChange(t, taskEngine)
+		verifyTaskIsStopped(stateChangeEvents, tasks[2])
+		close(finished)
+	}()
+
+	// goroutine to verify task accounting
+	// After ~4s, 3rd task should be queued up and will not be dequeued until ~10s, i.e. until 1st task stops and gets dequeued
+	go func() {
+		time.Sleep(6 * time.Second)
+		task, err := taskEngine.(*DockerTaskEngine).topTask()
+		assert.NoError(t, err, "one task should be queued up after 6s")
+		assert.Equal(t, task.Arn, tasks[2].Arn, "wrong task at top of queue")
+
+		time.Sleep(6 * time.Second)
+		_, err = taskEngine.(*DockerTaskEngine).topTask()
+		assert.Error(t, err, "no task should be queued up after 12s")
+	}()
+	waitFinished(t, finished, testTimeout)
+}
+
+// This test verifies if a task which is STOPPING does not block other new tasks
+// from starting if resources for them are available
+func TestHostResourceManagerResourceUtilization(t *testing.T) {
+	testTimeout := 1 * time.Minute
+	taskEngine, done, _ := setupWithDefaultConfig(t)
+	defer done()
+
+	stateChangeEvents := taskEngine.StateChangeEvents()
+
+	tasks := []*apitask.Task{}
+	for i := 0; i < 2; i++ {
+		taskArn := fmt.Sprintf("IntegTaskArn-%d", i)
+		testTask := createTestTask(taskArn)
+
+		// create container
+		A := createTestContainerWithImageAndName(baseImageForOS, fmt.Sprintf("A-%d", i))
+		A.EntryPoint = &entryPointForOS
+		A.Command = []string{"trap shortsleep SIGTERM; shortsleep() { sleep 6; exit 1; }; sleep 10"}
+		A.Essential = true
+		A.StopTimeout = uint(6)
+		testTask.Containers = []*apicontainer.Container{
+			A,
+		}
+
+		tasks = append(tasks, testTask)
+	}
+
+	// Stop task payload from ACS for 1st task
+	stopTask := createTestTask("IntegTaskArn-0")
+	stopTask.DesiredStatusUnsafe = apitaskstatus.TaskStopped
+	stopTask.Containers = []*apicontainer.Container{}
+
+	go func() {
+		taskEngine.AddTask(tasks[0])
+		time.Sleep(2 * time.Second)
+
+		// single managedTask which should have started
+		assert.Equal(t, 1, len(taskEngine.(*DockerTaskEngine).managedTasks), "exactly one task should be running")
+
+		// stopTask
+		taskEngine.AddTask(stopTask)
+		time.Sleep(2 * time.Second)
+
+		taskEngine.AddTask(tasks[1])
+	}()
+
+	finished := make(chan interface{})
+
+	// goroutine to verify task running order
+	go func() {
+		// Tasks go RUNNING in order, 2nd task doesn't wait for 1st task
+		// to transition to STOPPED as resources are available
+		verifyContainerRunningStateChange(t, taskEngine)
+		verifyTaskIsRunning(stateChangeEvents, tasks[0])
+
+		verifyContainerRunningStateChange(t, taskEngine)
+		verifyTaskIsRunning(stateChangeEvents, tasks[1])
+
+		// At this time, task[0] stopTask is received, and SIGTERM sent to task
+		// but the task[0] is still RUNNING due to trap handler
+		assert.Equal(t, apitaskstatus.TaskRunning, tasks[0].GetKnownStatus(), "task 0 known status should be RUNNING")
+		assert.Equal(t, apitaskstatus.TaskStopped, tasks[0].GetDesiredStatus(), "task 0 status should be STOPPED")
+
+		// task[0] stops after SIGTERM trap handler finishes
+		verifyContainerStoppedStateChange(t, taskEngine)
+		verifyTaskIsStopped(stateChangeEvents, tasks[0])
+
+		// task[1] stops after normal execution
+		verifyContainerStoppedStateChange(t, taskEngine)
+		verifyTaskIsStopped(stateChangeEvents, tasks[1])
+
+		close(finished)
+	}()
+
+	waitFinished(t, finished, testTimeout)
+}
+
+// This task verifies resources are properly released for all tasks for the case where
+// stopTask is received from ACS for a task which is queued up in waitingTasksQueue
+func TestHostResourceManagerStopTaskNotBlockWaitingTasks(t *testing.T) {
+	testTimeout := 1 * time.Minute
+	taskEngine, done, _ := setupWithDefaultConfig(t)
+	defer done()
+
+	stateChangeEvents := taskEngine.StateChangeEvents()
+
+	tasks := []*apitask.Task{}
+	stopTasks := []*apitask.Task{}
+	for i := 0; i < 2; i++ {
+		taskArn := fmt.Sprintf("IntegTaskArn-%d", i)
+		testTask := createTestTask(taskArn)
+		testTask.Memory = int64(768)
+
+		// create container
+		A := createTestContainerWithImageAndName(baseImageForOS, fmt.Sprintf("A-%d", i))
+		A.EntryPoint = &entryPointForOS
+		A.Command = []string{"trap shortsleep SIGTERM; shortsleep() { sleep 6; exit 1; }; sleep 10"}
+		A.Essential = true
+		A.StopTimeout = uint(6)
+		testTask.Containers = []*apicontainer.Container{
+			A,
+		}
+
+		tasks = append(tasks, testTask)
+
+		// Stop task payloads from ACS for the tasks
+		stopTask := createTestTask(fmt.Sprintf("IntegTaskArn-%d", i))
+		stopTask.DesiredStatusUnsafe = apitaskstatus.TaskStopped
+		stopTask.Containers = []*apicontainer.Container{}
+		stopTasks = append(stopTasks, stopTask)
+	}
+
+	// goroutine to schedule tasks
+	go func() {
+		taskEngine.AddTask(tasks[0])
+		time.Sleep(2 * time.Second)
+
+		// single managedTask which should have started
+		assert.Equal(t, 1, len(taskEngine.(*DockerTaskEngine).managedTasks), "exactly one task should be running")
+
+		// stopTask[0] - stop running task[0], this task will go to STOPPING due to trap handler defined and STOPPED after 6s
+		taskEngine.AddTask(stopTasks[0])
+
+		time.Sleep(2 * time.Second)
+
+		// this task (task[1]) goes in waitingTasksQueue because not enough memory available
+		taskEngine.AddTask(tasks[1])
+
+		time.Sleep(2 * time.Second)
+
+		// stopTask[1] - stop waiting task - task[1]
+		taskEngine.AddTask(stopTasks[1])
+	}()
+
+	finished := make(chan interface{})
+
+	// goroutine to verify task running order and verify assertions
+	go func() {
+		// 1st task goes to RUNNING
+		verifyContainerRunningStateChange(t, taskEngine)
+		verifyTaskIsRunning(stateChangeEvents, tasks[0])
+
+		time.Sleep(2500 * time.Millisecond)
+
+		// At this time, task[0] stopTask is received, and SIGTERM sent to task
+		// but the task[0] is still RUNNING due to trap handler
+		assert.Equal(t, apitaskstatus.TaskRunning, tasks[0].GetKnownStatus(), "task 0 known status should be RUNNING")
+		assert.Equal(t, apitaskstatus.TaskStopped, tasks[0].GetDesiredStatus(), "task 0 status should be STOPPED")
+
+		time.Sleep(2 * time.Second)
+
+		// task[1] stops while in waitingTasksQueue while task[0] is in progress
+		// This is because it is still waiting to progress, has no containers created
+		// and does not need to wait for stopTimeout, can immediately STSC out
+		verifyTaskIsStopped(stateChangeEvents, tasks[1])
+
+		// task[0] stops
+		verifyContainerStoppedStateChange(t, taskEngine)
+		verifyTaskIsStopped(stateChangeEvents, tasks[0])
+
+		// Verify resources are properly released in host resource manager
+		assert.False(t, taskEngine.(*DockerTaskEngine).hostResourceManager.checkTaskConsumed(tasks[0].Arn), "task 0 resources not released")
+		assert.False(t, taskEngine.(*DockerTaskEngine).hostResourceManager.checkTaskConsumed(tasks[1].Arn), "task 1 resources not released")
+
+		close(finished)
+	}()
+
+	waitFinished(t, finished, testTimeout)
+}
+
+// Test Host Resource Manager does not account Fargate tasks when started
+func TestHostResourceManagerLaunchTypeBehavior(t *testing.T) {
+	testCases := []struct {
+		Name       string
+		LaunchType string
+	}{
+		{
+			Name:       "TestHostResourceManagerFargateLaunchTypeBehavior",
+			LaunchType: "FARGATE",
+		},
+		{
+			Name:       "TestHostResourceManagerEC2LaunchTypeBehavior",
+			LaunchType: "EC2",
+		},
+		{
+			Name:       "TestHostResourceManagerExternalLaunchTypeBehavior",
+			LaunchType: "EXTERNAL",
+		},
+		{
+			Name:       "TestHostResourceManagerRandomLaunchTypeBehavior",
+			LaunchType: "RaNdOmStrInG",
+		},
+		{
+			Name:       "TestHostResourceManagerEmptyLaunchTypeBehavior",
+			LaunchType: "",
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.Name, func(t *testing.T) {
+			testTimeout := 1 * time.Minute
+			taskEngine, done, _ := setupWithDefaultConfig(t)
+			defer done()
+
+			stateChangeEvents := taskEngine.StateChangeEvents()
+
+			taskArn := "IntegTaskArn"
+			testTask := createTestTask(taskArn)
+			testTask.Memory = int64(768)
+			testTask.LaunchType = tc.LaunchType
+
+			// create container
+			taskContainer := createTestContainerWithImageAndName(baseImageForOS, "SleepWithTrap")
+			taskContainer.EntryPoint = &entryPointForOS
+			taskContainer.Command = []string{"trap shortsleep SIGTERM; shortsleep() { sleep 6; exit 1; }; sleep 10"}
+			taskContainer.Essential = true
+			taskContainer.StopTimeout = uint(6)
+			testTask.Containers = []*apicontainer.Container{
+				taskContainer,
+			}
+
+			// Stop task payloads from ACS for the tasks
+			stopTask := createTestTask("IntegTaskArn")
+			stopTask.DesiredStatusUnsafe = apitaskstatus.TaskStopped
+			stopTask.Containers = []*apicontainer.Container{}
+
+			// goroutine to schedule tasks
+			go func() {
+				taskEngine.AddTask(testTask)
+				time.Sleep(2 * time.Second)
+
+				// single managedTask which should have started
+				assert.Equal(t, 1, len(taskEngine.(*DockerTaskEngine).managedTasks), "exactly one task should be running")
+
+				// stopTask - stop running task, this task will go to STOPPING due to trap handler defined and STOPPED after 6s
+				taskEngine.AddTask(stopTask)
+			}()
+
+			finished := make(chan interface{})
+
+			// goroutine to verify task running order and verify assertions
+			go func() {
+				// Task goes to RUNNING
+				verifyContainerRunningStateChange(t, taskEngine)
+				verifyTaskIsRunning(stateChangeEvents, testTask)
+
+				time.Sleep(2500 * time.Millisecond)
+
+				// At this time, stopTask is received, and SIGTERM sent to task
+				// but the task is still RUNNING due to trap handler
+				assert.Equal(t, apitaskstatus.TaskRunning, testTask.GetKnownStatus(), "task known status should be RUNNING")
+				assert.Equal(t, apitaskstatus.TaskStopped, testTask.GetDesiredStatus(), "task desired status should be STOPPED")
+				// Verify resources are properly consumed in host resource manager, and not consumed for Fargate
+				if tc.LaunchType == "FARGATE" {
+					assert.False(t, taskEngine.(*DockerTaskEngine).hostResourceManager.checkTaskConsumed(testTask.Arn), "fargate task resources should not be consumed")
+				} else {
+					assert.True(t, taskEngine.(*DockerTaskEngine).hostResourceManager.checkTaskConsumed(testTask.Arn), "non fargate task resources should be consumed")
+				}
+				time.Sleep(2 * time.Second)
+				close(finished)
+			}()
+
+			waitFinished(t, finished, testTimeout)
+		})
+	}
 }

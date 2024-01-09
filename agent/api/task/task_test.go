@@ -31,17 +31,12 @@ import (
 
 	"github.com/docker/go-connections/nat"
 
-	"github.com/aws/amazon-ecs-agent/agent/acs/model/ecsacs"
 	apicontainer "github.com/aws/amazon-ecs-agent/agent/api/container"
-	apicontainerstatus "github.com/aws/amazon-ecs-agent/agent/api/container/status"
-	apieni "github.com/aws/amazon-ecs-agent/agent/api/eni"
-	apitaskstatus "github.com/aws/amazon-ecs-agent/agent/api/task/status"
 	"github.com/aws/amazon-ecs-agent/agent/asm"
+	mock_asm_factory "github.com/aws/amazon-ecs-agent/agent/asm/factory/mocks"
 	mock_factory "github.com/aws/amazon-ecs-agent/agent/asm/factory/mocks"
 	mock_secretsmanageriface "github.com/aws/amazon-ecs-agent/agent/asm/mocks"
 	"github.com/aws/amazon-ecs-agent/agent/config"
-	"github.com/aws/amazon-ecs-agent/agent/credentials"
-	mock_credentials "github.com/aws/amazon-ecs-agent/agent/credentials/mocks"
 	"github.com/aws/amazon-ecs-agent/agent/dockerclient"
 	"github.com/aws/amazon-ecs-agent/agent/dockerclient/dockerapi"
 	mock_dockerapi "github.com/aws/amazon-ecs-agent/agent/dockerclient/dockerapi/mocks"
@@ -52,14 +47,23 @@ import (
 	resourcestatus "github.com/aws/amazon-ecs-agent/agent/taskresource/status"
 	taskresourcevolume "github.com/aws/amazon-ecs-agent/agent/taskresource/volume"
 	"github.com/aws/amazon-ecs-agent/agent/utils"
+	"github.com/aws/amazon-ecs-agent/ecs-agent/acs/model/ecsacs"
+	apiresource "github.com/aws/amazon-ecs-agent/ecs-agent/api/attachment/resource"
+	apicontainerstatus "github.com/aws/amazon-ecs-agent/ecs-agent/api/container/status"
+	"github.com/aws/amazon-ecs-agent/ecs-agent/api/ecs/model/ecs"
+	apitaskstatus "github.com/aws/amazon-ecs-agent/ecs-agent/api/task/status"
+	"github.com/aws/amazon-ecs-agent/ecs-agent/credentials"
+	mock_credentials "github.com/aws/amazon-ecs-agent/ecs-agent/credentials/mocks"
+	ni "github.com/aws/amazon-ecs-agent/ecs-agent/netlib/model/networkinterface"
+	commonutils "github.com/aws/amazon-ecs-agent/ecs-agent/utils"
 	"github.com/aws/aws-sdk-go/service/secretsmanager"
 
 	"github.com/aws/amazon-ecs-agent/agent/taskresource/asmsecret"
 	"github.com/aws/amazon-ecs-agent/agent/taskresource/envFiles"
 	"github.com/aws/amazon-ecs-agent/agent/taskresource/ssmsecret"
 	"github.com/aws/aws-sdk-go/aws"
-	"github.com/docker/docker/api/types"
 	dockercontainer "github.com/docker/docker/api/types/container"
+	"github.com/docker/docker/api/types/volume"
 	"github.com/docker/go-units"
 	"github.com/golang/mock/gomock"
 	"github.com/stretchr/testify/assert"
@@ -79,14 +83,38 @@ const (
 var (
 	testListenerPort              = uint16(8080)
 	testBridgeDefaultListenerPort = uint16(15000)
+	testEBSReadOnly               = false
 )
 
 func TestDockerConfigPortBinding(t *testing.T) {
 	testTask := &Task{
 		Containers: []*apicontainer.Container{
 			{
-				Name:  "c1",
-				Ports: []apicontainer.PortBinding{{10, 10, "", apicontainer.TransportProtocolTCP}, {20, 20, "", apicontainer.TransportProtocolUDP}},
+				Name: "c1",
+				Ports: []apicontainer.PortBinding{
+					{
+						ContainerPort: 10,
+						HostPort:      10,
+						BindIP:        "",
+						Protocol:      apicontainer.TransportProtocolTCP,
+					},
+					{
+						ContainerPort: 20,
+						HostPort:      20,
+						BindIP:        "",
+						Protocol:      apicontainer.TransportProtocolUDP,
+					},
+					{
+						ContainerPortRange: "99-999",
+						BindIP:             "",
+						Protocol:           apicontainer.TransportProtocolTCP,
+					},
+					{
+						ContainerPortRange: "121-221",
+						BindIP:             "",
+						Protocol:           apicontainer.TransportProtocolUDP,
+					},
+				},
 			},
 		},
 	}
@@ -104,6 +132,65 @@ func TestDockerConfigPortBinding(t *testing.T) {
 	if !ok {
 		t.Fatal("Could not get exposed ports 20/udp")
 	}
+
+	startContainerPortTcp, endContainerPortTcp, tcpParseErr := nat.ParsePortRangeToInt("99-999")
+	if tcpParseErr != nil {
+		t.Fatal("Error parsing tcp port range into start and end ints")
+	}
+
+	for i := startContainerPortTcp; i <= endContainerPortTcp; i++ {
+		portProtocol := nat.Port(fmt.Sprintf("%d/tcp", i))
+		_, ok := config.ExposedPorts[portProtocol]
+		if !ok {
+			t.Fatalf("Could not get exposed ports %s", portProtocol)
+		}
+	}
+
+	startContainerPortUdp, endContainerPortUdp, udpParseErr := nat.ParsePortRangeToInt("121-221")
+	if udpParseErr != nil {
+		t.Fatal("Error parsing udp port range into start and end ints")
+	}
+
+	for i := startContainerPortUdp; i <= endContainerPortUdp; i++ {
+		portProtocol := nat.Port(fmt.Sprintf("%d/udp", i))
+		_, ok := config.ExposedPorts[portProtocol]
+		if !ok {
+			t.Fatalf("Could not get exposed ports %s", portProtocol)
+		}
+	}
+}
+
+func TestDockerConfigPortBindingContainerPortIsZero(t *testing.T) {
+	testTask := &Task{
+		Containers: []*apicontainer.Container{
+			{
+				Name: "ContainerHavingPortBindingWithContainerPortZero",
+				Ports: []apicontainer.PortBinding{
+					{
+						ContainerPort: 0,
+						HostPort:      10,
+						BindIP:        "",
+						Protocol:      apicontainer.TransportProtocolTCP,
+					},
+					{
+						ContainerPort: 0,
+						HostPort:      20,
+						BindIP:        "",
+						Protocol:      apicontainer.TransportProtocolUDP,
+					},
+				},
+			},
+		},
+	}
+
+	dockerContainerConfig, err := testTask.DockerConfig(testTask.Containers[0], defaultDockerClientAPIVersion)
+	assert.Nil(t, err)
+
+	// Ensure that port zero is not included in the set of container ports that are exposed for the container.
+	_, ok := dockerContainerConfig.ExposedPorts["0/tcp"]
+	assert.False(t, ok, "Unexpectedly could get exposed ports 0/tcp")
+	_, ok = dockerContainerConfig.ExposedPorts["0/udp"]
+	assert.False(t, ok, "Unexpectedly could get exposed ports 0/udp")
 }
 
 func TestDockerHostConfigCPUShareZero(t *testing.T) {
@@ -184,28 +271,167 @@ func TestDockerHostConfigCPUShareUnchanged(t *testing.T) {
 }
 
 func TestDockerHostConfigPortBinding(t *testing.T) {
-	testTask := &Task{
+	testTask1 := &Task{
 		Containers: []*apicontainer.Container{
 			{
-				Name:  "c1",
-				Ports: []apicontainer.PortBinding{{10, 10, "", apicontainer.TransportProtocolTCP}, {20, 20, "", apicontainer.TransportProtocolUDP}},
+				Name: "c1",
+				Ports: []apicontainer.PortBinding{
+					{
+						ContainerPort: 10,
+						HostPort:      20,
+						BindIP:        "",
+						Protocol:      apicontainer.TransportProtocolTCP,
+					},
+					{
+						ContainerPort: 20,
+						HostPort:      30,
+						BindIP:        "",
+						Protocol:      apicontainer.TransportProtocolUDP,
+					},
+				},
 			},
 		},
 	}
 
-	config, err := testTask.DockerHostConfig(testTask.Containers[0], dockerMap(testTask), defaultDockerClientAPIVersion,
-		&config.Config{})
-	assert.Nil(t, err)
+	testTask2 := &Task{
+		Containers: []*apicontainer.Container{
+			{
+				Name: "c1",
+				Ports: []apicontainer.PortBinding{
+					{
+						ContainerPort: 10,
+						BindIP:        "",
+						Protocol:      apicontainer.TransportProtocolTCP,
+					},
+					{
+						ContainerPort: 20,
+						BindIP:        "",
+						Protocol:      apicontainer.TransportProtocolUDP,
+					},
+					{
+						ContainerPort: 30,
+						BindIP:        "",
+						Protocol:      apicontainer.TransportProtocolUDP,
+					},
+				},
+			},
+		},
+	}
 
-	bindings, ok := config.PortBindings["10/tcp"]
-	assert.True(t, ok, "Could not get port bindings")
-	assert.Equal(t, 1, len(bindings), "Wrong number of bindings")
-	assert.Equal(t, "10", bindings[0].HostPort, "Wrong hostport")
+	testTask3 := &Task{
+		Containers: []*apicontainer.Container{
+			{
+				Name: "c1",
+				Ports: []apicontainer.PortBinding{
+					{
+						ContainerPortRange: "55-57",
+						BindIP:             "",
+						Protocol:           apicontainer.TransportProtocolUDP,
+					},
+					{
+						ContainerPort: 80,
+						BindIP:        "",
+						Protocol:      apicontainer.TransportProtocolTCP,
+					},
+				},
+			},
+		},
+	}
 
-	bindings, ok = config.PortBindings["20/udp"]
-	assert.True(t, ok, "Could not get port bindings")
-	assert.Equal(t, 1, len(bindings), "Wrong number of bindings")
-	assert.Equal(t, "20", bindings[0].HostPort, "Wrong hostport")
+	testCases := []struct {
+		testName                      string
+		testTask                      *Task
+		testDynamicHostPortRange      string
+		testContainerPortRange        string
+		expectedPortBinding           nat.PortMap
+		expectedContainerPortSet      map[int]struct{}
+		expectedContainerPortRangeMap map[string]string
+		expectedError                 bool
+	}{
+		{
+			testName:                 "user-specified container ports and host ports",
+			testTask:                 testTask1,
+			testDynamicHostPortRange: "40000-60000",
+			expectedPortBinding: nat.PortMap{
+				nat.Port("10/tcp"): []nat.PortBinding{{HostPort: "20"}},
+				nat.Port("20/udp"): []nat.PortBinding{{HostPort: "30"}},
+			},
+			expectedContainerPortSet: map[int]struct{}{
+				10: {},
+				20: {},
+			},
+			expectedContainerPortRangeMap: map[string]string{},
+		},
+		{
+			testName:                 "user-specified container ports with a ideal dynamicHostPortRange",
+			testTask:                 testTask2,
+			testDynamicHostPortRange: "40000-60000",
+			expectedContainerPortSet: map[int]struct{}{
+				10: {},
+				20: {},
+				30: {},
+			},
+			expectedContainerPortRangeMap: map[string]string{},
+		},
+		{
+			testName:                 "user-specified container ports with a bad dynamicHostPortRange",
+			testTask:                 testTask2,
+			testDynamicHostPortRange: "100-101",
+			expectedError:            true,
+		},
+		{
+			testName:                 "user-specified container port and container port range with a ideal dynamicHostPortRange",
+			testTask:                 testTask3,
+			testDynamicHostPortRange: "40000-60000",
+			testContainerPortRange:   "55-57",
+			expectedContainerPortSet: map[int]struct{}{
+				80: {},
+			},
+		},
+		{
+			testName:                 "user-specified container port and container port range with a bad user-specified dynamicHostPortRange",
+			testTask:                 testTask3,
+			testDynamicHostPortRange: "40000-40001",
+			testContainerPortRange:   "55-57",
+			expectedError:            true,
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.testName, func(t *testing.T) {
+			defer func() {
+				getHostPortRange = utils.GetHostPortRange
+			}()
+
+			// Get the Docker host config for the task container
+			config, err := tc.testTask.DockerHostConfig(tc.testTask.Containers[0], dockerMap(tc.testTask),
+				defaultDockerClientAPIVersion, &config.Config{DynamicHostPortRange: tc.testDynamicHostPortRange})
+			if !tc.expectedError {
+				assert.Nil(t, err)
+
+				// Verify PortBindings
+				if tc.expectedPortBinding != nil {
+					if !reflect.DeepEqual(config.PortBindings, tc.expectedPortBinding) {
+						t.Error("Expected port bindings to be resolved, was: ", config.PortBindings)
+					}
+				}
+
+				// Verify ContainerPortSet
+				if !reflect.DeepEqual(tc.testTask.Containers[0].ContainerPortSet, tc.expectedContainerPortSet) {
+					t.Error("Expected container port set to be resolved, was: ", tc.testTask.Containers[0].GetContainerPortSet())
+				}
+
+				// Verify ContainerPortRangeMap
+				if tc.expectedContainerPortRangeMap != nil {
+					if !reflect.DeepEqual(tc.testTask.Containers[0].ContainerPortRangeMap, tc.expectedContainerPortRangeMap) {
+						t.Error("Expected container port range map to be resolved, was: ", tc.testTask.Containers[0].GetContainerPortRangeMap())
+					}
+				}
+			} else {
+				assert.NotNil(t, err)
+			}
+		})
+	}
 }
 
 var (
@@ -218,6 +444,14 @@ var (
 	defaultSCProtocol                      = "/tcp"
 )
 
+func getDefaultDynamicHostPortRange() (start int, end int) {
+	startHostPortRange, endHostPortRange, err := utils.GetDynamicHostPortRange()
+	if err != nil {
+		return utils.DefaultPortRangeStart, utils.DefaultPortRangeEnd
+	}
+	return startHostPortRange, endHostPortRange
+}
+
 func getTestTaskServiceConnectBridgeMode() *Task {
 	testTask := &Task{
 		NetworkMode: BridgeNetworkMode,
@@ -225,8 +459,8 @@ func getTestTaskServiceConnectBridgeMode() *Task {
 			{
 				Name: "C1",
 				Ports: []apicontainer.PortBinding{
-					{SCTaskContainerPort1, 0, "", apicontainer.TransportProtocolTCP},
-					{SCTaskContainerPort2, 0, "", apicontainer.TransportProtocolTCP},
+					{ContainerPort: SCTaskContainerPort1, HostPort: 0, BindIP: "", Protocol: apicontainer.TransportProtocolTCP},
+					{ContainerPort: SCTaskContainerPort2, HostPort: 0, BindIP: "", Protocol: apicontainer.TransportProtocolTCP},
 				},
 				NetworkModeUnsafe: "", // should later be overridden to container mode
 			},
@@ -273,61 +507,91 @@ func convertSCPort(port uint16) nat.Port {
 }
 
 // TestDockerHostConfigSCBridgeMode verifies port bindings and network mode overrides for each
-// container in an SC-enabled bridge mode task. The test task is consisted of the SC container, a regular container,
+// container in an SC-enabled bridge mode task with default/user-specified dynamic host port range.
+// The test task is consisted of the SC container, a regular container,
 // and two pause containers associated with each.
 func TestDockerHostConfigSCBridgeMode(t *testing.T) {
 	testTask := getTestTaskServiceConnectBridgeMode()
-	// task container and SC container should both get empty port binding map and "container" network mode
-	actualConfig, err := testTask.DockerHostConfig(testTask.Containers[0], dockerMap(testTask), defaultDockerClientAPIVersion,
-		&config.Config{})
-	assert.Nil(t, err)
-	assert.NotNil(t, actualConfig)
-	assert.Equal(t, dockercontainer.NetworkMode(fmt.Sprintf("%s-%s", // e.g. "container:dockerid-~internal~ecs~pause-C1"
-		dockerMappingContainerPrefix+dockerIDPrefix+NetworkPauseContainerName, "C1")), actualConfig.NetworkMode)
-	assert.Empty(t, actualConfig.PortBindings, "Task container port binding should be empty")
+	testCases := []struct {
+		testStartHostPort int
+		testEndHostPort   int
+		testName          string
+		testError         bool
+	}{
+		{
+			testStartHostPort: 0,
+			testEndHostPort:   0,
+			testName:          "with default dynamic host port range",
+		},
+		{
+			testStartHostPort: 50000,
+			testEndHostPort:   60000,
+			testName:          "with user-specified dynamic host port range",
+		},
+	}
 
-	actualConfig, err = testTask.DockerHostConfig(testTask.Containers[2], dockerMap(testTask), defaultDockerClientAPIVersion,
-		&config.Config{})
-	assert.Nil(t, err)
-	assert.NotNil(t, actualConfig)
-	assert.Equal(t, dockercontainer.NetworkMode(fmt.Sprintf("%s-%s", // e.g. "container:dockerid-~internal~ecs~pause-C1"
-		dockerMappingContainerPrefix+dockerIDPrefix+NetworkPauseContainerName, serviceConnectContainerTestName)), actualConfig.NetworkMode)
-	assert.Empty(t, actualConfig.PortBindings, "SC container port binding should be empty")
+	for _, tc := range testCases {
+		t.Run(tc.testName, func(t *testing.T) {
+			// need to reset the tracker to avoid getting data from previous test cases
+			utils.ResetTracker()
+			if tc.testStartHostPort == 0 && tc.testEndHostPort == 0 {
+				tc.testStartHostPort, tc.testEndHostPort = getDefaultDynamicHostPortRange()
+			}
+			testDynamicHostPortRange := fmt.Sprintf("%d-%d", tc.testStartHostPort, tc.testEndHostPort)
+			testConfig := &config.Config{DynamicHostPortRange: testDynamicHostPortRange}
 
-	// task pause container should get port binding map of the task container
-	actualConfig, err = testTask.DockerHostConfig(testTask.Containers[1], dockerMap(testTask), defaultDockerClientAPIVersion,
-		&config.Config{})
-	assert.Nil(t, err)
-	assert.NotNil(t, actualConfig)
-	assert.Equal(t, dockercontainer.NetworkMode(BridgeNetworkMode), actualConfig.NetworkMode)
-	bindings, ok := actualConfig.PortBindings[convertSCPort(SCTaskContainerPort1)]
-	assert.True(t, ok, "Could not get port bindings")
-	assert.Equal(t, 1, len(bindings), "Wrong number of bindings")
-	assert.Equal(t, "0", bindings[0].HostPort, "Wrong hostport")
-	bindings, ok = actualConfig.PortBindings[convertSCPort(SCTaskContainerPort2)]
-	assert.True(t, ok, "Could not get port bindings")
-	assert.Equal(t, 1, len(bindings), "Wrong number of bindings")
-	assert.Equal(t, "0", bindings[0].HostPort, "Wrong hostport")
+			// task container and SC container should both get empty port binding map and "container" network mode
 
-	// SC pause container should get port binding map of all ingress listeners
-	actualConfig, err = testTask.DockerHostConfig(testTask.Containers[3], dockerMap(testTask), defaultDockerClientAPIVersion,
-		&config.Config{})
-	assert.Nil(t, err)
-	assert.NotNil(t, actualConfig)
-	assert.Equal(t, dockercontainer.NetworkMode(BridgeNetworkMode), actualConfig.NetworkMode)
-	// SC - ingress listener 1 - default experience
-	bindings, ok = actualConfig.PortBindings[convertSCPort(SCIngressListener1ContainerPort)]
-	assert.True(t, ok, "Could not get port bindings")
-	assert.Equal(t, 1, len(bindings), "Wrong number of bindings")
-	assert.Equal(t, "0", bindings[0].HostPort, "Wrong hostport")
-	// SC - ingress listener 2 - non-default host port
-	bindings, ok = actualConfig.PortBindings[convertSCPort(SCIngressListener2ContainerPort)]
-	assert.True(t, ok, "Could not get port bindings")
-	assert.Equal(t, 1, len(bindings), "Wrong number of bindings")
-	assert.Equal(t, strconv.Itoa(int(SCIngressListener2HostPort)), bindings[0].HostPort, "Wrong hostport")
-	// SC - egress listener - should not have port binding
-	bindings, ok = actualConfig.PortBindings[convertSCPort(SCEgressListenerContainerPort)]
-	assert.False(t, ok, "egress listener has port binding but it shouldn't")
+			// the task container
+			actualConfig, err := testTask.DockerHostConfig(testTask.Containers[0], dockerMap(testTask), defaultDockerClientAPIVersion, testConfig)
+			assert.Nil(t, err)
+			assert.NotNil(t, actualConfig)
+			assert.Equal(t, dockercontainer.NetworkMode(fmt.Sprintf("%s-%s", // e.g. "container:dockerid-~internal~ecs~pause-C1"
+				dockerMappingContainerPrefix+dockerIDPrefix+NetworkPauseContainerName, "C1")), actualConfig.NetworkMode)
+			assert.Empty(t, actualConfig.PortBindings, "Task container port binding should be empty")
+
+			// the service connect container
+			actualConfig, err = testTask.DockerHostConfig(testTask.Containers[2], dockerMap(testTask), defaultDockerClientAPIVersion, testConfig)
+			assert.Nil(t, err)
+			assert.NotNil(t, actualConfig)
+			assert.Equal(t, dockercontainer.NetworkMode(fmt.Sprintf("%s-%s", // e.g. "container:dockerid-~internal~ecs~pause-C1"
+				dockerMappingContainerPrefix+dockerIDPrefix+NetworkPauseContainerName, serviceConnectContainerTestName)), actualConfig.NetworkMode)
+			assert.Empty(t, actualConfig.PortBindings, "SC container port binding should be empty")
+
+			// task pause container should get port binding map of the task container
+			actualConfig, err = testTask.DockerHostConfig(testTask.Containers[1], dockerMap(testTask), defaultDockerClientAPIVersion, testConfig)
+			assert.Nil(t, err)
+			assert.NotNil(t, actualConfig)
+			assert.Equal(t, dockercontainer.NetworkMode(BridgeNetworkMode), actualConfig.NetworkMode)
+			bindings, ok := actualConfig.PortBindings[convertSCPort(SCTaskContainerPort1)]
+			assert.True(t, ok, "Could not get port bindings")
+			assert.Equal(t, 1, len(bindings), "Wrong number of bindings")
+
+			bindings, ok = actualConfig.PortBindings[convertSCPort(SCTaskContainerPort2)]
+			assert.True(t, ok, "Could not get port bindings")
+			assert.Equal(t, 1, len(bindings), "Wrong number of bindings")
+
+			// SC pause container should get port binding map of all ingress listeners
+			actualConfig, err = testTask.DockerHostConfig(testTask.Containers[3], dockerMap(testTask), defaultDockerClientAPIVersion, testConfig)
+			assert.Nil(t, err)
+			assert.NotNil(t, actualConfig)
+			assert.Equal(t, dockercontainer.NetworkMode(BridgeNetworkMode), actualConfig.NetworkMode)
+
+			// SC - ingress listener 1 - default experience
+			bindings, ok = actualConfig.PortBindings[convertSCPort(SCIngressListener1ContainerPort)]
+			assert.True(t, ok, "Could not get port bindings")
+
+			// SC - ingress listener 2 - non-default host port
+			bindings, ok = actualConfig.PortBindings[convertSCPort(SCIngressListener2ContainerPort)]
+			assert.True(t, ok, "Could not get port bindings")
+			assert.Equal(t, 1, len(bindings), "Wrong number of bindings")
+			assert.Equal(t, strconv.Itoa(int(SCIngressListener2HostPort)), bindings[0].HostPort, "Wrong hostport")
+
+			// SC - egress listener - should not have port binding
+			bindings, ok = actualConfig.PortBindings[convertSCPort(SCEgressListenerContainerPort)]
+			assert.False(t, ok, "egress listener has port binding but it shouldn't")
+		})
+	}
 }
 
 // TestDockerHostConfigSCBridgeMode_getPortBindingFailure verifies that when we can't find the task
@@ -488,7 +752,7 @@ func TestDockerHostConfigRawConfig(t *testing.T) {
 
 func TestDockerHostConfigPauseContainer(t *testing.T) {
 	testTask := &Task{
-		ENIs: []*apieni.ENI{
+		ENIs: []*ni.NetworkInterface{
 			{
 				ID: "eniID",
 			},
@@ -548,11 +812,11 @@ func TestDockerHostConfigPauseContainer(t *testing.T) {
 	assert.Equal(t, []string{"us-west-2.compute.internal"}, cfg.DNSSearch)
 
 	// Verify eni ExtraHosts  added to HostConfig for pause container
-	ipaddr := &apieni.ENIIPV4Address{Primary: true, Address: "10.0.1.1"}
-	testTask.ENIs[0].IPV4Addresses = []*apieni.ENIIPV4Address{ipaddr}
+	ipaddr := &ni.IPV4Address{Primary: true, Address: "10.0.1.1"}
+	testTask.ENIs[0].IPV4Addresses = []*ni.IPV4Address{ipaddr}
 	testTask.ENIs[0].PrivateDNSName = "eni.ip.region.compute.internal"
 
-	testTask.ENIs[0].IPV6Addresses = []*apieni.ENIIPV6Address{{Address: ipv6}}
+	testTask.ENIs[0].IPV6Addresses = []*ni.IPV6Address{{Address: ipv6}}
 	cfg, err = testTask.DockerHostConfig(pauseContainer, dockerMap(testTask), defaultDockerClientAPIVersion,
 		&config.Config{})
 	assert.Nil(t, err)
@@ -915,7 +1179,7 @@ func TestPostUnmarshalTaskWithDockerVolumes(t *testing.T) {
 	autoprovision := true
 	ctrl := gomock.NewController(t)
 	dockerClient := mock_dockerapi.NewMockDockerClient(ctrl)
-	dockerClient.EXPECT().InspectVolume(gomock.Any(), gomock.Any(), gomock.Any()).Return(dockerapi.SDKVolumeResponse{DockerVolume: &types.Volume{}})
+	dockerClient.EXPECT().InspectVolume(gomock.Any(), gomock.Any(), gomock.Any()).Return(dockerapi.SDKVolumeResponse{DockerVolume: &volume.Volume{}})
 	taskFromACS := ecsacs.Task{
 		Arn:           strptr("myArn"),
 		DesiredStatus: strptr("RUNNING"),
@@ -1464,6 +1728,10 @@ func TestTaskFromACS(t *testing.T) {
 						ContainerPort: intptr(900),
 						Protocol:      strptr("udp"),
 					},
+					{
+						ContainerPortRange: strptr("99-199"),
+						Protocol:           strptr("tcp"),
+					},
 				},
 				VolumesFrom: []*ecsacs.VolumeFrom{
 					{
@@ -1563,6 +1831,10 @@ func TestTaskFromACS(t *testing.T) {
 						ContainerPort: 900,
 						Protocol:      apicontainer.TransportProtocolUDP,
 					},
+					{
+						ContainerPortRange: "99-199",
+						Protocol:           apicontainer.TransportProtocolTCP,
+					},
 				},
 				VolumesFrom: []apicontainer.VolumeFrom{
 					{
@@ -1625,12 +1897,10 @@ func TestTaskFromACS(t *testing.T) {
 				Type: "elastic-inference",
 			},
 		},
-		StartSequenceNumber: 42,
-		CPU:                 2.0,
-		Memory:              512,
-		ResourcesMapUnsafe:  make(map[string][]taskresource.TaskResource),
+		CPU:                2.0,
+		Memory:             512,
+		ResourcesMapUnsafe: make(map[string][]taskresource.TaskResource),
 	}
-	expectedTask.GetID() // to set the task setIdOnce (sync.Once) property
 
 	seqNum := int64(42)
 	task, err := TaskFromACS(&taskFromAcs, &ecsacs.PayloadMessage{SeqNum: &seqNum})
@@ -1923,7 +2193,7 @@ func TestGetIDHappyPath(t *testing.T) {
 
 // TestTaskGetPrimaryENI tests the eni can be correctly acquired by calling GetTaskPrimaryENI
 func TestTaskGetPrimaryENI(t *testing.T) {
-	enisOfTask := []*apieni.ENI{
+	enisOfTask := []*ni.NetworkInterface{
 		{
 			ID: "id",
 		},
@@ -3609,7 +3879,7 @@ func TestPostUnmarshalTaskEnvfiles(t *testing.T) {
 	}
 
 	resourceDep := apicontainer.ResourceDependency{
-		Name:           envFiles.ResourceName,
+		Name:           envFiles.ResourceName + "_" + container.Name,
 		RequiredStatus: resourcestatus.ResourceStatus(envFiles.EnvFileCreated),
 	}
 
@@ -3622,22 +3892,34 @@ func TestPostUnmarshalTaskEnvfiles(t *testing.T) {
 }
 
 func TestInitializeAndGetEnvfilesResource(t *testing.T) {
-	envfile := apicontainer.EnvironmentFile{
-		Value: "s3://bucket/envfile",
+	envfile1 := apicontainer.EnvironmentFile{
+		Value: "s3://bucket/envfile1",
 		Type:  "s3",
 	}
 
-	container := &apicontainer.Container{
-		Name:                      "containerName",
+	envfile2 := apicontainer.EnvironmentFile{
+		Value: "s3://bucket/envfile2",
+		Type:  "s3",
+	}
+
+	container1 := &apicontainer.Container{
+		Name:                      "containerName1",
 		Image:                     "image:tag",
-		EnvironmentFiles:          []apicontainer.EnvironmentFile{envfile},
+		EnvironmentFiles:          []apicontainer.EnvironmentFile{envfile1},
+		TransitionDependenciesMap: make(map[apicontainerstatus.ContainerStatus]apicontainer.TransitionDependencySet),
+	}
+
+	container2 := &apicontainer.Container{
+		Name:                      "containerName2",
+		Image:                     "image:tag",
+		EnvironmentFiles:          []apicontainer.EnvironmentFile{envfile2},
 		TransitionDependenciesMap: make(map[apicontainerstatus.ContainerStatus]apicontainer.TransitionDependencySet),
 	}
 
 	task := &Task{
 		Arn:                "testArn",
 		ResourcesMapUnsafe: make(map[string][]taskresource.TaskResource),
-		Containers:         []*apicontainer.Container{container},
+		Containers:         []*apicontainer.Container{container1, container2},
 	}
 
 	ctrl := gomock.NewController(t)
@@ -3650,15 +3932,30 @@ func TestInitializeAndGetEnvfilesResource(t *testing.T) {
 
 	task.initializeEnvfilesResource(cfg, credentialsManager)
 
-	resourceDep := apicontainer.ResourceDependency{
-		Name:           envFiles.ResourceName,
+	resourceDep1 := apicontainer.ResourceDependency{
+		Name:           envFiles.ResourceName + "_" + container1.Name,
 		RequiredStatus: resourcestatus.ResourceStatus(envFiles.EnvFileCreated),
 	}
 
-	assert.Equal(t, resourceDep,
+	resourceDep2 := apicontainer.ResourceDependency{
+		Name:           envFiles.ResourceName + "_" + container2.Name,
+		RequiredStatus: resourcestatus.ResourceStatus(envFiles.EnvFileCreated),
+	}
+
+	assert.Equal(t, resourceDep1,
 		task.Containers[0].TransitionDependenciesMap[apicontainerstatus.ContainerCreated].ResourceDependencies[0])
 
-	_, ok := task.getEnvfilesResource("containerName")
+	assert.Equal(t, resourceDep2,
+		task.Containers[1].TransitionDependenciesMap[apicontainerstatus.ContainerCreated].ResourceDependencies[0])
+
+	assert.NotEqual(t,
+		task.Containers[0].TransitionDependenciesMap[apicontainerstatus.ContainerCreated].ResourceDependencies[0],
+		task.Containers[1].TransitionDependenciesMap[apicontainerstatus.ContainerCreated].ResourceDependencies[0])
+
+	_, ok := task.getEnvfilesResource(container1.Name)
+	assert.True(t, ok)
+
+	_, ok = task.getEnvfilesResource(container2.Name)
 	assert.True(t, ok)
 }
 
@@ -3708,24 +4005,24 @@ func TestPopulateTaskARN(t *testing.T) {
 
 func TestShouldEnableIPv6(t *testing.T) {
 	task := &Task{
-		ENIs: []*apieni.ENI{getTestENI()},
+		ENIs: []*ni.NetworkInterface{getTestENI()},
 	}
 	assert.True(t, task.shouldEnableIPv6())
 	task.ENIs[0].IPV6Addresses = nil
 	assert.False(t, task.shouldEnableIPv6())
 }
 
-func getTestENI() *apieni.ENI {
-	return &apieni.ENI{
+func getTestENI() *ni.NetworkInterface {
+	return &ni.NetworkInterface{
 		ID: "test",
-		IPV4Addresses: []*apieni.ENIIPV4Address{
+		IPV4Addresses: []*ni.IPV4Address{
 			{
 				Primary: true,
 				Address: ipv4,
 			},
 		},
 		MacAddress: mac,
-		IPV6Addresses: []*apieni.ENIIPV6Address{
+		IPV6Addresses: []*ni.IPV6Address{
 			{
 				Address: ipv6,
 			},
@@ -4377,7 +4674,87 @@ func TestTaskWithoutServiceConnectAttachment(t *testing.T) {
 	assert.Nil(t, task.ServiceConnectConfig, "Should be no service connect config")
 }
 
-func TestRequiresCredentialSpecResource(t *testing.T) {
+func TestTaskWithEBSVolumeAttachment(t *testing.T) {
+	seqNum := int64(42)
+	taskFromACS := ecsacs.Task{
+		Arn:           strptr("myArn"),
+		DesiredStatus: strptr("RUNNING"),
+		Family:        strptr("myFamily"),
+		Version:       strptr("1"),
+		Containers: []*ecsacs.Container{
+			{
+				Name: strptr("myName1"),
+				MountPoints: []*ecsacs.MountPoint{
+					{
+						ContainerPath: strptr("/foo"),
+						SourceVolume:  strptr("test-volume"),
+						ReadOnly:      &testEBSReadOnly,
+					},
+				},
+			},
+		},
+		Attachments: []*ecsacs.Attachment{
+			{
+				AttachmentArn: strptr("attachmentArn"),
+				AttachmentProperties: []*ecsacs.AttachmentProperty{
+					{
+						Name:  strptr(apiresource.VolumeIdKey),
+						Value: strptr(taskresourcevolume.TestVolumeId),
+					},
+					{
+						Name:  strptr(apiresource.VolumeSizeGibKey),
+						Value: strptr(taskresourcevolume.TestVolumeSizeGib),
+					},
+					{
+						Name:  strptr(apiresource.DeviceNameKey),
+						Value: strptr(taskresourcevolume.TestDeviceName),
+					},
+					{
+						Name:  strptr(apiresource.SourceVolumeHostPathKey),
+						Value: strptr(taskresourcevolume.TestSourceVolumeHostPath),
+					},
+					{
+						Name:  strptr(apiresource.VolumeNameKey),
+						Value: strptr(taskresourcevolume.TestVolumeName),
+					},
+					{
+						Name:  strptr(apiresource.FileSystemKey),
+						Value: strptr(taskresourcevolume.TestFileSystem),
+					},
+				},
+				AttachmentType: strptr(apiresource.EBSTaskAttach),
+			},
+		},
+		Volumes: []*ecsacs.Volume{
+			{
+				Name: strptr("test-volume"),
+				Type: strptr(AttachmentType),
+				Host: &ecsacs.HostVolumeProperties{
+					SourcePath: strptr("/host/path"),
+				},
+			},
+		},
+	}
+
+	testExpectedEBSCfg := &taskresourcevolume.EBSTaskVolumeConfig{
+		VolumeId:             "vol-12345",
+		VolumeName:           "test-volume",
+		VolumeSizeGib:        "10",
+		SourceVolumeHostPath: "taskarn_vol-12345",
+		DeviceName:           "/dev/nvme1n1",
+		FileSystem:           "ext4",
+	}
+
+	task, err := TaskFromACS(&taskFromACS, &ecsacs.PayloadMessage{SeqNum: &seqNum})
+	assert.Nil(t, err, "Should be able to handle acs task")
+	assert.Len(t, task.Containers, 1)
+	assert.Len(t, task.Volumes, 1)
+	ebsConfig, ok := task.Volumes[0].Volume.(*taskresourcevolume.EBSTaskVolumeConfig)
+	require.True(t, ok)
+	assert.Equal(t, testExpectedEBSCfg, ebsConfig)
+}
+
+func TestRequiresAnyCredentialSpecResource(t *testing.T) {
 	container1 := &apicontainer.Container{}
 	task1 := &Task{
 		Arn:        "test",
@@ -4411,7 +4788,56 @@ func TestRequiresCredentialSpecResource(t *testing.T) {
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
-			assert.Equal(t, tc.expectedOutput, tc.task.requiresCredentialSpecResource())
+			assert.Equal(t, tc.expectedOutput, tc.task.requiresAnyCredentialSpecResource())
+		})
+	}
+
+}
+
+func TestRequiresDomainlessCredentialSpecResource(t *testing.T) {
+	hostConfig := "{\"SecurityOpt\": [\"credentialspec:file://gmsa_gmsa-acct.json\"]}"
+	container2 := &apicontainer.Container{}
+	container2.DockerConfig.HostConfig = &hostConfig
+
+	testCases := []struct {
+		name           string
+		containers     []*apicontainer.Container
+		expectedOutput bool
+	}{
+		{
+			name:           "credentialspec_in_DockerConfig",
+			containers:     []*apicontainer.Container{{DockerConfig: apicontainer.DockerConfig{HostConfig: aws.String("{\"SecurityOpt\": [\"credentialspec:file://gmsa_gmsa-acct.json\"]}")}}},
+			expectedOutput: false,
+		},
+		{
+			name:           "credentialspec_in_CredentialSpecs",
+			containers:     []*apicontainer.Container{{CredentialSpecs: []string{"credentialspec:file://gmsa_gmsa-acct.json"}}},
+			expectedOutput: false,
+		},
+		{
+			name:           "no_credentialspec",
+			containers:     []*apicontainer.Container{},
+			expectedOutput: false,
+		},
+		{
+			name:           "credentialspecdomainless_in_container",
+			containers:     []*apicontainer.Container{{CredentialSpecs: []string{"credentialspecdomainless:file://gmsa_gmsa-acct.json"}}},
+			expectedOutput: true,
+		},
+		{
+			name:           "credentialspecdomainless_and_credentialspec_in_container",
+			containers:     []*apicontainer.Container{{CredentialSpecs: []string{"credentialspecdomainless:file://gmsa_gmsa-acct.json"}}, {DockerConfig: apicontainer.DockerConfig{HostConfig: aws.String("{\"SecurityOpt\": [\"credentialspec:file://gmsa_gmsa-acct.json\"]}")}}},
+			expectedOutput: true,
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			task := &Task{
+				Arn:        "test",
+				Containers: tc.containers,
+			}
+			assert.Equal(t, tc.expectedOutput, task.RequiresDomainlessCredentialSpecResource())
 		})
 	}
 
@@ -4427,7 +4853,7 @@ func TestGetAllCredentialSpecRequirements(t *testing.T) {
 		Containers: []*apicontainer.Container{container},
 	}
 
-	credentialSpecContainerMap := task.getAllCredentialSpecRequirements()
+	credentialSpecContainerMap := task.GetAllCredentialSpecRequirements()
 
 	credentialspecFileLocation := "credentialspec:file://gmsa_gmsa-acct.json"
 	expectedCredentialSpecContainerMap := map[string]string{credentialspecFileLocation: "webapp1"}
@@ -4448,7 +4874,7 @@ func TestGetAllCredentialSpecRequirementsWithMultipleContainersUsingSameSpec(t *
 		Containers: []*apicontainer.Container{c1, c2},
 	}
 
-	credentialSpecContainerMap := task.getAllCredentialSpecRequirements()
+	credentialSpecContainerMap := task.GetAllCredentialSpecRequirements()
 
 	credentialspecFileLocation := "credentialspec:file://gmsa_gmsa-acct.json"
 	expectedCredentialSpecContainerMap := map[string]string{credentialspecFileLocation: "webapp2"}
@@ -4475,7 +4901,7 @@ func TestGetAllCredentialSpecRequirementsWithMultipleContainers(t *testing.T) {
 		Containers: []*apicontainer.Container{c1, c2, c3},
 	}
 
-	credentialSpecContainerMap := task.getAllCredentialSpecRequirements()
+	credentialSpecContainerMap := task.GetAllCredentialSpecRequirements()
 
 	credentialspec1 := "credentialspec:file://gmsa_gmsa-acct-1.json"
 	credentialspec2 := "credentialspec:file://gmsa_gmsa-acct-2.json"
@@ -4521,12 +4947,14 @@ func TestInitializeAndGetCredentialSpecResource(t *testing.T) {
 	credentialsManager := mock_credentials.NewMockManager(ctrl)
 	ssmClientCreator := mock_ssm_factory.NewMockSSMClientCreator(ctrl)
 	s3ClientCreator := mock_s3_factory.NewMockS3ClientCreator(ctrl)
+	asmClientCreator := mock_asm_factory.NewMockClientCreator(ctrl)
 
 	resFields := &taskresource.ResourceFields{
 		ResourceFieldsCommon: &taskresource.ResourceFieldsCommon{
 			SSMClientCreator:   ssmClientCreator,
 			CredentialsManager: credentialsManager,
 			S3ClientCreator:    s3ClientCreator,
+			ASMClientCreator:   asmClientCreator,
 		},
 	}
 
@@ -4541,4 +4969,448 @@ func TestInitializeAndGetCredentialSpecResource(t *testing.T) {
 
 	_, ok := task.GetCredentialSpecResource()
 	assert.True(t, ok)
+}
+
+func getTestTaskResourceMap(cpu int64, mem int64, ports []*string, portsUdp []*string, gpuIDs []*string) map[string]*ecs.Resource {
+	taskResources := make(map[string]*ecs.Resource)
+	taskResources["CPU"] = &ecs.Resource{
+		Name:         utils.Strptr("CPU"),
+		Type:         utils.Strptr("INTEGER"),
+		IntegerValue: &cpu,
+	}
+
+	taskResources["MEMORY"] = &ecs.Resource{
+		Name:         utils.Strptr("MEMORY"),
+		Type:         utils.Strptr("INTEGER"),
+		IntegerValue: &mem,
+	}
+
+	taskResources["PORTS_TCP"] = &ecs.Resource{
+		Name:           utils.Strptr("PORTS_TCP"),
+		Type:           utils.Strptr("STRINGSET"),
+		StringSetValue: ports,
+	}
+
+	taskResources["PORTS_UDP"] = &ecs.Resource{
+		Name:           utils.Strptr("PORTS_UDP"),
+		Type:           utils.Strptr("STRINGSET"),
+		StringSetValue: portsUdp,
+	}
+
+	taskResources["GPU"] = &ecs.Resource{
+		Name:           utils.Strptr("GPU"),
+		Type:           utils.Strptr("STRINGSET"),
+		StringSetValue: gpuIDs,
+	}
+
+	return taskResources
+}
+
+func TestToHostResources(t *testing.T) {
+	// Prepare simple hostConfigs with and without memory reservation field for test cases
+
+	// Host Config with Memory Reservation 400 MiB
+	rawHostConfigMemReservation400MiB := "{\"Ulimits\":[],\"MemoryReservation\":419430400,\"NetworkMode\":\"bridge\",\"CapAdd\":[],\"CapDrop\":[]}"
+	// Host Config with Memory Reservation 600 MiB
+	rawHostConfigMemReservation600MiB := "{\"Ulimits\":[],\"MemoryReservation\":629145600,\"NetworkMode\":\"bridge\",\"CapAdd\":[],\"CapDrop\":[]}"
+	// Basic host config with a few fields like network mode
+	rawHostConfigBridgeMode := "{\"NetworkMode\":\"bridge\",\"CapAdd\":[],\"CapDrop\":[]}"
+	// Basic host config with a few fields like awsvpc mode
+	rawHostConfigAwsVpcMode := "{\"NetworkMode\":\"awsvpc\",\"CapAdd\":[],\"CapDrop\":[]}"
+
+	// Prefer task level, and check gpu assignment
+	testTask1 := &Task{
+		CPU:    1.0,
+		Memory: int64(512),
+		Containers: []*apicontainer.Container{
+			{
+				CPU:    uint(1200),
+				Memory: uint(1200),
+				DockerConfig: apicontainer.DockerConfig{
+					HostConfig: strptr(string(rawHostConfigMemReservation400MiB)),
+				},
+				GPUIDs: []string{"gpu1", "gpu2"},
+			},
+		},
+	}
+
+	// If task not set, use container level (MemoryReservation pref), verify mem reservation from multiple containers is accounted correctly
+	testTask2 := &Task{
+		Containers: []*apicontainer.Container{
+			{
+				CPU:    uint(1200),
+				Memory: uint(1200),
+				DockerConfig: apicontainer.DockerConfig{
+					HostConfig: strptr(string(rawHostConfigMemReservation400MiB)),
+				},
+			},
+			{
+				CPU:    uint(1200),
+				Memory: uint(1200),
+				DockerConfig: apicontainer.DockerConfig{
+					HostConfig: strptr(string(rawHostConfigMemReservation600MiB)),
+				},
+			},
+		},
+	}
+
+	// If task not set, if MemoryReservation not set, use container level hard limit (c.Memory), verify memory from multiple containers is accounted correclty
+	testTask3 := &Task{
+		Containers: []*apicontainer.Container{
+			{
+				CPU:    uint(1200),
+				Memory: uint(1200),
+				DockerConfig: apicontainer.DockerConfig{
+					HostConfig: strptr(string(rawHostConfigBridgeMode)),
+				},
+			},
+			{
+				CPU:    uint(1200),
+				Memory: uint(500),
+				DockerConfig: apicontainer.DockerConfig{
+					HostConfig: strptr(string(rawHostConfigBridgeMode)),
+				},
+			},
+		},
+	}
+
+	// Check ports
+	testTask4 := &Task{
+		CPU:    1.0,
+		Memory: int64(512),
+		Containers: []*apicontainer.Container{
+			{
+				CPU:    uint(1200),
+				Memory: uint(1200),
+				DockerConfig: apicontainer.DockerConfig{
+					HostConfig: strptr(string(rawHostConfigMemReservation400MiB)),
+				},
+				Ports: []apicontainer.PortBinding{
+					{
+						ContainerPort: 10,
+						HostPort:      10,
+						BindIP:        "",
+						Protocol:      apicontainer.TransportProtocolTCP,
+					},
+					{
+						ContainerPort: 11,
+						HostPort:      11,
+						BindIP:        "",
+						Protocol:      apicontainer.TransportProtocolTCP,
+					},
+					{
+						ContainerPort: 20,
+						HostPort:      20,
+						BindIP:        "",
+						Protocol:      apicontainer.TransportProtocolUDP,
+					},
+					{
+						ContainerPort: 21,
+						HostPort:      21,
+						BindIP:        "",
+						Protocol:      apicontainer.TransportProtocolUDP,
+					},
+					{
+						ContainerPortRange: "99-999",
+						BindIP:             "",
+						Protocol:           apicontainer.TransportProtocolTCP,
+					},
+					{
+						ContainerPortRange: "121-221",
+						BindIP:             "",
+						Protocol:           apicontainer.TransportProtocolUDP,
+					},
+				},
+			},
+		},
+	}
+
+	// A combination of containers with different configs with memory sourcing from different sources
+	testTask5 := &Task{
+		Containers: []*apicontainer.Container{
+			{
+				CPU:    uint(200),
+				Memory: uint(600),
+				// Should get 400 from Docker MemoryReservation field
+				DockerConfig: apicontainer.DockerConfig{
+					HostConfig: strptr(string(rawHostConfigMemReservation400MiB)),
+				},
+			},
+			{
+				CPU:    uint(200),
+				Memory: uint(600),
+				DockerConfig: apicontainer.DockerConfig{
+					HostConfig: strptr(string(rawHostConfigBridgeMode)),
+				},
+			},
+			{
+				CPU:    uint(200),
+				Memory: uint(800),
+			},
+		},
+	}
+
+	// Do not account ports for awsvpc mode
+	testTask6 := &Task{
+		CPU:    1.0,
+		Memory: int64(512),
+		Containers: []*apicontainer.Container{
+			{
+				CPU:    uint(1200),
+				Memory: uint(1200),
+				DockerConfig: apicontainer.DockerConfig{
+					HostConfig: strptr(string(rawHostConfigAwsVpcMode)),
+				},
+				Ports: []apicontainer.PortBinding{
+					{
+						ContainerPort: 10,
+						HostPort:      10,
+						BindIP:        "",
+						Protocol:      apicontainer.TransportProtocolTCP,
+					},
+					{
+						ContainerPort: 20,
+						HostPort:      20,
+						BindIP:        "",
+						Protocol:      apicontainer.TransportProtocolUDP,
+					},
+					{
+						ContainerPortRange: "99-999",
+						BindIP:             "",
+						Protocol:           apicontainer.TransportProtocolTCP,
+					},
+					{
+						ContainerPortRange: "121-221",
+						BindIP:             "",
+						Protocol:           apicontainer.TransportProtocolUDP,
+					},
+				},
+			},
+		},
+		NetworkMode: AWSVPCNetworkMode,
+	}
+
+	portsTCP := []uint16{10, 11}
+	portsUDP := []uint16{20, 21}
+	taskGpus := aws.StringSlice([]string{"gpu1", "gpu2"})
+
+	testCases := []struct {
+		task              *Task
+		expectedResources map[string]*ecs.Resource
+	}{
+		{
+			task:              testTask1,
+			expectedResources: getTestTaskResourceMap(int64(1024), int64(512), []*string{}, []*string{}, taskGpus),
+		},
+		{
+			task:              testTask2,
+			expectedResources: getTestTaskResourceMap(int64(2400), int64(1000), []*string{}, []*string{}, []*string{}),
+		},
+		{
+			task:              testTask3,
+			expectedResources: getTestTaskResourceMap(int64(2400), int64(1700), []*string{}, []*string{}, []*string{}),
+		},
+		{
+			task:              testTask4,
+			expectedResources: getTestTaskResourceMap(int64(1024), int64(512), commonutils.Uint16SliceToStringSlice(portsTCP), commonutils.Uint16SliceToStringSlice(portsUDP), []*string{}),
+		},
+		{
+			task:              testTask5,
+			expectedResources: getTestTaskResourceMap(int64(600), int64(1800), []*string{}, []*string{}, []*string{}),
+		},
+		{
+			task:              testTask6,
+			expectedResources: getTestTaskResourceMap(int64(1024), int64(512), []*string{}, []*string{}, []*string{}),
+		},
+	}
+
+	for _, tc := range testCases {
+		calcResources := tc.task.ToHostResources()
+
+		for _, resource := range []string{"CPU", "MEMORY", "GPU", "PORTS_TCP", "PORTS_UDP"} {
+			assert.NotNil(t, calcResources[resource], fmt.Sprintf("Error converting resource %s - got nil", resource))
+		}
+
+		//CPU
+		assert.Equal(t, *tc.expectedResources["CPU"].IntegerValue, *calcResources["CPU"].IntegerValue, "Error converting task CPU resources")
+
+		//MEMORY
+		assert.Equal(t, *tc.expectedResources["MEMORY"].IntegerValue, *calcResources["MEMORY"].IntegerValue, "Error converting task Memory resources")
+
+		//GPU
+		for _, expectedGpu := range tc.expectedResources["GPU"].StringSetValue {
+			found := false
+			for _, calcGpu := range calcResources["GPU"].StringSetValue {
+				if *expectedGpu == *calcGpu {
+					found = true
+					break
+				}
+			}
+			assert.True(t, found, "Could not convert GPU port resources")
+		}
+		assert.Equal(t, len(tc.expectedResources["GPU"].StringSetValue), len(calcResources["GPU"].StringSetValue), "Error converting task GPU resources")
+
+		//PORTS
+		for _, expectedPort := range tc.expectedResources["PORTS_TCP"].StringSetValue {
+			found := false
+			for _, calcPort := range calcResources["PORTS_TCP"].StringSetValue {
+				if *expectedPort == *calcPort {
+					found = true
+					break
+				}
+			}
+			assert.True(t, found, "Could not convert TCP port resources")
+		}
+		assert.Equal(t, len(tc.expectedResources["PORTS_TCP"].StringSetValue), len(calcResources["PORTS_TCP"].StringSetValue), "Error converting task TCP port resources")
+
+		//PORTS_UDP
+		for _, expectedPort := range tc.expectedResources["PORTS_UDP"].StringSetValue {
+			found := false
+			for _, calcPort := range calcResources["PORTS_UDP"].StringSetValue {
+				if *expectedPort == *calcPort {
+					found = true
+					break
+				}
+			}
+			assert.True(t, found, "Could not convert UDP port resources")
+		}
+		assert.Equal(t, len(tc.expectedResources["PORTS_UDP"].StringSetValue), len(calcResources["PORTS_UDP"].StringSetValue), "Error converting task UDP port resources")
+	}
+}
+
+func TestRemoveVolumes(t *testing.T) {
+	task := &Task{
+		Volumes: []TaskVolume{
+			{
+				Name: "volName",
+				Type: "host",
+				Volume: &taskresourcevolume.FSHostVolume{
+					FSSourcePath: "/host/path",
+				},
+			},
+		},
+	}
+	task.RemoveVolume(0)
+	assert.Equal(t, len(task.Volumes), 0)
+}
+
+func TestRemoveVolumeIndexOutOfBounds(t *testing.T) {
+	task := &Task{
+		Volumes: []TaskVolume{
+			{
+				Name: "volName",
+				Type: "host",
+				Volume: &taskresourcevolume.FSHostVolume{
+					FSSourcePath: "/host/path",
+				},
+			},
+		},
+	}
+	task.RemoveVolume(1)
+	assert.Equal(t, len(task.Volumes), 1)
+
+	task.RemoveVolume(-1)
+	assert.Equal(t, len(task.Volumes), 1)
+}
+
+func TestIsManagedDaemonTask(t *testing.T) {
+
+	testTask1 := &Task{
+		Containers: []*apicontainer.Container{
+			{
+				Type:  apicontainer.ContainerManagedDaemon,
+				Image: "someImage:latest",
+			},
+		},
+		IsInternal:        true,
+		KnownStatusUnsafe: apitaskstatus.TaskRunning,
+	}
+
+	testTask2 := &Task{
+		Containers: []*apicontainer.Container{
+			{
+				Type:  apicontainer.ContainerNormal,
+				Image: "someImage",
+			},
+			{
+				Type:  apicontainer.ContainerNormal,
+				Image: "someImage:latest",
+			},
+		},
+		IsInternal:        false,
+		KnownStatusUnsafe: apitaskstatus.TaskRunning,
+	}
+
+	testTask3 := &Task{
+		Containers: []*apicontainer.Container{
+			{
+				Type:  apicontainer.ContainerManagedDaemon,
+				Image: "someImage:latest",
+			},
+		},
+		IsInternal:        true,
+		KnownStatusUnsafe: apitaskstatus.TaskStopped,
+	}
+
+	testTask4 := &Task{
+		Containers: []*apicontainer.Container{
+			{
+				Type:  apicontainer.ContainerManagedDaemon,
+				Image: "someImage:latest",
+			},
+		},
+		IsInternal:        true,
+		KnownStatusUnsafe: apitaskstatus.TaskCreated,
+	}
+
+	testTask5 := &Task{
+		Containers: []*apicontainer.Container{
+			{
+				Type:  apicontainer.ContainerNormal,
+				Image: "someImage",
+			},
+		},
+		IsInternal:        true,
+		KnownStatusUnsafe: apitaskstatus.TaskStopped,
+	}
+
+	testCases := []struct {
+		task            *Task
+		internal        bool
+		isManagedDaemon bool
+	}{
+		{
+			task:            testTask1,
+			internal:        true,
+			isManagedDaemon: true,
+		},
+		{
+			task:            testTask2,
+			internal:        false,
+			isManagedDaemon: false,
+		},
+		{
+			task:            testTask3,
+			internal:        true,
+			isManagedDaemon: false,
+		},
+		{
+			task:            testTask4,
+			internal:        true,
+			isManagedDaemon: true,
+		},
+		{
+			task:            testTask5,
+			internal:        true,
+			isManagedDaemon: false,
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(fmt.Sprintf("IsManagedDaemonTask should return %t for %s", tc.isManagedDaemon, tc.task.String()),
+			func(t *testing.T) {
+				_, ok := tc.task.IsManagedDaemonTask()
+				assert.Equal(t, tc.isManagedDaemon, ok)
+			})
+	}
 }

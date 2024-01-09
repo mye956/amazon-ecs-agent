@@ -22,10 +22,12 @@ import (
 	"sync"
 	"time"
 
-	apicontainerstatus "github.com/aws/amazon-ecs-agent/agent/api/container/status"
-	apierrors "github.com/aws/amazon-ecs-agent/agent/api/errors"
-	"github.com/aws/amazon-ecs-agent/agent/credentials"
 	resourcestatus "github.com/aws/amazon-ecs-agent/agent/taskresource/status"
+	apicontainerstatus "github.com/aws/amazon-ecs-agent/ecs-agent/api/container/status"
+	apierrors "github.com/aws/amazon-ecs-agent/ecs-agent/api/errors"
+	"github.com/aws/amazon-ecs-agent/ecs-agent/credentials"
+	"github.com/aws/amazon-ecs-agent/ecs-agent/logger"
+	"github.com/aws/amazon-ecs-agent/ecs-agent/logger/field"
 
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/cihub/seelog"
@@ -87,6 +89,10 @@ const (
 
 	// neuronVisibleDevicesEnvVar is the env which indicates that the container wants to use inferentia devices.
 	neuronVisibleDevicesEnvVar = "AWS_NEURON_VISIBLE_DEVICES"
+
+	credentialSpecPrefix = "credentialspec"
+
+	credentialSpecDomainlessPrefix = credentialSpecPrefix + "domainless"
 )
 
 var (
@@ -199,6 +205,8 @@ type Container struct {
 	Overrides ContainerOverrides `json:"overrides"`
 	// DockerConfig is the configuration used to create the container
 	DockerConfig DockerConfig `json:"dockerConfig"`
+	// CredentialSpecs is the configuration used for configuring gMSA authentication for the container
+	CredentialSpecs []string `json:"credentialSpecs,omitempty"`
 	// RegistryAuthentication is the auth data used to pull image
 	RegistryAuthentication *RegistryAuthenticationData `json:"registryAuthentication"`
 	// HealthCheckType is the mechanism to use for the container health check
@@ -319,6 +327,13 @@ type Container struct {
 	finishedAt time.Time
 
 	labels map[string]string
+
+	// ContainerHasPortRange is set to true when the container has at least 1 port range requested.
+	ContainerHasPortRange bool
+	// ContainerPortSet is a set of singular container ports that don't belong to a containerPortRange request
+	ContainerPortSet map[int]struct{}
+	// ContainerPortRangeMap is a map of containerPortRange to its associated hostPortRange
+	ContainerPortRangeMap map[string]string
 }
 
 type DependsOn struct {
@@ -500,6 +515,20 @@ func (c *Container) String() string {
 		ret += " - Exit: " + strconv.Itoa(*c.GetKnownExitCode())
 	}
 	return ret
+}
+
+func (c *Container) Fields() logger.Fields {
+	exitCode := "nil"
+	if c.GetKnownExitCode() != nil {
+		exitCode = strconv.Itoa(*c.GetKnownExitCode())
+	}
+	return logger.Fields{
+		field.ContainerName:      c.Name,
+		field.ContainerImage:     c.Image,
+		"containerKnownStatus":   c.GetKnownStatus().String(),
+		"containerDesiredStatus": c.GetDesiredStatus().String(),
+		field.ContainerExitCode:  exitCode,
+	}
 }
 
 // GetSteadyStateStatus returns the steady state status for the container. If
@@ -1327,8 +1356,8 @@ func (c *Container) UpdateManagedAgentSentStatus(agentName string, status apicon
 	return false
 }
 
-// RequiresCredentialSpec checks if container needs a credentialspec resource
-func (c *Container) RequiresCredentialSpec() bool {
+// RequiresAnyCredentialSpec checks if container needs a credentialspec resource (domain-joined or domainless)
+func (c *Container) RequiresAnyCredentialSpec() bool {
 	credSpec, err := c.getCredentialSpec()
 	if err != nil || credSpec == "" {
 		return false
@@ -1337,12 +1366,38 @@ func (c *Container) RequiresCredentialSpec() bool {
 	return true
 }
 
+// RequiresDomainlessCredentialSpec checks if container needs a domainless credentialspec resource
+func (c *Container) RequiresDomainlessCredentialSpec() bool {
+	credSpec, err := c.getCredentialSpec()
+	if err != nil || credSpec == "" {
+		return false
+	}
+
+	return strings.HasPrefix(credSpec, credentialSpecDomainlessPrefix)
+}
+
 // GetCredentialSpec is used to retrieve the current credentialspec resource
 func (c *Container) GetCredentialSpec() (string, error) {
 	return c.getCredentialSpec()
 }
 
 func (c *Container) getCredentialSpec() (string, error) {
+	credSpecHostConfig, err := c.getCredentialSpecFromHostConfig()
+	credSpecCredentialSpecsContainerField, err2 := c.getCredentialSpecFromCredentialSpecsContainerField()
+
+	// Prefer to use CredentialSpecsContainerField because of the upcoming docker runtime deprecation
+	if err2 == nil {
+		return credSpecCredentialSpecsContainerField, nil
+	}
+
+	if err == nil {
+		return credSpecHostConfig, nil
+	}
+
+	return "", errors.New("unable to obtain credentialspec from both hostConfig and credentialSpecs")
+}
+
+func (c *Container) getCredentialSpecFromHostConfig() (string, error) {
 	c.lock.RLock()
 	defer c.lock.RUnlock()
 
@@ -1357,12 +1412,29 @@ func (c *Container) getCredentialSpec() (string, error) {
 	}
 
 	for _, opt := range hostConfig.SecurityOpt {
-		if strings.HasPrefix(opt, "credentialspec") {
+		if strings.HasPrefix(opt, credentialSpecPrefix) {
 			return opt, nil
 		}
 	}
 
 	return "", errors.New("unable to obtain credentialspec")
+}
+
+func (c *Container) getCredentialSpecFromCredentialSpecsContainerField() (string, error) {
+	c.lock.RLock()
+	defer c.lock.RUnlock()
+
+	if c.CredentialSpecs == nil || len(c.CredentialSpecs) == 0 {
+		return "", errors.New("empty container credentialSpecs")
+	}
+
+	for _, credentialSpec := range c.CredentialSpecs {
+		if strings.HasPrefix(credentialSpec, credentialSpecPrefix) || strings.HasPrefix(credentialSpec, credentialSpecDomainlessPrefix) {
+			return credentialSpec, nil
+		}
+	}
+
+	return "", errors.New("credentialspec not found in CredentialSpecs field")
 }
 
 func (c *Container) GetManagedAgentStatus(agentName string) apicontainerstatus.ManagedAgentStatus {
@@ -1399,4 +1471,53 @@ func (c *Container) IsContainerTornDown() bool {
 	c.lock.RLock()
 	defer c.lock.RUnlock()
 	return c.ContainerTornDownUnsafe
+}
+
+func (c *Container) SetContainerHasPortRange(containerHasPortRange bool) {
+	c.lock.Lock()
+	defer c.lock.Unlock()
+	c.ContainerHasPortRange = containerHasPortRange
+}
+
+func (c *Container) HasPortRange() bool {
+	c.lock.RLock()
+	defer c.lock.RUnlock()
+	return c.ContainerHasPortRange
+}
+
+func (c *Container) SetContainerPortSet(containerPortSet map[int]struct{}) {
+	c.lock.Lock()
+	defer c.lock.Unlock()
+	c.ContainerPortSet = containerPortSet
+}
+
+func (c *Container) GetContainerPortSet() map[int]struct{} {
+	c.lock.RLock()
+	defer c.lock.RUnlock()
+	return c.ContainerPortSet
+}
+
+func (c *Container) SetContainerPortRangeMap(portRangeMap map[string]string) {
+	c.lock.Lock()
+	defer c.lock.Unlock()
+	c.ContainerPortRangeMap = portRangeMap
+}
+
+func (c *Container) GetContainerPortRangeMap() map[string]string {
+	c.lock.RLock()
+	defer c.lock.RUnlock()
+	return c.ContainerPortRangeMap
+}
+
+func (c *Container) IsManagedDaemonContainer() bool {
+	c.lock.RLock()
+	defer c.lock.RUnlock()
+	return c.Type == ContainerManagedDaemon
+}
+
+func (c *Container) GetImageName() string {
+	c.lock.RLock()
+	defer c.lock.RUnlock()
+	containerImage := strings.Split(c.Image, ":")[0]
+	return containerImage
 }

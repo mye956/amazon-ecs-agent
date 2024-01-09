@@ -25,6 +25,7 @@ import (
 
 	"github.com/aws/amazon-ecs-agent/agent/dockerclient"
 	"github.com/aws/amazon-ecs-agent/agent/utils"
+	"github.com/aws/amazon-ecs-agent/ecs-agent/tmds"
 
 	"github.com/cihub/seelog"
 	"github.com/hectane/go-acl/api"
@@ -103,7 +104,7 @@ func DefaultConfig() Config {
 			DockerReservedPort,
 			DockerReservedSSLPort,
 			AgentIntrospectionPort,
-			AgentCredentialsPort,
+			tmds.Port,
 			rdpPort,
 			rpcPort,
 			smbPort,
@@ -142,8 +143,9 @@ func DefaultConfig() Config {
 		SharedVolumeMatchFullConfig:         BooleanDefaultFalse{Value: ExplicitlyDisabled}, //only requiring shared volumes to match on name, which is default docker behavior
 		PollMetrics:                         BooleanDefaultFalse{Value: NotSet},
 		PollingMetricsWaitDuration:          DefaultPollingMetricsWaitDuration,
-		GMSACapable:                         true,
-		FSxWindowsFileServerCapable:         true,
+		GMSACapable:                         BooleanDefaultFalse{Value: ExplicitlyDisabled},
+		GMSADomainlessCapable:               BooleanDefaultFalse{Value: ExplicitlyDisabled},
+		FSxWindowsFileServerCapable:         BooleanDefaultTrue{Value: NotSet},
 		PauseContainerImageName:             DefaultPauseContainerImageName,
 		PauseContainerTag:                   DefaultPauseContainerTag,
 		CNIPluginsPath:                      filepath.Join(ecsBinaryDir, defaultCNIPluginDirName),
@@ -206,10 +208,7 @@ func validateConfigFile(configFileName string) (bool, error) {
 	}
 	defer windows.LocalFree(handle)
 
-	id, err := Sid.String()
-	if err != nil {
-		return false, err
-	}
+	id := Sid.String()
 
 	if id == adminSid {
 		return true, nil

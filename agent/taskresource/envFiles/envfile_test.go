@@ -25,9 +25,6 @@ import (
 	"testing"
 
 	"github.com/aws/amazon-ecs-agent/agent/api/container"
-	"github.com/aws/amazon-ecs-agent/agent/api/task/status"
-	"github.com/aws/amazon-ecs-agent/agent/credentials"
-	mock_credentials "github.com/aws/amazon-ecs-agent/agent/credentials/mocks"
 	mock_factory "github.com/aws/amazon-ecs-agent/agent/s3/factory/mocks"
 	mock_s3 "github.com/aws/amazon-ecs-agent/agent/s3/mocks/s3manager"
 	"github.com/aws/amazon-ecs-agent/agent/taskresource"
@@ -35,8 +32,12 @@ import (
 	mock_ioutilwrapper "github.com/aws/amazon-ecs-agent/agent/utils/ioutilwrapper/mocks"
 	"github.com/aws/amazon-ecs-agent/agent/utils/oswrapper"
 	mock_oswrapper "github.com/aws/amazon-ecs-agent/agent/utils/oswrapper/mocks"
+	"github.com/aws/amazon-ecs-agent/ecs-agent/api/task/status"
+	"github.com/aws/amazon-ecs-agent/ecs-agent/credentials"
+	mock_credentials "github.com/aws/amazon-ecs-agent/ecs-agent/credentials/mocks"
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/service/s3"
+	"github.com/aws/aws-sdk-go/service/s3/s3manager"
 	"github.com/golang/mock/gomock"
 	"github.com/stretchr/testify/assert"
 )
@@ -141,8 +142,10 @@ func TestCreateWithEnvVarFile(t *testing.T) {
 		mockCredentialsManager.EXPECT().GetTaskCredentials(executionCredentialsID).Return(creds, true),
 		mockS3ClientCreator.EXPECT().NewS3ManagerClient(s3Bucket, region, creds.IAMRoleCredentials).Return(mockS3Client, nil),
 		mockIOUtil.EXPECT().TempFile(resourceDir, gomock.Any()).Return(mockFile, nil),
-		mockS3Client.EXPECT().DownloadWithContext(gomock.Any(), mockFile, gomock.Any()).Do(
-			func(ctx aws.Context, w io.WriterAt, input *s3.GetObjectInput) {
+		mockS3Client.EXPECT().DownloadWithContext(
+			gomock.Any(), mockFile, gomock.Any(), gomock.Any(),
+		).Do(
+			func(ctx aws.Context, w io.WriterAt, input *s3.GetObjectInput, options ...func(*s3manager.Downloader)) {
 				assert.Equal(t, s3Bucket, aws.StringValue(input.Bucket))
 				assert.Equal(t, s3Key, aws.StringValue(input.Key))
 			}).Return(int64(0), nil),
@@ -316,6 +319,7 @@ func TestReadEnvVarsFromEnvfiles(t *testing.T) {
 
 	envfileContentLine1 := "key1=value"
 	envFileContentLine2 := "key2=val1=val2"
+	envFileContentLine3 := "key3="
 
 	tempOpen := open
 	open = func(name string) (oswrapper.File, error) {
@@ -330,6 +334,8 @@ func TestReadEnvVarsFromEnvfiles(t *testing.T) {
 		mockScanner.EXPECT().Text().Return(envfileContentLine1),
 		mockScanner.EXPECT().Scan().Return(true),
 		mockScanner.EXPECT().Text().Return(envFileContentLine2),
+		mockScanner.EXPECT().Scan().Return(true),
+		mockScanner.EXPECT().Text().Return(envFileContentLine3),
 		mockScanner.EXPECT().Scan().Return(false),
 		mockScanner.EXPECT().Err().Return(nil),
 	)
@@ -340,6 +346,9 @@ func TestReadEnvVarsFromEnvfiles(t *testing.T) {
 	assert.Equal(t, 1, len(envVarsList))
 	assert.Equal(t, "value", envVarsList[0]["key1"])
 	assert.Equal(t, "val1=val2", envVarsList[0]["key2"])
+	key3Value, ok := envVarsList[0]["key3"]
+	assert.True(t, ok)
+	assert.Equal(t, "", key3Value)
 }
 
 func TestReadEnvVarsCommentFromEnvfiles(t *testing.T) {

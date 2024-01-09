@@ -20,7 +20,6 @@ import (
 	"context"
 	"errors"
 	"io/ioutil"
-	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -29,21 +28,20 @@ import (
 	"github.com/aws/amazon-ecs-agent/agent/config"
 	"github.com/aws/amazon-ecs-agent/agent/dockerclient"
 	mock_dockerapi "github.com/aws/amazon-ecs-agent/agent/dockerclient/dockerapi/mocks"
-	"github.com/aws/amazon-ecs-agent/agent/ecs_client/model/ecs"
 	mock_ecscni "github.com/aws/amazon-ecs-agent/agent/ecscni/mocks"
+	dm "github.com/aws/amazon-ecs-agent/agent/engine/daemonmanager"
+	mock_daemonmanager "github.com/aws/amazon-ecs-agent/agent/engine/daemonmanager/mock"
 	mock_serviceconnect "github.com/aws/amazon-ecs-agent/agent/engine/serviceconnect/mock"
 	mock_loader "github.com/aws/amazon-ecs-agent/agent/utils/loader/mocks"
 	mock_mobypkgwrapper "github.com/aws/amazon-ecs-agent/agent/utils/mobypkgwrapper/mocks"
+	"github.com/aws/amazon-ecs-agent/ecs-agent/api/ecs/model/ecs"
+	md "github.com/aws/amazon-ecs-agent/ecs-agent/manageddaemon"
 
 	"github.com/aws/aws-sdk-go/aws"
 	aws_credentials "github.com/aws/aws-sdk-go/aws/credentials"
 	"github.com/golang/mock/gomock"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-)
-
-const (
-	testTempDirPrefix = "agent-capability-test-"
 )
 
 func init() {
@@ -97,6 +95,13 @@ func TestCapabilities(t *testing.T) {
 	mockServiceConnectManager.EXPECT().GetLoadedAppnetVersion().AnyTimes()
 	mockServiceConnectManager.EXPECT().GetCapabilitiesForAppnetInterfaceVersion("").AnyTimes().Return([]string{"ecs.capability.service-connect-v1"}, nil)
 
+	mockDaemonManager := mock_daemonmanager.NewMockDaemonManager(ctrl)
+	mockDaemonManagers := map[string]dm.DaemonManager{md.EbsCsiDriver: mockDaemonManager}
+
+	md.ImportAll = func() ([]*md.ManagedDaemon, error) {
+		return []*md.ManagedDaemon{}, nil
+	}
+
 	// Scan() and ListPluginsWithFilters() are tested with
 	// AnyTimes() because they are not called in windows.
 	gomock.InOrder(
@@ -117,6 +122,7 @@ func TestCapabilities(t *testing.T) {
 			gomock.Any()).AnyTimes().Return([]string{}, nil),
 	)
 
+	// TODO add capabilityEBSTaskAttach
 	expectedNameOnlyCapabilities := []string{
 		capabilityPrefix + "privileged-container",
 		capabilityPrefix + "docker-remote-api.1.17",
@@ -140,6 +146,7 @@ func TestCapabilities(t *testing.T) {
 		attributePrefix + taskENIBlockInstanceMetadataAttributeSuffix,
 		attributePrefix + capabilityExec,
 		attributePrefix + capabilityServiceConnect,
+		attributePrefix + capabilityContainerPortRange,
 	}
 
 	var expectedCapabilities []*ecs.Attribute
@@ -154,7 +161,6 @@ func TestCapabilities(t *testing.T) {
 				Value: aws.String("v1"),
 			},
 		}...)
-
 	ctx, cancel := context.WithCancel(context.TODO())
 	// Cancel the context to cancel async routines
 	defer cancel()
@@ -167,6 +173,7 @@ func TestCapabilities(t *testing.T) {
 		credentialProvider:    aws_credentials.NewCredentials(mockCredentialsProvider),
 		mobyPlugins:           mockMobyPlugins,
 		serviceconnectManager: mockServiceConnectManager,
+		daemonManagers:        mockDaemonManagers,
 	}
 	capabilities, err := agent.capabilities()
 	assert.NoError(t, err)
@@ -179,7 +186,7 @@ func TestCapabilities(t *testing.T) {
 	}
 }
 
-// Test exteernal capability by checking that when external config is set, capabilities not supported on external capacity
+// Test external capability by checking that when external config is set, capabilities not supported on external capacity
 // aren't added, external specific capabilities are added, and capabilities common for both external and non-external are added.
 func TestCapabilitiesExternal(t *testing.T) {
 	cfg := getCapabilitiesTestConfig()
@@ -239,6 +246,10 @@ func getCapabilitiesWithConfig(cfg *config.Config, t *testing.T) []*ecs.Attribut
 	mockServiceConnectManager.EXPECT().GetLoadedAppnetVersion().AnyTimes()
 	mockServiceConnectManager.EXPECT().GetCapabilitiesForAppnetInterfaceVersion("").AnyTimes()
 
+	mockDaemonManager := mock_daemonmanager.NewMockDaemonManager(ctrl)
+	mockDaemonManager.EXPECT().IsLoaded(gomock.Any()).Return(true, nil).AnyTimes()
+	mockDaemonManager.EXPECT().LoadImage(gomock.Any(), gomock.Any()).Return(nil, nil).AnyTimes()
+
 	gomock.InOrder(
 		client.EXPECT().SupportedVersions().Return([]dockerclient.DockerVersion{
 			dockerclient.Version_1_17,
@@ -253,6 +264,7 @@ func getCapabilitiesWithConfig(cfg *config.Config, t *testing.T) []*ecs.Attribut
 		client.EXPECT().ListPluginsWithFilters(gomock.Any(), gomock.Any(), gomock.Any(),
 			gomock.Any()).AnyTimes().Return([]string{}, nil),
 	)
+	mockDaemonManagers := map[string]dm.DaemonManager{md.EbsCsiDriver: mockDaemonManager}
 
 	ctx, cancel := context.WithCancel(context.TODO())
 	// Cancel the context to cancel async routines
@@ -266,6 +278,7 @@ func getCapabilitiesWithConfig(cfg *config.Config, t *testing.T) []*ecs.Attribut
 		credentialProvider:    aws_credentials.NewCredentials(mockCredentialsProvider),
 		mobyPlugins:           mockMobyPlugins,
 		serviceconnectManager: mockServiceConnectManager,
+		daemonManagers:        mockDaemonManagers,
 	}
 	capabilities, err := agent.capabilities()
 	require.NoError(t, err)
@@ -295,6 +308,10 @@ func TestCapabilitiesECR(t *testing.T) {
 	mockServiceConnectManager.EXPECT().GetLoadedAppnetVersion().AnyTimes()
 	mockServiceConnectManager.EXPECT().GetCapabilitiesForAppnetInterfaceVersion("").AnyTimes()
 
+	mockDaemonManager := mock_daemonmanager.NewMockDaemonManager(ctrl)
+	mockDaemonManagers := map[string]dm.DaemonManager{md.EbsCsiDriver: mockDaemonManager}
+	mockDaemonManager.EXPECT().LoadImage(gomock.Any(), gomock.Any()).Return(nil, nil).AnyTimes()
+
 	ctx, cancel := context.WithCancel(context.TODO())
 	// Cancel the context to cancel async routines
 	defer cancel()
@@ -305,6 +322,7 @@ func TestCapabilitiesECR(t *testing.T) {
 		dockerClient:          client,
 		mobyPlugins:           mockMobyPlugins,
 		serviceconnectManager: mockServiceConnectManager,
+		daemonManagers:        mockDaemonManagers,
 	}
 	capabilities, err := agent.capabilities()
 	assert.NoError(t, err)
@@ -347,17 +365,23 @@ func TestCapabilitiesTaskIAMRoleForSupportedDockerVersion(t *testing.T) {
 	mockServiceConnectManager.EXPECT().GetLoadedAppnetVersion().AnyTimes()
 	mockServiceConnectManager.EXPECT().GetCapabilitiesForAppnetInterfaceVersion("").AnyTimes()
 
+	mockDaemonManager := mock_daemonmanager.NewMockDaemonManager(ctrl)
+	mockDaemonManagers := map[string]dm.DaemonManager{md.EbsCsiDriver: mockDaemonManager}
+	mockDaemonManager.EXPECT().LoadImage(gomock.Any(), gomock.Any()).Return(nil, nil).AnyTimes()
+
 	ctx, cancel := context.WithCancel(context.TODO())
 	// Cancel the context to cancel async routines
 	defer cancel()
 	agent := &ecsAgent{
 		ctx:                   ctx,
 		cfg:                   conf,
-		dockerClient:          client,
 		pauseLoader:           mockPauseLoader,
+		dockerClient:          client,
 		mobyPlugins:           mockMobyPlugins,
 		serviceconnectManager: mockServiceConnectManager,
+		daemonManagers:        mockDaemonManagers,
 	}
+
 	capabilities, err := agent.capabilities()
 	assert.NoError(t, err)
 
@@ -396,16 +420,21 @@ func TestCapabilitiesTaskIAMRoleForUnSupportedDockerVersion(t *testing.T) {
 	mockServiceConnectManager.EXPECT().GetLoadedAppnetVersion().AnyTimes()
 	mockServiceConnectManager.EXPECT().GetCapabilitiesForAppnetInterfaceVersion("").AnyTimes()
 
+	mockDaemonManager := mock_daemonmanager.NewMockDaemonManager(ctrl)
+	mockDaemonManagers := map[string]dm.DaemonManager{md.EbsCsiDriver: mockDaemonManager}
+	mockDaemonManager.EXPECT().LoadImage(gomock.Any(), gomock.Any()).Return(nil, nil).AnyTimes()
+
 	ctx, cancel := context.WithCancel(context.TODO())
 	// Cancel the context to cancel async routines
 	defer cancel()
 	agent := &ecsAgent{
 		ctx:                   ctx,
 		cfg:                   conf,
-		dockerClient:          client,
 		pauseLoader:           mockPauseLoader,
+		dockerClient:          client,
 		mobyPlugins:           mockMobyPlugins,
 		serviceconnectManager: mockServiceConnectManager,
+		daemonManagers:        mockDaemonManagers,
 	}
 
 	capabilities, err := agent.capabilities()
@@ -446,16 +475,21 @@ func TestCapabilitiesTaskIAMRoleNetworkHostForSupportedDockerVersion(t *testing.
 	mockServiceConnectManager.EXPECT().GetLoadedAppnetVersion().AnyTimes()
 	mockServiceConnectManager.EXPECT().GetCapabilitiesForAppnetInterfaceVersion("").AnyTimes()
 
+	mockDaemonManager := mock_daemonmanager.NewMockDaemonManager(ctrl)
+	mockDaemonManagers := map[string]dm.DaemonManager{md.EbsCsiDriver: mockDaemonManager}
+	mockDaemonManager.EXPECT().LoadImage(gomock.Any(), gomock.Any()).Return(nil, nil).AnyTimes()
+
 	ctx, cancel := context.WithCancel(context.TODO())
 	// Cancel the context to cancel async routines
 	defer cancel()
 	agent := &ecsAgent{
 		ctx:                   ctx,
 		cfg:                   conf,
-		dockerClient:          client,
 		pauseLoader:           mockPauseLoader,
+		dockerClient:          client,
 		mobyPlugins:           mockMobyPlugins,
 		serviceconnectManager: mockServiceConnectManager,
+		daemonManagers:        mockDaemonManagers,
 	}
 
 	capabilities, err := agent.capabilities()
@@ -496,16 +530,21 @@ func TestCapabilitiesTaskIAMRoleNetworkHostForUnSupportedDockerVersion(t *testin
 	mockServiceConnectManager.EXPECT().GetLoadedAppnetVersion().AnyTimes()
 	mockServiceConnectManager.EXPECT().GetCapabilitiesForAppnetInterfaceVersion("").AnyTimes()
 
+	mockDaemonManager := mock_daemonmanager.NewMockDaemonManager(ctrl)
+	mockDaemonManagers := map[string]dm.DaemonManager{md.EbsCsiDriver: mockDaemonManager}
+	mockDaemonManager.EXPECT().LoadImage(gomock.Any(), gomock.Any()).Return(nil, nil).AnyTimes()
+
 	ctx, cancel := context.WithCancel(context.TODO())
 	// Cancel the context to cancel async routines
 	defer cancel()
 	agent := &ecsAgent{
 		ctx:                   ctx,
 		cfg:                   conf,
-		dockerClient:          client,
 		pauseLoader:           mockPauseLoader,
+		dockerClient:          client,
 		mobyPlugins:           mockMobyPlugins,
 		serviceconnectManager: mockServiceConnectManager,
+		daemonManagers:        mockDaemonManagers,
 	}
 
 	capabilities, err := agent.capabilities()
@@ -542,6 +581,10 @@ func TestAWSVPCBlockInstanceMetadataWhenTaskENIIsDisabled(t *testing.T) {
 	mockServiceConnectManager.EXPECT().IsLoaded(gomock.Any()).Return(true, nil).AnyTimes()
 	mockServiceConnectManager.EXPECT().GetLoadedAppnetVersion().AnyTimes()
 	mockServiceConnectManager.EXPECT().GetCapabilitiesForAppnetInterfaceVersion("").AnyTimes()
+
+	mockDaemonManager := mock_daemonmanager.NewMockDaemonManager(ctrl)
+	mockDaemonManagers := map[string]dm.DaemonManager{md.EbsCsiDriver: mockDaemonManager}
+	mockDaemonManager.EXPECT().LoadImage(gomock.Any(), gomock.Any()).Return(nil, nil).AnyTimes()
 
 	gomock.InOrder(
 		client.EXPECT().SupportedVersions().Return([]dockerclient.DockerVersion{
@@ -583,6 +626,7 @@ func TestAWSVPCBlockInstanceMetadataWhenTaskENIIsDisabled(t *testing.T) {
 		credentialProvider:    aws_credentials.NewCredentials(mockCredentialsProvider),
 		mobyPlugins:           mockMobyPlugins,
 		serviceconnectManager: mockServiceConnectManager,
+		daemonManagers:        mockDaemonManagers,
 	}
 	capabilities, err := agent.capabilities()
 	assert.NoError(t, err)
@@ -631,6 +675,11 @@ func TestCapabilitiesExecutionRoleAWSLogs(t *testing.T) {
 	mockServiceConnectManager.EXPECT().IsLoaded(gomock.Any()).Return(true, nil).AnyTimes()
 	mockServiceConnectManager.EXPECT().GetLoadedAppnetVersion().AnyTimes()
 	mockServiceConnectManager.EXPECT().GetCapabilitiesForAppnetInterfaceVersion("").AnyTimes()
+
+	mockDaemonManager := mock_daemonmanager.NewMockDaemonManager(ctrl)
+	mockDaemonManagers := map[string]dm.DaemonManager{md.EbsCsiDriver: mockDaemonManager}
+	mockDaemonManager.EXPECT().LoadImage(gomock.Any(), gomock.Any()).Return(nil, nil).AnyTimes()
+
 	ctx, cancel := context.WithCancel(context.TODO())
 	// Cancel the context to cancel async routines
 	defer cancel()
@@ -642,6 +691,7 @@ func TestCapabilitiesExecutionRoleAWSLogs(t *testing.T) {
 		pauseLoader:           mockPauseLoader,
 		mobyPlugins:           mockMobyPlugins,
 		serviceconnectManager: mockServiceConnectManager,
+		daemonManagers:        mockDaemonManagers,
 	}
 
 	capabilities, err := agent.capabilities()
@@ -670,6 +720,11 @@ func TestCapabilitiesTaskResourceLimit(t *testing.T) {
 	mockServiceConnectManager.EXPECT().IsLoaded(gomock.Any()).Return(true, nil).AnyTimes()
 	mockServiceConnectManager.EXPECT().GetLoadedAppnetVersion().AnyTimes()
 	mockServiceConnectManager.EXPECT().GetCapabilitiesForAppnetInterfaceVersion("").AnyTimes()
+
+	mockDaemonManager := mock_daemonmanager.NewMockDaemonManager(ctrl)
+	mockDaemonManagers := map[string]dm.DaemonManager{md.EbsCsiDriver: mockDaemonManager}
+	mockDaemonManager.EXPECT().LoadImage(gomock.Any(), gomock.Any()).Return(nil, nil).AnyTimes()
+
 	gomock.InOrder(
 		client.EXPECT().SupportedVersions().Return(versionList),
 		client.EXPECT().KnownVersions().Return(versionList),
@@ -687,6 +742,7 @@ func TestCapabilitiesTaskResourceLimit(t *testing.T) {
 		pauseLoader:           mockPauseLoader,
 		mobyPlugins:           mockMobyPlugins,
 		serviceconnectManager: mockServiceConnectManager,
+		daemonManagers:        mockDaemonManagers,
 	}
 
 	expectedCapability := attributePrefix + capabilityTaskCPUMemLimit
@@ -718,6 +774,11 @@ func TestCapabilitesTaskResourceLimitDisabledByMissingDockerVersion(t *testing.T
 	mockServiceConnectManager.EXPECT().IsLoaded(gomock.Any()).Return(true, nil).AnyTimes()
 	mockServiceConnectManager.EXPECT().GetLoadedAppnetVersion().AnyTimes()
 	mockServiceConnectManager.EXPECT().GetCapabilitiesForAppnetInterfaceVersion("").AnyTimes()
+
+	mockDaemonManager := mock_daemonmanager.NewMockDaemonManager(ctrl)
+	mockDaemonManagers := map[string]dm.DaemonManager{md.EbsCsiDriver: mockDaemonManager}
+	mockDaemonManager.EXPECT().LoadImage(gomock.Any(), gomock.Any()).Return(nil, nil).AnyTimes()
+
 	gomock.InOrder(
 		client.EXPECT().SupportedVersions().Return(versionList),
 		client.EXPECT().KnownVersions().Return(versionList),
@@ -735,6 +796,7 @@ func TestCapabilitesTaskResourceLimitDisabledByMissingDockerVersion(t *testing.T
 		pauseLoader:           mockPauseLoader,
 		mobyPlugins:           mockMobyPlugins,
 		serviceconnectManager: mockServiceConnectManager,
+		daemonManagers:        mockDaemonManagers,
 	}
 
 	unexpectedCapability := attributePrefix + capabilityTaskCPUMemLimit
@@ -766,6 +828,10 @@ func TestCapabilitesTaskResourceLimitErrorCase(t *testing.T) {
 	mockServiceConnectManager.EXPECT().GetLoadedAppnetVersion().AnyTimes()
 	mockServiceConnectManager.EXPECT().GetCapabilitiesForAppnetInterfaceVersion("").AnyTimes()
 
+	mockDaemonManager := mock_daemonmanager.NewMockDaemonManager(ctrl)
+	mockDaemonManagers := map[string]dm.DaemonManager{md.EbsCsiDriver: mockDaemonManager}
+	mockDaemonManager.EXPECT().LoadImage(gomock.Any(), gomock.Any()).Return(nil, nil).AnyTimes()
+
 	gomock.InOrder(
 		client.EXPECT().SupportedVersions().Return(versionList),
 		client.EXPECT().KnownVersions().Return(versionList),
@@ -779,6 +845,7 @@ func TestCapabilitesTaskResourceLimitErrorCase(t *testing.T) {
 		pauseLoader:           mockPauseLoader,
 		dockerClient:          client,
 		serviceconnectManager: mockServiceConnectManager,
+		daemonManagers:        mockDaemonManagers,
 	}
 
 	capabilities, err := agent.capabilities()
@@ -830,6 +897,11 @@ func TestCapabilitiesIncreasedTaskCPULimit(t *testing.T) {
 			mockServiceConnectManager.EXPECT().IsLoaded(gomock.Any()).Return(true, nil).AnyTimes()
 			mockServiceConnectManager.EXPECT().GetLoadedAppnetVersion().AnyTimes()
 			mockServiceConnectManager.EXPECT().GetCapabilitiesForAppnetInterfaceVersion("").AnyTimes()
+
+			mockDaemonManager := mock_daemonmanager.NewMockDaemonManager(ctrl)
+			mockDaemonManagers := map[string]dm.DaemonManager{md.EbsCsiDriver: mockDaemonManager}
+			mockDaemonManager.EXPECT().LoadImage(gomock.Any(), gomock.Any()).Return(nil, nil).AnyTimes()
+
 			gomock.InOrder(
 				client.EXPECT().SupportedVersions().Return(versionList),
 				client.EXPECT().KnownVersions().Return(versionList),
@@ -847,6 +919,7 @@ func TestCapabilitiesIncreasedTaskCPULimit(t *testing.T) {
 				pauseLoader:           mockPauseLoader,
 				mobyPlugins:           mockMobyPlugins,
 				serviceconnectManager: mockServiceConnectManager,
+				daemonManagers:        mockDaemonManagers,
 			}
 
 			capability := attributePrefix + capabilityIncreasedTaskCPULimit
@@ -886,6 +959,10 @@ func TestCapabilitiesContainerHealth(t *testing.T) {
 	mockServiceConnectManager.EXPECT().GetLoadedAppnetVersion().AnyTimes()
 	mockServiceConnectManager.EXPECT().GetCapabilitiesForAppnetInterfaceVersion("").AnyTimes()
 
+	mockDaemonManager := mock_daemonmanager.NewMockDaemonManager(ctrl)
+	mockDaemonManagers := map[string]dm.DaemonManager{md.EbsCsiDriver: mockDaemonManager}
+	mockDaemonManager.EXPECT().LoadImage(gomock.Any(), gomock.Any()).Return(nil, nil).AnyTimes()
+
 	ctx, cancel := context.WithCancel(context.TODO())
 	// Cancel the context to cancel async routines
 	defer cancel()
@@ -896,6 +973,7 @@ func TestCapabilitiesContainerHealth(t *testing.T) {
 		pauseLoader:           mockPauseLoader,
 		mobyPlugins:           mockMobyPlugins,
 		serviceconnectManager: mockServiceConnectManager,
+		daemonManagers:        mockDaemonManagers,
 	}
 
 	capabilities, err := agent.capabilities()
@@ -932,6 +1010,10 @@ func TestCapabilitiesContainerHealthDisabled(t *testing.T) {
 	mockServiceConnectManager.EXPECT().GetLoadedAppnetVersion().AnyTimes()
 	mockServiceConnectManager.EXPECT().GetCapabilitiesForAppnetInterfaceVersion("").AnyTimes()
 
+	mockDaemonManager := mock_daemonmanager.NewMockDaemonManager(ctrl)
+	mockDaemonManagers := map[string]dm.DaemonManager{md.EbsCsiDriver: mockDaemonManager}
+	mockDaemonManager.EXPECT().LoadImage(gomock.Any(), gomock.Any()).Return(nil, nil).AnyTimes()
+
 	ctx, cancel := context.WithCancel(context.TODO())
 	// Cancel the context to cancel async routines
 	defer cancel()
@@ -942,6 +1024,7 @@ func TestCapabilitiesContainerHealthDisabled(t *testing.T) {
 		pauseLoader:           mockPauseLoader,
 		mobyPlugins:           mockMobyPlugins,
 		serviceconnectManager: mockServiceConnectManager,
+		daemonManagers:        mockDaemonManagers,
 	}
 
 	capabilities, err := agent.capabilities()
@@ -968,6 +1051,11 @@ func TestCapabilitesListPluginsErrorCase(t *testing.T) {
 	mockServiceConnectManager.EXPECT().IsLoaded(gomock.Any()).Return(true, nil).AnyTimes()
 	mockServiceConnectManager.EXPECT().GetLoadedAppnetVersion().AnyTimes()
 	mockServiceConnectManager.EXPECT().GetCapabilitiesForAppnetInterfaceVersion("").AnyTimes()
+
+	mockDaemonManager := mock_daemonmanager.NewMockDaemonManager(ctrl)
+	mockDaemonManagers := map[string]dm.DaemonManager{md.EbsCsiDriver: mockDaemonManager}
+	mockDaemonManager.EXPECT().LoadImage(gomock.Any(), gomock.Any()).Return(nil, nil).AnyTimes()
+
 	gomock.InOrder(
 		client.EXPECT().SupportedVersions().Return(versionList),
 		client.EXPECT().KnownVersions().Return(versionList),
@@ -985,6 +1073,7 @@ func TestCapabilitesListPluginsErrorCase(t *testing.T) {
 		pauseLoader:           mockPauseLoader,
 		mobyPlugins:           mockMobyPlugins,
 		serviceconnectManager: mockServiceConnectManager,
+		daemonManagers:        mockDaemonManagers,
 	}
 
 	capabilities, err := agent.capabilities()
@@ -1010,6 +1099,11 @@ func TestCapabilitesScanPluginsErrorCase(t *testing.T) {
 	mockServiceConnectManager.EXPECT().IsLoaded(gomock.Any()).Return(true, nil).AnyTimes()
 	mockServiceConnectManager.EXPECT().GetLoadedAppnetVersion().AnyTimes()
 	mockServiceConnectManager.EXPECT().GetCapabilitiesForAppnetInterfaceVersion("").AnyTimes()
+
+	mockDaemonManager := mock_daemonmanager.NewMockDaemonManager(ctrl)
+	mockDaemonManagers := map[string]dm.DaemonManager{md.EbsCsiDriver: mockDaemonManager}
+	mockDaemonManager.EXPECT().LoadImage(gomock.Any(), gomock.Any()).Return(nil, nil).AnyTimes()
+
 	gomock.InOrder(
 		client.EXPECT().SupportedVersions().Return(versionList),
 		client.EXPECT().KnownVersions().Return(versionList),
@@ -1027,6 +1121,7 @@ func TestCapabilitesScanPluginsErrorCase(t *testing.T) {
 		pauseLoader:           mockPauseLoader,
 		mobyPlugins:           mockMobyPlugins,
 		serviceconnectManager: mockServiceConnectManager,
+		daemonManagers:        mockDaemonManagers,
 	}
 
 	capabilities, err := agent.capabilities()
@@ -1122,6 +1217,11 @@ func TestCapabilitiesExecuteCommand(t *testing.T) {
 			mockServiceConnectManager.EXPECT().IsLoaded(gomock.Any()).Return(true, nil).AnyTimes()
 			mockServiceConnectManager.EXPECT().GetLoadedAppnetVersion().AnyTimes()
 			mockServiceConnectManager.EXPECT().GetCapabilitiesForAppnetInterfaceVersion("").AnyTimes()
+
+			mockDaemonManager := mock_daemonmanager.NewMockDaemonManager(ctrl)
+			mockDaemonManagers := map[string]dm.DaemonManager{md.EbsCsiDriver: mockDaemonManager}
+			mockDaemonManager.EXPECT().LoadImage(gomock.Any(), gomock.Any()).Return(nil, nil).AnyTimes()
+
 			gomock.InOrder(
 				client.EXPECT().SupportedVersions().Return(versionList),
 				client.EXPECT().KnownVersions().Return(versionList),
@@ -1139,6 +1239,7 @@ func TestCapabilitiesExecuteCommand(t *testing.T) {
 				pauseLoader:           mockPauseLoader,
 				mobyPlugins:           mockMobyPlugins,
 				serviceconnectManager: mockServiceConnectManager,
+				daemonManagers:        mockDaemonManagers,
 			}
 
 			capabilities, err := agent.capabilities()
@@ -1154,6 +1255,8 @@ func TestCapabilitiesExecuteCommand(t *testing.T) {
 		})
 	}
 }
+
+// TODO add test for no EBS Task Attach capability
 
 func TestCapabilitiesNoServiceConnect(t *testing.T) {
 	mockPathExists(true)
@@ -1197,6 +1300,10 @@ func TestCapabilitiesNoServiceConnect(t *testing.T) {
 	mockServiceConnectManager.EXPECT().GetLoadedAppnetVersion().AnyTimes()
 	mockServiceConnectManager.EXPECT().GetCapabilitiesForAppnetInterfaceVersion("").AnyTimes()
 
+	mockDaemonManager := mock_daemonmanager.NewMockDaemonManager(ctrl)
+	mockDaemonManagers := map[string]dm.DaemonManager{md.EbsCsiDriver: mockDaemonManager}
+	mockDaemonManager.EXPECT().LoadImage(gomock.Any(), gomock.Any()).Return(nil, nil).AnyTimes()
+
 	// Scan() and ListPluginsWithFilters() are tested with
 	// AnyTimes() because they are not called in windows.
 	gomock.InOrder(
@@ -1239,6 +1346,7 @@ func TestCapabilitiesNoServiceConnect(t *testing.T) {
 		attributePrefix + capabilityEnvFilesS3,
 		attributePrefix + taskENIBlockInstanceMetadataAttributeSuffix,
 		attributePrefix + capabilityExec,
+		attributePrefix + capabilityContainerPortRange,
 	}
 
 	var expectedCapabilities []*ecs.Attribute
@@ -1266,6 +1374,7 @@ func TestCapabilitiesNoServiceConnect(t *testing.T) {
 		credentialProvider:    aws_credentials.NewCredentials(mockCredentialsProvider),
 		mobyPlugins:           mockMobyPlugins,
 		serviceconnectManager: mockServiceConnectManager,
+		daemonManagers:        mockDaemonManagers,
 	}
 	capabilities, err := agent.capabilities()
 	assert.NoError(t, err)
@@ -1279,20 +1388,17 @@ func TestCapabilitiesNoServiceConnect(t *testing.T) {
 }
 
 func TestDefaultGetSubDirectories(t *testing.T) {
-	rootDir, err := ioutil.TempDir(os.TempDir(), testTempDirPrefix)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer os.RemoveAll(rootDir)
+	rootDir := t.TempDir()
 
 	subDir, err := ioutil.TempDir(rootDir, "dir")
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = ioutil.TempFile(rootDir, "file")
+	file, err := ioutil.TempFile(rootDir, "file")
 	if err != nil {
 		t.Fatal(err)
 	}
+	defer require.NoError(t, file.Close())
 	notExistingPath := filepath.Join(rootDir, "not-existing")
 
 	testCases := []struct {
@@ -1331,16 +1437,13 @@ func TestDefaultGetSubDirectories(t *testing.T) {
 }
 
 func TestDefaultPathExistsd(t *testing.T) {
-	rootDir, err := ioutil.TempDir(os.TempDir(), testTempDirPrefix)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer os.RemoveAll(rootDir)
+	rootDir := t.TempDir()
 
 	file, err := ioutil.TempFile(rootDir, "file")
 	if err != nil {
 		t.Fatal(err)
 	}
+	defer require.NoError(t, file.Close())
 	notExistingPath := filepath.Join(rootDir, "not-existing")
 	testCases := []struct {
 		name              string
@@ -1430,7 +1533,7 @@ func TestAppendGMSACapabilities(t *testing.T) {
 
 	agent := &ecsAgent{
 		cfg: &config.Config{
-			GMSACapable: true,
+			GMSACapable: config.BooleanDefaultFalse{Value: config.ExplicitlyEnabled},
 		},
 	}
 
@@ -1441,4 +1544,48 @@ func TestAppendGMSACapabilities(t *testing.T) {
 		assert.Equal(t, aws.StringValue(expected.Name), aws.StringValue(capabilities[i].Name))
 		assert.Equal(t, aws.StringValue(expected.Value), aws.StringValue(capabilities[i].Value))
 	}
+}
+
+func TestAppendGMSADomainlessCapabilities(t *testing.T) {
+	var inputCapabilities []*ecs.Attribute
+	var expectedCapabilities []*ecs.Attribute
+
+	expectedCapabilities = append(expectedCapabilities,
+		[]*ecs.Attribute{
+			{
+				Name: aws.String(attributePrefix + capabilityGMSADomainless),
+			},
+		}...)
+
+	agent := &ecsAgent{
+		cfg: &config.Config{
+			GMSADomainlessCapable: config.BooleanDefaultFalse{Value: config.ExplicitlyEnabled},
+		},
+	}
+
+	capabilities := agent.appendGMSADomainlessCapabilities(inputCapabilities)
+
+	assert.Equal(t, len(expectedCapabilities), len(capabilities))
+	for i, expected := range expectedCapabilities {
+		assert.Equal(t, aws.StringValue(expected.Name), aws.StringValue(capabilities[i].Name))
+		assert.Equal(t, aws.StringValue(expected.Value), aws.StringValue(capabilities[i].Value))
+	}
+}
+
+func TestAppendGMSADomainlessCapabilitiesFalse(t *testing.T) {
+	var inputCapabilities []*ecs.Attribute
+	var expectedCapabilities []*ecs.Attribute
+
+	expectedCapabilities = append(expectedCapabilities,
+		[]*ecs.Attribute{}...)
+
+	agent := &ecsAgent{
+		cfg: &config.Config{
+			GMSADomainlessCapable: config.BooleanDefaultFalse{Value: config.ExplicitlyDisabled},
+		},
+	}
+
+	capabilities := agent.appendGMSADomainlessCapabilities(inputCapabilities)
+
+	assert.Equal(t, len(expectedCapabilities), len(capabilities))
 }

@@ -23,9 +23,8 @@ import (
 	"time"
 
 	asmfactory "github.com/aws/amazon-ecs-agent/agent/asm/factory"
-	"github.com/aws/amazon-ecs-agent/agent/credentials"
 	"github.com/aws/amazon-ecs-agent/agent/data"
-	"github.com/aws/amazon-ecs-agent/agent/ecs_client/model/ecs"
+	"github.com/aws/amazon-ecs-agent/agent/dockerclient/dockerapi"
 	"github.com/aws/amazon-ecs-agent/agent/ecscni"
 	"github.com/aws/amazon-ecs-agent/agent/engine"
 	"github.com/aws/amazon-ecs-agent/agent/engine/dockerstate"
@@ -38,6 +37,8 @@ import (
 	ssmfactory "github.com/aws/amazon-ecs-agent/agent/ssm/factory"
 	"github.com/aws/amazon-ecs-agent/agent/statechange"
 	"github.com/aws/amazon-ecs-agent/agent/taskresource"
+	"github.com/aws/amazon-ecs-agent/ecs-agent/api/ecs/model/ecs"
+	"github.com/aws/amazon-ecs-agent/ecs-agent/credentials"
 
 	"github.com/cihub/seelog"
 	"github.com/pkg/errors"
@@ -97,6 +98,14 @@ func (agent *ecsAgent) initializeTaskENIDependencies(state dockerstate.TaskEngin
 func (agent *ecsAgent) startWindowsService() int {
 	svc.Run(EcsSvcName, newHandler(agent))
 	return 0
+}
+
+func (agent *ecsAgent) startEBSWatcher(
+	state dockerstate.TaskEngineState,
+	taskEngine engine.TaskEngine,
+	dockerClient dockerapi.DockerClient,
+) {
+	seelog.Debug("Windows EBS Watcher not implemented: No Op")
 }
 
 // handler implements https://godoc.org/golang.org/x/sys/windows/svc#Handler

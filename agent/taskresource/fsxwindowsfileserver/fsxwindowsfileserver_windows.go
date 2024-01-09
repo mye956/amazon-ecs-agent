@@ -31,21 +31,23 @@ import (
 	"github.com/aws/aws-sdk-go/aws/arn"
 
 	apicontainer "github.com/aws/amazon-ecs-agent/agent/api/container"
-	apicontainerstatus "github.com/aws/amazon-ecs-agent/agent/api/container/status"
-	"github.com/aws/amazon-ecs-agent/agent/api/task/status"
 	asmfactory "github.com/aws/amazon-ecs-agent/agent/asm/factory"
-	"github.com/aws/amazon-ecs-agent/agent/credentials"
 	"github.com/aws/amazon-ecs-agent/agent/fsx"
 	fsxfactory "github.com/aws/amazon-ecs-agent/agent/fsx/factory"
 	ssmfactory "github.com/aws/amazon-ecs-agent/agent/ssm/factory"
 	"github.com/aws/amazon-ecs-agent/agent/taskresource"
 	resourcestatus "github.com/aws/amazon-ecs-agent/agent/taskresource/status"
+	apicontainerstatus "github.com/aws/amazon-ecs-agent/ecs-agent/api/container/status"
+	"github.com/aws/amazon-ecs-agent/ecs-agent/api/task/status"
+	"github.com/aws/amazon-ecs-agent/ecs-agent/credentials"
 	"github.com/cihub/seelog"
 	"github.com/pkg/errors"
 )
 
 const (
+	psCredentialCommandFormat = "$(New-Object System.Management.Automation.PSCredential('%s', $(ConvertTo-SecureString '%s' -AsPlainText -Force)))"
 	resourceProvisioningError = "VolumeError: Agent could not create task's volume resources"
+	fsxVolumeType             = "fsx"
 )
 
 // FSxWindowsFileServerResource represents a fsxwindowsfileserver resource
@@ -290,6 +292,20 @@ func (fv *FSxWindowsFileServerResource) SetCreatedAt(createdAt time.Time) {
 // Source returns the host path of the fsxwindowsfileserver resource which is used as the source of the volume mount
 func (cfg *FSxWindowsFileServerVolumeConfig) Source() string {
 	return utils.GetCanonicalPath(cfg.HostPath)
+}
+
+func (cfg *FSxWindowsFileServerVolumeConfig) GetType() string {
+	return fsxVolumeType
+}
+
+func (cfg *FSxWindowsFileServerVolumeConfig) GetVolumeId() string {
+	return cfg.FileSystemID
+}
+
+// Note: The name is within the FSxWindowsFileServerResource struct. In order to use this in the future, this needs to be modified.
+// Currently not meant for use
+func (cfg *FSxWindowsFileServerVolumeConfig) GetVolumeName() string {
+	return ""
 }
 
 // GetName safely returns the name of the fsxwindowsfileserver resource
@@ -548,8 +564,12 @@ func (fv *FSxWindowsFileServerResource) performHostMount(remotePath string, user
 	}
 
 	// formatting to keep powershell happy
-	creds := fmt.Sprintf("-Credential $(New-Object System.Management.Automation.PSCredential(\"%s\", $(ConvertTo-SecureString \"%s\" -AsPlainText -Force)))", username, password)
-	remotePathArg := fmt.Sprintf("-RemotePath \"%s\"", remotePath)
+	// Replace ' with '' so that Powershell would convert it back to '.
+	password = strings.ReplaceAll(password, "'", "''")
+	credsCommand := fmt.Sprintf(psCredentialCommandFormat, username, password)
+	credsArg := fmt.Sprintf("-Credential %s", credsCommand)
+
+	remotePathArg := fmt.Sprintf("-RemotePath '%s'", remotePath)
 
 	// New-SmbGlobalMapping cmdlet creates an SMB mapping between the container instance
 	// and SMB share (FSx for Windows File Server file-system)
@@ -558,7 +578,7 @@ func (fv *FSxWindowsFileServerResource) performHostMount(remotePath string, user
 		"New-SmbGlobalMapping",
 		localPathArg,
 		remotePathArg,
-		creds,
+		credsArg,
 		"-Persistent $true",
 		"-RequirePrivacy $true",
 		"-ErrorAction Stop",

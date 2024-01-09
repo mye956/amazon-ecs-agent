@@ -46,7 +46,7 @@ const (
 	// DefaultAgentVersion is the version of the agent that will be
 	// fetched if required. This should look like v1.2.3 or an
 	// 8-character sha, as is downloadable from S3.
-	DefaultAgentVersion = "v1.66.2"
+	DefaultAgentVersion = "v1.79.2"
 
 	// AgentPartitionBucketName is the name of the paritional s3 bucket that stores the agent
 	AgentPartitionBucketName = "amazon-ecs-agent"
@@ -112,6 +112,8 @@ var partitionBucketRegion = map[string]string{
 	endpoints.AwsPartitionID:      endpoints.UsEast1RegionID,
 	endpoints.AwsCnPartitionID:    endpoints.CnNorth1RegionID,
 	endpoints.AwsUsGovPartitionID: endpoints.UsGovWest1RegionID,
+	endpoints.AwsIsoPartitionID:   endpoints.UsIsoEast1RegionID,
+	endpoints.AwsIsoBPartitionID:  endpoints.UsIsobEast1RegionID,
 }
 
 // goarch is an injectable GOARCH runtime string. This controls the
@@ -243,6 +245,11 @@ func HostCredentialsFetcherPath() (string, bool) {
 // CgroupMountpoint returns the cgroup mountpoint for the system
 func CgroupMountpoint() string {
 	return cgroupMountpoint
+}
+
+// MountDirectoryEBS returns the location on disk where EBS volumes will be mounted
+func MountDirectoryEBS() string {
+       return directoryPrefix + "/mnt/ecs/ebs"
 }
 
 // HostCertsDirPath() returns the CA store path on the host

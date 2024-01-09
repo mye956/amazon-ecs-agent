@@ -26,35 +26,35 @@ import (
 	"time"
 
 	"github.com/aws/amazon-ecs-agent/agent/api"
-	"github.com/aws/amazon-ecs-agent/agent/api/appnet"
 	apicontainer "github.com/aws/amazon-ecs-agent/agent/api/container"
-	apicontainerstatus "github.com/aws/amazon-ecs-agent/agent/api/container/status"
-	apierrors "github.com/aws/amazon-ecs-agent/agent/api/errors"
 	apitask "github.com/aws/amazon-ecs-agent/agent/api/task"
-	apitaskstatus "github.com/aws/amazon-ecs-agent/agent/api/task/status"
 	"github.com/aws/amazon-ecs-agent/agent/config"
 	"github.com/aws/amazon-ecs-agent/agent/containermetadata"
-	"github.com/aws/amazon-ecs-agent/agent/credentials"
 	"github.com/aws/amazon-ecs-agent/agent/data"
 	"github.com/aws/amazon-ecs-agent/agent/dockerclient"
 	"github.com/aws/amazon-ecs-agent/agent/dockerclient/dockerapi"
 	"github.com/aws/amazon-ecs-agent/agent/ecscni"
+	dm "github.com/aws/amazon-ecs-agent/agent/engine/daemonmanager"
 	"github.com/aws/amazon-ecs-agent/agent/engine/dependencygraph"
 	"github.com/aws/amazon-ecs-agent/agent/engine/dockerstate"
 	"github.com/aws/amazon-ecs-agent/agent/engine/execcmd"
 	"github.com/aws/amazon-ecs-agent/agent/engine/serviceconnect"
-	"github.com/aws/amazon-ecs-agent/agent/eventstream"
-	"github.com/aws/amazon-ecs-agent/agent/logger"
-	"github.com/aws/amazon-ecs-agent/agent/logger/field"
 	"github.com/aws/amazon-ecs-agent/agent/metrics"
 	"github.com/aws/amazon-ecs-agent/agent/statechange"
 	"github.com/aws/amazon-ecs-agent/agent/taskresource"
 	"github.com/aws/amazon-ecs-agent/agent/taskresource/credentialspec"
 	"github.com/aws/amazon-ecs-agent/agent/taskresource/firelens"
 	"github.com/aws/amazon-ecs-agent/agent/utils"
-	"github.com/aws/amazon-ecs-agent/agent/utils/retry"
-	utilsync "github.com/aws/amazon-ecs-agent/agent/utils/sync"
-	"github.com/aws/amazon-ecs-agent/agent/utils/ttime"
+	"github.com/aws/amazon-ecs-agent/ecs-agent/api/appnet"
+	apicontainerstatus "github.com/aws/amazon-ecs-agent/ecs-agent/api/container/status"
+	apierrors "github.com/aws/amazon-ecs-agent/ecs-agent/api/errors"
+	apitaskstatus "github.com/aws/amazon-ecs-agent/ecs-agent/api/task/status"
+	"github.com/aws/amazon-ecs-agent/ecs-agent/credentials"
+	"github.com/aws/amazon-ecs-agent/ecs-agent/eventstream"
+	"github.com/aws/amazon-ecs-agent/ecs-agent/logger"
+	"github.com/aws/amazon-ecs-agent/ecs-agent/logger/field"
+	"github.com/aws/amazon-ecs-agent/ecs-agent/utils/retry"
+	"github.com/aws/amazon-ecs-agent/ecs-agent/utils/ttime"
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/docker/docker/api/types"
 	dockercontainer "github.com/docker/docker/api/types/container"
@@ -135,15 +135,17 @@ type DockerTaskEngine struct {
 	state        dockerstate.TaskEngineState
 	managedTasks map[string]*managedTask
 
-	taskStopGroup *utilsync.SequentialWaitGroup
+	// waitingTasksQueue is a FIFO queue of tasks waiting to acquire host resources
+	waitingTaskQueue []*managedTask
 
-	events            <-chan dockerapi.DockerContainerChangeEvent
-	stateChangeEvents chan statechange.Event
+	events                 <-chan dockerapi.DockerContainerChangeEvent
+	monitorQueuedTaskEvent chan struct{}
+	stateChangeEvents      chan statechange.Event
 
 	client       dockerapi.DockerClient
 	dataClient   data.Client
 	cniClient    ecscni.CNIClient
-	appnetClient api.AppnetClient
+	appnetClient appnet.AppNetClient
 
 	containerChangeEventStream *eventstream.EventStream
 
@@ -154,6 +156,13 @@ type DockerTaskEngine struct {
 	// all tasks, it must not acquire it for any significant duration
 	// The write mutex should be taken when adding and removing tasks from managedTasks.
 	tasksLock sync.RWMutex
+	// waitingTasksLock is a mutex for operations on waitingTasksQueue
+	waitingTasksLock sync.RWMutex
+
+	// monitorQueuedTasksLock is a mutex for operations in the monitorQueuedTasks which
+	// allocate host resources and wakes up waiting host resources. This should be used
+	// for synchronizing task desired status updates and queue operations
+	monitorQueuedTasksLock sync.RWMutex
 
 	credentialsManager                  credentials.Manager
 	_time                               ttime.Time
@@ -162,7 +171,14 @@ type DockerTaskEngine struct {
 	containerStatusToTransitionFunction map[apicontainerstatus.ContainerStatus]transitionApplyFunc
 	metadataManager                     containermetadata.Manager
 	serviceconnectManager               serviceconnect.Manager
-	serviceconnectRelay                 *apitask.Task
+
+	// daemonManagers map is threadsafe for reads as it's written only once at startup
+	daemonManagers      map[string]dm.DaemonManager
+	hostResourceManager *HostResourceManager
+	serviceconnectRelay *apitask.Task
+
+	daemonTasksLock sync.RWMutex
+	daemonTasks     map[string]*apitask.Task
 
 	// taskSteadyStatePollInterval is the duration that a managed task waits
 	// once the task gets into steady state before polling the state of all of
@@ -195,30 +211,34 @@ func NewDockerTaskEngine(cfg *config.Config,
 	credentialsManager credentials.Manager,
 	containerChangeEventStream *eventstream.EventStream,
 	imageManager ImageManager,
+	hostResourceManager *HostResourceManager,
 	state dockerstate.TaskEngineState,
 	metadataManager containermetadata.Manager,
 	resourceFields *taskresource.ResourceFields,
 	execCmdMgr execcmd.Manager,
-	serviceConnectManager serviceconnect.Manager) *DockerTaskEngine {
+	serviceConnectManager serviceconnect.Manager,
+	daemonManagers map[string]dm.DaemonManager) *DockerTaskEngine {
 	dockerTaskEngine := &DockerTaskEngine{
 		cfg:        cfg,
 		client:     client,
 		dataClient: data.NewNoopClient(),
 
-		state:             state,
-		managedTasks:      make(map[string]*managedTask),
-		taskStopGroup:     utilsync.NewSequentialWaitGroup(),
-		stateChangeEvents: make(chan statechange.Event),
+		state:                  state,
+		managedTasks:           make(map[string]*managedTask),
+		stateChangeEvents:      make(chan statechange.Event),
+		monitorQueuedTaskEvent: make(chan struct{}, 1),
 
 		credentialsManager: credentialsManager,
 
 		containerChangeEventStream: containerChangeEventStream,
 		imageManager:               imageManager,
+		hostResourceManager:        hostResourceManager,
 		cniClient:                  ecscni.NewClient(cfg.CNIPluginsPath),
-		appnetClient:               appnet.Client(),
+		appnetClient:               appnet.CreateClient(),
 
 		metadataManager:                   metadataManager,
 		serviceconnectManager:             serviceConnectManager,
+		daemonManagers:                    daemonManagers,
 		taskSteadyStatePollInterval:       defaultTaskSteadyStatePollInterval,
 		taskSteadyStatePollIntervalJitter: defaultTaskSteadyStatePollIntervalJitter,
 		resourceFields:                    resourceFields,
@@ -228,11 +248,43 @@ func NewDockerTaskEngine(cfg *config.Config,
 		stopContainerBackoffMin:           defaultStopContainerBackoffMin,
 		stopContainerBackoffMax:           defaultStopContainerBackoffMax,
 		namespaceHelper:                   ecscni.NewNamespaceHelper(client),
+		daemonTasks:                       make(map[string]*apitask.Task),
 	}
 
 	dockerTaskEngine.initializeContainerStatusToTransitionFunction()
 
 	return dockerTaskEngine
+}
+
+// Reconcile state of host resource manager with task status in managedTasks Slice
+// Done on agent restarts
+func (engine *DockerTaskEngine) reconcileHostResources() {
+	logger.Info("Reconciling host resources")
+	for _, task := range engine.state.AllTasks() {
+		taskStatus := task.GetKnownStatus()
+		resources := task.ToHostResources()
+
+		// Release stopped tasks host resources
+		// Call to release here for stopped tasks should always succeed
+		// Idempotent release call
+		if taskStatus.Terminal() {
+			err := engine.hostResourceManager.release(task.Arn, resources)
+			if err != nil {
+				logger.Critical("Failed to release resources during reconciliation", logger.Fields{field.TaskARN: task.Arn})
+			}
+			continue
+		}
+
+		// Consume host resources if task has progressed (check if any container has progressed)
+		// Call to consume here should always succeed
+		// Idempotent consume call
+		if !task.IsInternal && task.HasActiveContainers() {
+			consumed, err := engine.hostResourceManager.consume(task.Arn, resources)
+			if err != nil || !consumed {
+				logger.Critical("Failed to consume resources for created/running tasks during reconciliation", logger.Fields{field.TaskARN: task.Arn})
+			}
+		}
+	}
 }
 
 func (engine *DockerTaskEngine) initializeContainerStatusToTransitionFunction() {
@@ -277,12 +329,138 @@ func (engine *DockerTaskEngine) Init(ctx context.Context) error {
 		return err
 	}
 	engine.synchronizeState()
+	go engine.monitorQueuedTasks(derivedCtx)
 	// Now catch up and start processing new events per normal
 	go engine.handleDockerEvents(derivedCtx)
 	engine.initialized = true
 	go engine.startPeriodicExecAgentsMonitoring(derivedCtx)
 	go engine.watchAppNetImage(derivedCtx)
 	return nil
+}
+
+// Method to wake up 'monitorQueuedTasks' goroutine, called when
+// - a new task enqueues in waitingTaskQueue
+// - a task stops (overseeTask)
+// as these are the events when resources change/can change on the host
+// Always wakes up when at least one event arrives on buffered channel (size 1) 'monitorQueuedTaskEvent'
+// but does not block if monitorQueuedTasks is already processing queued tasks
+// Buffered channel of size 1 is sufficient because we only want to go through the queue
+// once at any point and schedule as many tasks as possible (as many resources are available)
+// Calls on 'wakeUpTaskQueueMonitor' when 'monitorQueuedTasks' is doing work are redundant
+// as new tasks are enqueued at the end and will be taken into account in the continued loop
+// if permitted by design
+func (engine *DockerTaskEngine) wakeUpTaskQueueMonitor() {
+	select {
+	case engine.monitorQueuedTaskEvent <- struct{}{}:
+	default:
+		// do nothing
+	}
+}
+
+func (engine *DockerTaskEngine) topTask() (*managedTask, error) {
+	engine.waitingTasksLock.Lock()
+	defer engine.waitingTasksLock.Unlock()
+	if len(engine.waitingTaskQueue) > 0 {
+		return engine.waitingTaskQueue[0], nil
+	}
+	return nil, fmt.Errorf("no tasks in waiting queue")
+}
+
+func (engine *DockerTaskEngine) enqueueTask(task *managedTask) {
+	engine.waitingTasksLock.Lock()
+	engine.waitingTaskQueue = append(engine.waitingTaskQueue, task)
+	engine.waitingTasksLock.Unlock()
+	logger.Debug("Enqueued task in Waiting Task Queue", logger.Fields{field.TaskARN: task.Arn})
+	engine.wakeUpTaskQueueMonitor()
+}
+
+func (engine *DockerTaskEngine) dequeueTask() (*managedTask, error) {
+	engine.waitingTasksLock.Lock()
+	defer engine.waitingTasksLock.Unlock()
+	if len(engine.waitingTaskQueue) > 0 {
+		task := engine.waitingTaskQueue[0]
+		engine.waitingTaskQueue = engine.waitingTaskQueue[1:]
+		logger.Debug("Dequeued task from Waiting Task Queue", logger.Fields{field.TaskARN: task.Arn})
+		return task, nil
+	}
+
+	return nil, fmt.Errorf("no tasks in waiting queue")
+}
+
+// monitorQueuedTasks starts as many tasks as possible based on FIFO order of waitingTaskQueue
+// and availability of host resources. When no more tasks can be started, it will wait on
+// monitorQueuedTaskEvent channel. This channel receives (best effort) messages when
+// - a task stops
+// - a new task is queued up
+// It does not need to receive all messages, as if the routine is going through the queue, it
+// may schedule more than one task for a single 'event' received
+func (engine *DockerTaskEngine) monitorQueuedTasks(ctx context.Context) {
+	logger.Info("Monitoring Task Queue started")
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-engine.monitorQueuedTaskEvent:
+			// Dequeue as many tasks as possible and start wake up their goroutines
+			for {
+				task, err := engine.topTask()
+				if err != nil {
+					break
+				}
+				dequeuedTask := engine.tryDequeueWaitingTasks(task)
+				if !dequeuedTask {
+					break
+				}
+			}
+			logger.Debug("No more tasks could be started at this moment, waiting")
+		}
+	}
+}
+
+func (engine *DockerTaskEngine) tryDequeueWaitingTasks(task *managedTask) bool {
+	// Isolate monitorQueuedTasks processing from changes of desired status updates to prevent
+	// unexpected updates to host resource manager when tasks are being processed by monitorQueuedTasks
+	// For example when ACS StopTask event updates arrives and simultaneously monitorQueuedTasks
+	// could be processing
+	engine.monitorQueuedTasksLock.Lock()
+	defer engine.monitorQueuedTasksLock.Unlock()
+	taskDesiredStatus := task.GetDesiredStatus()
+	if taskDesiredStatus.Terminal() {
+		logger.Info("Task desired status changed to STOPPED while waiting for host resources, progressing without consuming resources", logger.Fields{field.TaskARN: task.Arn})
+		engine.returnWaitingTask()
+		return true
+	}
+	taskHostResources := task.ToHostResources()
+	consumed, err := task.engine.hostResourceManager.consume(task.Arn, taskHostResources)
+	if err != nil {
+		engine.failWaitingTask(err)
+		return true
+	}
+	if consumed {
+		engine.startWaitingTask()
+		return true
+	}
+	return false
+	// not consumed, go to wait
+}
+
+// To be called when resources are not to be consumed by host resource manager, just dequeues and returns
+func (engine *DockerTaskEngine) returnWaitingTask() {
+	task, _ := engine.dequeueTask()
+	task.consumedHostResourceEvent <- struct{}{}
+}
+
+func (engine *DockerTaskEngine) failWaitingTask(err error) {
+	task, _ := engine.dequeueTask()
+	logger.Error(fmt.Sprintf("Error consuming resources due to invalid task config : %s", err.Error()), logger.Fields{field.TaskARN: task.Arn})
+	task.SetDesiredStatus(apitaskstatus.TaskStopped)
+	task.consumedHostResourceEvent <- struct{}{}
+}
+
+func (engine *DockerTaskEngine) startWaitingTask() {
+	task, _ := engine.dequeueTask()
+	logger.Info("Host resources consumed, progressing task", logger.Fields{field.TaskARN: task.Arn})
+	task.consumedHostResourceEvent <- struct{}{}
 }
 
 func (engine *DockerTaskEngine) startPeriodicExecAgentsMonitoring(ctx context.Context) {
@@ -460,6 +638,14 @@ func (engine *DockerTaskEngine) synchronizeState() {
 	}
 
 	tasks := engine.state.AllTasks()
+	// For normal task progress, overseeTask 'consume's resources through waitForHostResources in host_resource_manager before progressing
+	// For agent restarts (state restore), we pre-consume resources for tasks that had progressed beyond waitForHostResources stage -
+	// so these tasks do not wait during 'waitForHostResources' call again - do not go through queuing again
+	//
+	// Call reconcileHostResources before
+	// - filterTasksToStartUnsafe which will reconcile container statuses for the duration the agent was stopped
+	// - starting managedTask's overseeTask goroutines
+	engine.reconcileHostResources()
 	tasksToStart := engine.filterTasksToStartUnsafe(tasks)
 	for _, task := range tasks {
 		task.InitializeResources(engine.resourceFields)
@@ -490,11 +676,6 @@ func (engine *DockerTaskEngine) filterTasksToStartUnsafe(tasks []*apitask.Task) 
 		}
 
 		tasksToStart = append(tasksToStart, task)
-
-		// Put tasks that are stopped by acs but hasn't been stopped in wait group
-		if task.GetDesiredStatus().Terminal() && task.GetStopSequenceNumber() != 0 {
-			engine.taskStopGroup.Add(task.GetStopSequenceNumber(), 1)
-		}
 	}
 
 	return tasksToStart
@@ -781,13 +962,26 @@ func (engine *DockerTaskEngine) deleteTask(task *apitask.Task) {
 	engine.tasksLock.Unlock()
 }
 
-func (engine *DockerTaskEngine) emitTaskEvent(task *apitask.Task, reason string) {
+func (engine *DockerTaskEngine) EmitTaskEvent(task *apitask.Task, reason string) {
+	if task.GetKnownStatus().Terminal() {
+		// Always do (idempotent) release host resources whenever state change with
+		// known status == STOPPED is done to ensure sync between tasks and host resource manager
+		resourcesToRelease := task.ToHostResources()
+		err := engine.hostResourceManager.release(task.Arn, resourcesToRelease)
+		if err != nil {
+			logger.Critical("Failed to release resources after test stopped", logger.Fields{field.TaskARN: task.Arn})
+		}
+	}
 	event, err := api.NewTaskStateChangeEvent(task, reason)
 	if err != nil {
-		logger.Error("Unable to create task state change event", logger.Fields{
-			field.TaskID: task.GetID(),
-			field.Error:  err,
-		})
+		if _, ok := err.(api.ErrShouldNotSendEvent); ok {
+			logger.Debug(err.Error())
+		} else {
+			logger.Error("Unable to create task state change event", logger.Fields{
+				field.TaskID: task.GetID(),
+				field.Error:  err,
+			})
+		}
 		return
 	}
 	logger.Info("Preparing to send change event", logger.Fields{
@@ -951,10 +1145,14 @@ func (engine *DockerTaskEngine) AddTask(task *apitask.Task) {
 		})
 		task.SetKnownStatus(apitaskstatus.TaskStopped)
 		task.SetDesiredStatus(apitaskstatus.TaskStopped)
-		engine.emitTaskEvent(task, err.Error())
+		engine.EmitTaskEvent(task, err.Error())
 		return
 	}
-
+	if task.IsEBSTaskAttachEnabled() {
+		logger.Info("Task is EBS TaskAttachEnabled", logger.Fields{
+			field.TaskID: task.GetID(),
+		})
+	}
 	// Check if ServiceConnect is Needed
 	if task.IsServiceConnectEnabled() {
 		if engine.serviceconnectRelay == nil {
@@ -967,7 +1165,7 @@ func (engine *DockerTaskEngine) AddTask(task *apitask.Task) {
 				})
 				task.SetKnownStatus(apitaskstatus.TaskStopped)
 				task.SetDesiredStatus(apitaskstatus.TaskStopped)
-				engine.emitTaskEvent(task, err.Error())
+				engine.EmitTaskEvent(task, err.Error())
 				return
 			}
 			engine.AddTask(engine.serviceconnectRelay)
@@ -996,7 +1194,7 @@ func (engine *DockerTaskEngine) AddTask(task *apitask.Task) {
 			task.SetKnownStatus(apitaskstatus.TaskStopped)
 			task.SetDesiredStatus(apitaskstatus.TaskStopped)
 			err := TaskDependencyError{task.Arn}
-			engine.emitTaskEvent(task, err.Error())
+			engine.EmitTaskEvent(task, err.Error())
 		}
 		return
 	}
@@ -1014,9 +1212,28 @@ func (engine *DockerTaskEngine) GetTaskByArn(arn string) (*apitask.Task, bool) {
 	return engine.state.TaskByArn(arn)
 }
 
+func (engine *DockerTaskEngine) GetDaemonTask(daemonName string) *apitask.Task {
+	engine.daemonTasksLock.RLock()
+	defer engine.daemonTasksLock.RUnlock()
+	if daemon, ok := engine.daemonTasks[daemonName]; ok {
+		return daemon
+	}
+	return nil
+}
+
+func (engine *DockerTaskEngine) SetDaemonTask(daemonName string, task *apitask.Task) {
+	engine.daemonTasksLock.Lock()
+	defer engine.daemonTasksLock.Unlock()
+	engine.daemonTasks[daemonName] = task
+}
+
+func (engine *DockerTaskEngine) GetDaemonManagers() map[string]dm.DaemonManager {
+	return engine.daemonManagers
+}
+
 func (engine *DockerTaskEngine) pullContainer(task *apitask.Task, container *apicontainer.Container) dockerapi.DockerContainerMetadata {
 	switch container.Type {
-	case apicontainer.ContainerCNIPause, apicontainer.ContainerNamespacePause, apicontainer.ContainerServiceConnectRelay:
+	case apicontainer.ContainerCNIPause, apicontainer.ContainerNamespacePause, apicontainer.ContainerServiceConnectRelay, apicontainer.ContainerManagedDaemon:
 		// pause images and AppNet relay image are managed at startup
 		return dockerapi.DockerContainerMetadata{}
 	}
@@ -1229,7 +1446,7 @@ func (engine *DockerTaskEngine) pullAndUpdateContainerReference(task *apitask.Ta
 				// and the image is not available in both remote and local caches
 				if container.IsEssential() {
 					task.SetDesiredStatus(apitaskstatus.TaskStopped)
-					engine.emitTaskEvent(task, fmt.Sprintf("%s: %s", metadata.Error.ErrorName(), metadata.Error.Error()))
+					engine.EmitTaskEvent(task, fmt.Sprintf("%s: %s", metadata.Error.ErrorName(), metadata.Error.Error()))
 				}
 				return dockerapi.DockerContainerMetadata{Error: metadata.Error}
 			}
@@ -1373,7 +1590,28 @@ func (engine *DockerTaskEngine) createContainer(task *apitask.Task, container *a
 				fluentNetworkPort: FluentNetworkPortValue,
 			})
 		} else if container.GetNetworkModeFromHostConfig() == "" || container.GetNetworkModeFromHostConfig() == apitask.BridgeNetworkMode {
-			ipAddress, ok := getContainerHostIP(task.GetFirelensContainer().GetNetworkSettings())
+			targetContainer := task.GetFirelensContainer()
+			// For bridge-mode ServiceConnect-enabled tasks, we inject pause container for each application container
+			// including the firelens container. Therefore, when resolving the container IP, we should be checking that
+			// of the associated pause container.
+			if task.IsServiceConnectEnabled() {
+				var err error
+				targetContainer, err = task.GetBridgeModePauseContainerForTaskContainer(targetContainer)
+				if err != nil {
+					logger.Error("Failed to create container", logger.Fields{
+						field.TaskID:    task.GetID(),
+						field.Container: container.Name,
+						field.Error: errors.New(fmt.Sprintf(
+							"container uses awsfirelens log driver but we failed to resolve Firelens bridge IP: %v", err)),
+					})
+					return dockerapi.DockerContainerMetadata{
+						Error: dockerapi.CannotCreateContainerError{FromError: errors.New(fmt.Sprintf(
+							"failed to create container - container uses awsfirelens log driver but we failed to "+
+								"resolve Firelens bridge IP: %v", err))},
+					}
+				}
+			}
+			ipAddress, ok := getContainerHostIP(targetContainer.GetNetworkSettings())
 			if !ok {
 				err := apierrors.DockerClientConfigError{Msg: "unable to get BridgeIP for task in bridge mode"}
 				return dockerapi.DockerContainerMetadata{Error: apierrors.NamedError(&err)}
@@ -1398,7 +1636,7 @@ func (engine *DockerTaskEngine) createContainer(task *apitask.Task, container *a
 	}
 
 	// Populate credentialspec resource
-	if container.RequiresCredentialSpec() {
+	if container.RequiresAnyCredentialSpec() {
 		logger.Debug("Obtained container with credentialspec resource requirement for task", logger.Fields{
 			field.TaskID:    task.GetID(),
 			field.Container: container.Name,
@@ -1625,34 +1863,68 @@ func (engine *DockerTaskEngine) startContainer(task *apitask.Task, container *ap
 	// If container is a firelens container, fluent host is needed to be added to the environment variable for the task.
 	// For the supported network mode - bridge and awsvpc, the awsvpc take the host 127.0.0.1 but in bridge mode,
 	// there is a need to wait for the IP to be present before the container using the firelens can be created.
-	if container.GetFirelensConfig() != nil {
-		if !task.IsNetworkModeAWSVPC() && (container.GetNetworkModeFromHostConfig() == "" || container.GetNetworkModeFromHostConfig() == apitask.BridgeNetworkMode) {
-			_, gotContainerIP := getContainerHostIP(dockerContainerMD.NetworkSettings)
-			if !gotContainerIP {
-				getIPBridgeBackoff := retry.NewExponentialBackoff(minGetIPBridgeTimeout, maxGetIPBridgeTimeout, getIPBridgeRetryJitterMultiplier, getIPBridgeRetryDelayMultiplier)
-				contextWithTimeout, cancel := context.WithTimeout(engine.ctx, time.Minute)
-				defer cancel()
-				err := retry.RetryWithBackoffCtx(contextWithTimeout, getIPBridgeBackoff, func() error {
+	//
+	// For bridge-mode ServiceConnect-enabled tasks, we inject pause container for each application container
+	// including the firelens container. Therefore, when resolving the container IP, we should be checking that
+	// of the associated pause container. In such case, the firelens container has network mode "container" since it's
+	// launched into its pause container's network namespace.
+	if container.GetFirelensConfig() != nil && task.IsNetworkModeBridge() {
+		_, gotContainerIP := getContainerHostIP(dockerContainerMD.NetworkSettings)
+		if task.IsServiceConnectEnabled() {
+			targetContainer, err := task.GetBridgeModePauseContainerForTaskContainer(container)
+			if err != nil {
+				logger.Error("Failed to start Firelens container", logger.Fields{
+					field.TaskID:    task.GetID(),
+					field.Container: container.Name,
+					field.Error:     err,
+				})
+				return dockerapi.DockerContainerMetadata{
+					Error: dockerapi.CannotStartContainerError{FromError: errors.New(fmt.Sprintf(
+						"failed to start firelens container: %v", err))},
+				}
+			}
+			_, gotContainerIP = getContainerHostIP(targetContainer.GetNetworkSettings())
+		}
+
+		if !gotContainerIP {
+			getIPBridgeBackoff := retry.NewExponentialBackoff(minGetIPBridgeTimeout, maxGetIPBridgeTimeout, getIPBridgeRetryJitterMultiplier, getIPBridgeRetryDelayMultiplier)
+			contextWithTimeout, cancel := context.WithTimeout(engine.ctx, time.Minute)
+			defer cancel()
+			err := retry.RetryWithBackoffCtx(contextWithTimeout, getIPBridgeBackoff, func() error {
+				gotIPBridge := false
+				if task.IsServiceConnectEnabled() {
+					targetContainer, err := task.GetBridgeModePauseContainerForTaskContainer(container)
+					if err != nil {
+						return err
+					}
+					_, gotIPBridge = getContainerHostIP(targetContainer.GetNetworkSettings())
+					if gotIPBridge {
+						return nil
+					}
+				} else {
 					inspectOutput, err := engine.client.InspectContainer(engine.ctx, dockerContainerMD.DockerID,
 						dockerclient.InspectContainerTimeout)
 					if err != nil {
 						return err
 					}
-					_, gotIPBridge := getContainerHostIP(inspectOutput.NetworkSettings)
+					_, gotIPBridge = getContainerHostIP(inspectOutput.NetworkSettings)
 					if gotIPBridge {
 						dockerContainerMD.NetworkSettings = inspectOutput.NetworkSettings
 						return nil
-					} else {
-						return errors.New("Bridge IP not available to use for firelens")
-					}
-				})
-				if err != nil {
-					return dockerapi.DockerContainerMetadata{
-						Error: dockerapi.CannotStartContainerError{FromError: err},
 					}
 				}
+				return errors.New("Bridge IP not available to use for firelens")
+			})
+			if err != nil {
+				logger.Error("Failed to start Firelens container", logger.Fields{
+					field.TaskID:    task.GetID(),
+					field.Container: container.Name,
+					field.Error:     err,
+				})
+				return dockerapi.DockerContainerMetadata{
+					Error: dockerapi.CannotStartContainerError{FromError: err},
+				}
 			}
-
 		}
 	}
 	if execcmd.IsExecEnabledContainer(container) {
@@ -1747,6 +2019,15 @@ func (engine *DockerTaskEngine) provisionContainerResourcesAwsvpc(task *apitask.
 			},
 		}
 	}
+
+	logger.Info("Setting up CNI config for task", logger.Fields{
+		field.TaskID:        task.GetID(),
+		"cniContainerID":    cniConfig.ContainerID,
+		"cniPluginPath":     cniConfig.PluginsPath,
+		"cniID":             cniConfig.ID,
+		"cniBridgeName":     cniConfig.BridgeName,
+		"cniContainerNetNs": cniConfig.ContainerNetNS,
+	})
 
 	// Invoke the libcni to config the network namespace for the container
 	result, err := engine.cniClient.SetupNS(engine.ctx, cniConfig, cniSetupTimeout)
@@ -1997,7 +2278,10 @@ func (engine *DockerTaskEngine) stopContainer(task *apitask.Task, container *api
 	// Before attempting to stop any container, send drain signal for Appnet Agent to start draining connections
 	// (if not already in progress).
 	if task.IsServiceConnectEnabled() && !task.IsServiceConnectConnectionDraining() {
-		if err := engine.appnetClient.DrainInboundConnections(task.GetServiceConnectRuntimeConfig()); err != nil {
+		serviceConnectConfig := task.GetServiceConnectRuntimeConfig()
+		adminSocketPath := serviceConnectConfig.AdminSocketPath
+		drainRequest := serviceConnectConfig.DrainRequest
+		if err := engine.appnetClient.DrainInboundConnections(adminSocketPath, drainRequest); err != nil {
 			logger.Error("Error sending drain signal to Appnet Agent", logger.Fields{
 				field.TaskID: task.GetID(),
 				field.Error:  err,
@@ -2077,9 +2361,8 @@ func (engine *DockerTaskEngine) stopDockerContainer(dockerID, containerName stri
 }
 
 func (engine *DockerTaskEngine) removeContainer(task *apitask.Task, container *apicontainer.Container) error {
-	logger.Info("Removing container", logger.Fields{
-		field.TaskID:    task.GetID(),
-		field.Container: container.Name,
+	logger.Info("Removing container", container.Fields(), logger.Fields{
+		field.TaskID: task.GetID(),
 	})
 	dockerID, err := engine.getDockerID(task, container)
 	if err != nil {
@@ -2108,16 +2391,13 @@ func (engine *DockerTaskEngine) updateTaskUnsafe(task *apitask.Task, update *api
 	logger.Debug("Putting update on the acs channel", logger.Fields{
 		field.TaskID:        task.GetID(),
 		field.DesiredStatus: updateDesiredStatus.String(),
-		field.Sequence:      update.StopSequenceNumber,
 	})
 	managedTask.emitACSTransition(acsTransition{
 		desiredStatus: updateDesiredStatus,
-		seqnum:        update.StopSequenceNumber,
 	})
 	logger.Debug("Update taken off the acs channel", logger.Fields{
 		field.TaskID:        task.GetID(),
 		field.DesiredStatus: updateDesiredStatus.String(),
-		field.Sequence:      update.StopSequenceNumber,
 	})
 }
 

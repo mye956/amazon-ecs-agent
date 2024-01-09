@@ -22,9 +22,11 @@ import (
 
 	"github.com/aws/amazon-ecs-agent/agent/config"
 	"github.com/aws/amazon-ecs-agent/agent/dockerclient"
-	"github.com/aws/amazon-ecs-agent/agent/ecs_client/model/ecs"
-	"github.com/aws/amazon-ecs-agent/agent/logger"
-	"github.com/aws/amazon-ecs-agent/agent/logger/field"
+	dm "github.com/aws/amazon-ecs-agent/agent/engine/daemonmanager"
+	"github.com/aws/amazon-ecs-agent/ecs-agent/api/ecs/model/ecs"
+	"github.com/aws/amazon-ecs-agent/ecs-agent/logger"
+	"github.com/aws/amazon-ecs-agent/ecs-agent/logger/field"
+	md "github.com/aws/amazon-ecs-agent/ecs-agent/manageddaemon"
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/cihub/seelog"
 	"github.com/pkg/errors"
@@ -66,6 +68,7 @@ const (
 	capabilityFirelensConfigS3                             = "firelens.options.config.s3"
 	capabilityFullTaskSync                                 = "full-sync"
 	capabilityGMSA                                         = "gmsa"
+	capabilityGMSADomainless                               = "gmsa-domainless"
 	capabilityEFS                                          = "efs"
 	capabilityEFSAuth                                      = "efsAuth"
 	capabilityEnvFilesS3                                   = "env-files.s3"
@@ -76,6 +79,12 @@ const (
 	capabilityExecCertsRelativePath                        = "certs"
 	capabilityExternal                                     = "external"
 	capabilityServiceConnect                               = "service-connect-v1"
+	capabilityGpuDriverVersion                             = "gpu-driver-version"
+	capabilityEBSTaskAttach                                = "storage.ebs-task-volume-attach"
+
+	// network capabilities, going forward, please append "network." prefix to any new networking capability we introduce
+	networkCapabilityPrefix      = "network."
+	capabilityContainerPortRange = networkCapabilityPrefix + "container-port-range"
 )
 
 var (
@@ -99,6 +108,8 @@ var (
 		capabilityFullTaskSync,
 		// ecs agent version 1.39.0 supports bulk loading env vars through environmentFiles in S3
 		capabilityEnvFilesS3,
+		// support container port range in container definition - port mapping field
+		capabilityContainerPortRange,
 	}
 	// use empty struct as value type to simulate set
 	capabilityExecInvalidSsmVersions = map[string]struct{}{}
@@ -118,6 +129,7 @@ var (
 		attributePrefix + taskEIAAttributeSuffix,
 		attributePrefix + taskEIAWithOptimizedCPU,
 		attributePrefix + capabilityServiceConnect,
+		attributePrefix + capabilityEBSTaskAttach,
 	}
 	// List of capabilities that are only supported on external capaciity. Currently only one but keep as a list
 	// for future proof and also align with externalUnsupportedCapabilities.
@@ -181,6 +193,7 @@ var (
 //	ecs.capability.execute-command
 //	ecs.capability.external
 //	ecs.capability.service-connect-v1
+//	ecs.capability.network.container-port-range
 func (agent *ecsAgent) capabilities() ([]*ecs.Attribute, error) {
 	var capabilities []*ecs.Attribute
 
@@ -264,6 +277,9 @@ func (agent *ecsAgent) capabilities() ([]*ecs.Attribute, error) {
 	// support GMSA capabilities
 	capabilities = agent.appendGMSACapabilities(capabilities)
 
+	// support GMSA domainless capabilities
+	capabilities = agent.appendGMSADomainlessCapabilities(capabilities)
+
 	// support efs auth on ecs capabilities
 	for _, cap := range agent.cfg.VolumePluginCapabilities {
 		capabilities = agent.appendEFSVolumePluginCapabilities(capabilities, cap)
@@ -278,6 +294,9 @@ func (agent *ecsAgent) capabilities() ([]*ecs.Attribute, error) {
 	}
 	// add service-connect capabilities if applicable
 	capabilities = agent.appendServiceConnectCapabilities(capabilities)
+
+	// add ebs-task-attach attribute if applicable
+	capabilities = agent.appendEBSTaskAttachCapabilities(capabilities)
 
 	if agent.cfg.External.Enabled() {
 		// Add external specific capability; remove external unsupported capabilities.
@@ -305,8 +324,16 @@ func (agent *ecsAgent) appendDockerDependentCapabilities(capabilities []*ecs.Att
 }
 
 func (agent *ecsAgent) appendGMSACapabilities(capabilities []*ecs.Attribute) []*ecs.Attribute {
-	if agent.cfg.GMSACapable {
+	if agent.cfg.GMSACapable.Enabled() {
 		return appendNameOnlyAttribute(capabilities, attributePrefix+capabilityGMSA)
+	}
+
+	return capabilities
+}
+
+func (agent *ecsAgent) appendGMSADomainlessCapabilities(capabilities []*ecs.Attribute) []*ecs.Attribute {
+	if agent.cfg.GMSADomainlessCapable.Enabled() {
+		return appendNameOnlyAttribute(capabilities, attributePrefix+capabilityGMSADomainless)
 	}
 
 	return capabilities
@@ -476,6 +503,40 @@ func (agent *ecsAgent) appendServiceConnectCapabilities(capabilities []*ecs.Attr
 	for _, serviceConnectCapability := range supportedAppnetInterfaceVerToCapabilities {
 		capabilities = appendNameOnlyAttribute(capabilities, serviceConnectCapability)
 	}
+	return capabilities
+}
+
+func (agent *ecsAgent) appendEBSTaskAttachCapabilities(capabilities []*ecs.Attribute) []*ecs.Attribute {
+	// todo update to import multiple daemons and append capabilities
+	// for now load only EBS CSI Driver daemon
+	daemonDefinitions, err := md.ImportAll()
+	if err != nil {
+		logger.Error(fmt.Sprintf("Daemon import failure: %s", err))
+		return capabilities
+	}
+	if len(daemonDefinitions) == 0 {
+		logger.Warn("daemonDefinitions is empty/nil after import")
+		return capabilities
+	}
+	for _, daemonDef := range daemonDefinitions {
+		if daemonDef.GetImageName() == md.EbsCsiDriver {
+			csiDaemonManager := dm.NewDaemonManager(daemonDef)
+			agent.setDaemonManager(md.EbsCsiDriver, csiDaemonManager)
+			imageExists, err := csiDaemonManager.ImageExists()
+			if !imageExists {
+				logger.Error(
+					"Either EBS Daemon image does not exist or failed to check its existence."+
+						" This container instance will not advertise EBS Task Attach capability.",
+					logger.Fields{
+						field.ImageName:    csiDaemonManager.GetManagedDaemon().GetImageName(),
+						field.ImageTARPath: csiDaemonManager.GetManagedDaemon().GetImageTarPath(),
+						field.Error:        err,
+					})
+				return capabilities
+			}
+		}
+	}
+	capabilities = appendNameOnlyAttribute(capabilities, attributePrefix+capabilityEBSTaskAttach)
 	return capabilities
 }
 

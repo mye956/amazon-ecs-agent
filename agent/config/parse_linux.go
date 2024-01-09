@@ -18,31 +18,33 @@ package config
 
 import (
 	"errors"
+	"io/fs"
 	"os"
+	"strconv"
 	"strings"
 
 	"github.com/aws/amazon-ecs-agent/agent/utils"
 	"github.com/cihub/seelog"
 )
 
-func parseGMSACapability() bool {
-	envStatus := utils.ParseBool(os.Getenv("ECS_GMSA_SUPPORTED"), true)
+func parseGMSACapability() BooleanDefaultFalse {
+	envStatus := utils.ParseBool(os.Getenv(envGmsaEcsSupport), false)
 	if envStatus {
 		// Check if domain join check override is present
 		skipDomainJoinCheck := utils.ParseBool(os.Getenv(envSkipDomainJoinCheck), false)
 		if skipDomainJoinCheck {
 			seelog.Infof("Skipping domain join validation based on environment override")
-			return true
+			return BooleanDefaultFalse{Value: ExplicitlyEnabled}
 		}
 
 		// check if the credentials fetcher socket is created and exists
 		// this env variable is set in ecs-init module
-		if credentialsfetcherHostDir := os.Getenv("CREDENTIALS_FETCHER_HOST_DIR"); credentialsfetcherHostDir != "" {
+		if credentialsfetcherHostDir := os.Getenv(envCredentialsFetcherHostDir); credentialsfetcherHostDir != "" {
 			_, err := os.Stat(credentialsfetcherHostDir)
 			if err != nil {
-				if os.IsNotExist(err) {
+				if errors.Is(err, fs.ErrNotExist) {
 					seelog.Errorf("CREDENTIALS_FETCHER_HOST_DIR not found, err: %v", err)
-					return false
+					return BooleanDefaultFalse{Value: ExplicitlyDisabled}
 				}
 			}
 
@@ -50,7 +52,7 @@ func parseGMSACapability() bool {
 			domainlessGMSAUser := os.Getenv("CREDENTIALS_FETCHER_SECRET_NAME_FOR_DOMAINLESS_GMSA")
 			if domainlessGMSAUser != "" && len(domainlessGMSAUser) > 0 {
 				seelog.Info("domainless gMSA support is enabled")
-				return true
+				return BooleanDefaultFalse{Value: ExplicitlyEnabled}
 			}
 
 			// returns true if the container instance is domain joined
@@ -59,16 +61,46 @@ func parseGMSACapability() bool {
 
 			if !isDomainJoined {
 				seelog.Error("gMSA on linux requires domain joined instance. Did not find expected env var ECS_DOMAIN_JOINED_LINUX_INSTANCE=true")
+				return BooleanDefaultFalse{Value: ExplicitlyDisabled}
 			}
-			return isDomainJoined
+			return BooleanDefaultFalse{Value: ExplicitlyEnabled}
 		}
 	}
 	seelog.Debug("env variables to support gMSA are not set")
-	return false
+	return BooleanDefaultFalse{Value: ExplicitlyDisabled}
 }
 
-func parseFSxWindowsFileServerCapability() bool {
-	return false
+func parseFSxWindowsFileServerCapability() BooleanDefaultTrue {
+	return BooleanDefaultTrue{Value: ExplicitlyDisabled}
+}
+
+// parseGMSADomainlessCapability is used to determine if gMSA domainless support can be enabled
+func parseGMSADomainlessCapability() BooleanDefaultFalse {
+	envStatus := utils.ParseBool(os.Getenv(envGmsaEcsSupport), false)
+	if envStatus {
+		// Check if domain less check override is present
+		skipDomainLessCheck := utils.ParseBool(os.Getenv(envSkipDomainLessCheck), false)
+		if skipDomainLessCheck {
+			seelog.Infof("Skipping domain less validation based on environment override")
+			return BooleanDefaultFalse{Value: ExplicitlyEnabled}
+		}
+
+		// check if the credentials fetcher socket is created and exists
+		// this env variable is set in ecs-init module
+		if credentialsfetcherHostDir := os.Getenv(envCredentialsFetcherHostDir); credentialsfetcherHostDir != "" {
+			_, err := os.Stat(credentialsfetcherHostDir)
+			if err != nil {
+				if errors.Is(err, fs.ErrNotExist) {
+					seelog.Errorf("CREDENTIALS_FETCHER_HOST_DIR not found, err: %v", err)
+					return BooleanDefaultFalse{Value: ExplicitlyDisabled}
+				}
+				seelog.Errorf("Error associated with CREDENTIALS_FETCHER_HOST_DIR, err: %v", err)
+			}
+			return BooleanDefaultFalse{Value: ExplicitlyEnabled}
+		}
+	}
+	seelog.Debug("env variables to support gMSA are not set")
+	return BooleanDefaultFalse{Value: ExplicitlyDisabled}
 }
 
 var IsWindows2016 = func() (bool, error) {
@@ -78,4 +110,28 @@ var IsWindows2016 = func() (bool, error) {
 // GetOSFamily returns "LINUX" as operating system family for linux based ecs instances.
 func GetOSFamily() string {
 	return strings.ToUpper(OSType)
+}
+
+func parseTaskPidsLimit() int {
+	var taskPidsLimit int
+	pidsLimitEnvVal := os.Getenv("ECS_TASK_PIDS_LIMIT")
+	if pidsLimitEnvVal == "" {
+		seelog.Debug("Environment variable empty: ECS_TASK_PIDS_LIMIT")
+		return 0
+	}
+
+	taskPidsLimit, err := strconv.Atoi(strings.TrimSpace(pidsLimitEnvVal))
+	if err != nil {
+		seelog.Warnf(`Invalid format for "ECS_TASK_PIDS_LIMIT", expected an integer but got [%v]: %v`, pidsLimitEnvVal, err)
+		return 0
+	}
+
+	// 4194304 is a defacto limit set by runc on Amazon Linux (4*1024*1024), so
+	// we should use the same to avoid runtime container failures.
+	if taskPidsLimit <= 0 || taskPidsLimit > 4194304 {
+		seelog.Warnf(`Invalid value for "ECS_TASK_PIDS_LIMIT", expected integer greater than 0 and less than 4194305, but got [%v]`, taskPidsLimit)
+		return 0
+	}
+
+	return taskPidsLimit
 }

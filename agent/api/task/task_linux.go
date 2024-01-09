@@ -21,20 +21,19 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/aws/amazon-ecs-agent/agent/logger"
-	"github.com/aws/amazon-ecs-agent/agent/logger/field"
+	"github.com/aws/amazon-ecs-agent/ecs-agent/logger"
+	"github.com/aws/amazon-ecs-agent/ecs-agent/logger/field"
 
-	"github.com/aws/amazon-ecs-agent/agent/utils"
-
-	apicontainerstatus "github.com/aws/amazon-ecs-agent/agent/api/container/status"
-	apieni "github.com/aws/amazon-ecs-agent/agent/api/eni"
 	"github.com/aws/amazon-ecs-agent/agent/config"
-	"github.com/aws/amazon-ecs-agent/agent/credentials"
 	"github.com/aws/amazon-ecs-agent/agent/ecscni"
 	"github.com/aws/amazon-ecs-agent/agent/taskresource"
 	"github.com/aws/amazon-ecs-agent/agent/taskresource/cgroup"
 	resourcestatus "github.com/aws/amazon-ecs-agent/agent/taskresource/status"
 	resourcetype "github.com/aws/amazon-ecs-agent/agent/taskresource/types"
+	apicontainerstatus "github.com/aws/amazon-ecs-agent/ecs-agent/api/container/status"
+	"github.com/aws/amazon-ecs-agent/ecs-agent/credentials"
+	ni "github.com/aws/amazon-ecs-agent/ecs-agent/netlib/model/networkinterface"
+	"github.com/aws/amazon-ecs-agent/ecs-agent/utils/arn"
 	"github.com/cihub/seelog"
 	"github.com/containernetworking/cni/libcni"
 	dockercontainer "github.com/docker/docker/api/types/container"
@@ -59,7 +58,7 @@ func (task *Task) adjustForPlatform(cfg *config.Config) {
 	task.MemoryCPULimitsEnabled = cfg.TaskCPUMemLimit.Enabled()
 }
 
-func (task *Task) initializeCgroupResourceSpec(cgroupPath string, cGroupCPUPeriod time.Duration, resourceFields *taskresource.ResourceFields) error {
+func (task *Task) initializeCgroupResourceSpec(cgroupPath string, cGroupCPUPeriod time.Duration, taskPidsLimit int, resourceFields *taskresource.ResourceFields) error {
 	if !task.MemoryCPULimitsEnabled {
 		if task.CPU > 0 || task.Memory > 0 {
 			// Client-side validation/warning if a task with task-level CPU/memory limits specified somehow lands on an instance
@@ -75,7 +74,7 @@ func (task *Task) initializeCgroupResourceSpec(cgroupPath string, cGroupCPUPerio
 	if err != nil {
 		return errors.Wrapf(err, "cgroup resource: unable to determine cgroup root for task")
 	}
-	resSpec, err := task.BuildLinuxResourceSpec(cGroupCPUPeriod)
+	resSpec, err := task.BuildLinuxResourceSpec(cGroupCPUPeriod, taskPidsLimit)
 	if err != nil {
 		return errors.Wrapf(err, "cgroup resource: unable to build resource spec for task")
 	}
@@ -94,7 +93,7 @@ func (task *Task) initializeCgroupResourceSpec(cgroupPath string, cGroupCPUPerio
 // Example v1: /ecs/task-id
 // Example v2: ecstasks-$TASKID.slice
 func (task *Task) BuildCgroupRoot() (string, error) {
-	taskID, err := utils.TaskIdFromArn(task.Arn)
+	taskID, err := arn.TaskIdFromArn(task.Arn)
 	if err != nil {
 		return "", err
 	}
@@ -123,7 +122,7 @@ func buildCgroupV2Root(taskID string) string {
 }
 
 // BuildLinuxResourceSpec returns a linuxResources object for the task cgroup
-func (task *Task) BuildLinuxResourceSpec(cGroupCPUPeriod time.Duration) (specs.LinuxResources, error) {
+func (task *Task) BuildLinuxResourceSpec(cGroupCPUPeriod time.Duration, taskPidsLimit int) (specs.LinuxResources, error) {
 	linuxResourceSpec := specs.LinuxResources{}
 
 	// If task level CPU limits are requested, set CPU quota + CPU period
@@ -147,6 +146,14 @@ func (task *Task) BuildLinuxResourceSpec(cGroupCPUPeriod time.Duration) (specs.L
 			return specs.LinuxResources{}, err
 		}
 		linuxResourceSpec.Memory = &linuxMemorySpec
+	}
+
+	// Set task pids limit if set via ECS_TASK_PIDS_LIMIT env var
+	if taskPidsLimit > 0 {
+		pidsLimit := &specs.LinuxPids{
+			Limit: int64(taskPidsLimit),
+		}
+		linuxResourceSpec.Pids = pidsLimit
 	}
 
 	return linuxResourceSpec, nil
@@ -274,10 +281,10 @@ func (task *Task) BuildCNIConfigAwsvpc(includeIPAMConfig bool, cniConfig *ecscni
 		switch eni.InterfaceAssociationProtocol {
 		// If the association protocol is set to "default" or unset (to preserve backwards
 		// compatibility), consider it a "standard" ENI attachment.
-		case "", apieni.DefaultInterfaceAssociationProtocol:
+		case "", ni.DefaultInterfaceAssociationProtocol:
 			cniConfig.ID = eni.MacAddress
-			ifName, netconf, err = ecscni.NewENINetworkConfig(eni, cniConfig)
-		case apieni.VLANInterfaceAssociationProtocol:
+			ifName, netconf, err = ecscni.NewVPCENINetworkConfig(eni, cniConfig)
+		case ni.VLANInterfaceAssociationProtocol:
 			cniConfig.ID = eni.MacAddress
 			ifName, netconf, err = ecscni.NewBranchENINetworkConfig(eni, cniConfig)
 		default:

@@ -30,29 +30,31 @@ import (
 	"github.com/aws/amazon-ecs-agent/agent/taskresource"
 	mock_taskresource "github.com/aws/amazon-ecs-agent/agent/taskresource/mocks"
 	resourcestatus "github.com/aws/amazon-ecs-agent/agent/taskresource/status"
-	utilsync "github.com/aws/amazon-ecs-agent/agent/utils/sync"
 
 	"github.com/aws/amazon-ecs-agent/agent/api"
 	apicontainer "github.com/aws/amazon-ecs-agent/agent/api/container"
-	apicontainerstatus "github.com/aws/amazon-ecs-agent/agent/api/container/status"
-	apieni "github.com/aws/amazon-ecs-agent/agent/api/eni"
-	apierrors "github.com/aws/amazon-ecs-agent/agent/api/errors"
 	apitask "github.com/aws/amazon-ecs-agent/agent/api/task"
-	apitaskstatus "github.com/aws/amazon-ecs-agent/agent/api/task/status"
 	"github.com/aws/amazon-ecs-agent/agent/config"
-	"github.com/aws/amazon-ecs-agent/agent/credentials"
-	mock_credentials "github.com/aws/amazon-ecs-agent/agent/credentials/mocks"
 	"github.com/aws/amazon-ecs-agent/agent/data"
 	mock_dockerapi "github.com/aws/amazon-ecs-agent/agent/dockerclient/dockerapi/mocks"
 	"github.com/aws/amazon-ecs-agent/agent/engine/dependencygraph"
 	mock_dockerstate "github.com/aws/amazon-ecs-agent/agent/engine/dockerstate/mocks"
 	mock_engine "github.com/aws/amazon-ecs-agent/agent/engine/mocks"
 	"github.com/aws/amazon-ecs-agent/agent/engine/testdata"
-	"github.com/aws/amazon-ecs-agent/agent/eventstream"
 	"github.com/aws/amazon-ecs-agent/agent/sighandlers/exitcodes"
 	"github.com/aws/amazon-ecs-agent/agent/statechange"
 	"github.com/aws/amazon-ecs-agent/agent/taskresource/volume"
-	mock_ttime "github.com/aws/amazon-ecs-agent/agent/utils/ttime/mocks"
+	taskresourcevolume "github.com/aws/amazon-ecs-agent/agent/taskresource/volume"
+	apiresource "github.com/aws/amazon-ecs-agent/ecs-agent/api/attachment/resource"
+	apicontainerstatus "github.com/aws/amazon-ecs-agent/ecs-agent/api/container/status"
+	apierrors "github.com/aws/amazon-ecs-agent/ecs-agent/api/errors"
+	apitaskstatus "github.com/aws/amazon-ecs-agent/ecs-agent/api/task/status"
+	"github.com/aws/amazon-ecs-agent/ecs-agent/credentials"
+	mock_credentials "github.com/aws/amazon-ecs-agent/ecs-agent/credentials/mocks"
+	mock_csiclient "github.com/aws/amazon-ecs-agent/ecs-agent/csiclient/mocks"
+	"github.com/aws/amazon-ecs-agent/ecs-agent/eventstream"
+	ni "github.com/aws/amazon-ecs-agent/ecs-agent/netlib/model/networkinterface"
+	mock_ttime "github.com/aws/amazon-ecs-agent/ecs-agent/utils/ttime/mocks"
 	"github.com/stretchr/testify/assert"
 
 	"github.com/golang/mock/gomock"
@@ -831,6 +833,7 @@ func TestStartContainerTransitionsInvokesHandleContainerChange(t *testing.T) {
 	containerChangeEventStream := eventstream.NewEventStream(eventStreamName, context.Background())
 	containerChangeEventStream.StartListening()
 
+	hostResourceManager := NewHostResourceManager(getTestHostResources())
 	stateChangeEvents := make(chan statechange.Event)
 
 	task := &managedTask{
@@ -844,6 +847,7 @@ func TestStartContainerTransitionsInvokesHandleContainerChange(t *testing.T) {
 			containerChangeEventStream: containerChangeEventStream,
 			stateChangeEvents:          stateChangeEvents,
 			dataClient:                 data.NewNoopClient(),
+			hostResourceManager:        &hostResourceManager,
 		},
 		stateChangeEvents:          stateChangeEvents,
 		containerChangeEventStream: containerChangeEventStream,
@@ -964,13 +968,15 @@ func TestWaitForContainerTransitionsForTerminalTask(t *testing.T) {
 
 func TestOnContainersUnableToTransitionStateForDesiredStoppedTask(t *testing.T) {
 	stateChangeEvents := make(chan statechange.Event)
+	hostResourceManager := NewHostResourceManager(getTestHostResources())
 	task := &managedTask{
 		Task: &apitask.Task{
 			Containers:          []*apicontainer.Container{},
 			DesiredStatusUnsafe: apitaskstatus.TaskStopped,
 		},
 		engine: &DockerTaskEngine{
-			stateChangeEvents: stateChangeEvents,
+			stateChangeEvents:   stateChangeEvents,
+			hostResourceManager: &hostResourceManager,
 		},
 		stateChangeEvents: stateChangeEvents,
 		ctx:               context.TODO(),
@@ -1339,16 +1345,16 @@ func TestCleanupTaskENIs(t *testing.T) {
 		resourceStateChangeEvent: make(chan resourceStateChange),
 		cfg:                      taskEngine.cfg,
 	}
-	mTask.AddTaskENI(&apieni.ENI{
+	mTask.AddTaskENI(&ni.NetworkInterface{
 		ID: "TestCleanupTaskENIs",
-		IPV4Addresses: []*apieni.ENIIPV4Address{
+		IPV4Addresses: []*ni.IPV4Address{
 			{
 				Primary: true,
 				Address: ipv4,
 			},
 		},
 		MacAddress: mac,
-		IPV6Addresses: []*apieni.ENIIPV6Address{
+		IPV6Addresses: []*ni.IPV6Address{
 			{
 				Address: ipv6,
 			},
@@ -1414,23 +1420,18 @@ func TestTaskWaitForExecutionCredentials(t *testing.T) {
 
 	for _, tc := range tcs {
 		t.Run(fmt.Sprintf("%v", tc.errs), func(t *testing.T) {
-			ctrl := gomock.NewController(t)
-			mockTime := mock_ttime.NewMockTime(ctrl)
-			mockTimer := mock_ttime.NewMockTimer(ctrl)
 			ctx, cancel := context.WithCancel(context.TODO())
 			defer cancel()
 			task := &managedTask{
-				ctx: ctx,
+				ctx:    ctx,
+				engine: &DockerTaskEngine{},
 				Task: &apitask.Task{
 					KnownStatusUnsafe:   apitaskstatus.TaskRunning,
 					DesiredStatusUnsafe: apitaskstatus.TaskRunning,
 				},
-				_time:       mockTime,
 				acsMessages: make(chan acsTransition),
 			}
 			if tc.result {
-				mockTime.EXPECT().AfterFunc(gomock.Any(), gomock.Any()).Return(mockTimer)
-				mockTimer.EXPECT().Stop()
 				go func() { task.acsMessages <- acsTransition{desiredStatus: apitaskstatus.TaskRunning} }()
 			}
 
@@ -1784,31 +1785,6 @@ func TestHandleContainerChangeUpdateMetadataRedundant(t *testing.T) {
 	assert.Equal(t, exitCode, *containerExitCode)
 	containerCreateTime := container.GetCreatedAt()
 	assert.Equal(t, timeNow, containerCreateTime)
-}
-
-func TestWaitForHostResources(t *testing.T) {
-	taskStopWG := utilsync.NewSequentialWaitGroup()
-	taskStopWG.Add(1, 1)
-	ctx, cancel := context.WithCancel(context.Background())
-
-	mtask := &managedTask{
-		ctx:        ctx,
-		cancel:     cancel,
-		taskStopWG: taskStopWG,
-		Task: &apitask.Task{
-			StartSequenceNumber: 1,
-		},
-	}
-
-	var waitForHostResourcesWG sync.WaitGroup
-	waitForHostResourcesWG.Add(1)
-	go func() {
-		mtask.waitForHostResources()
-		waitForHostResourcesWG.Done()
-	}()
-
-	taskStopWG.Done(1)
-	waitForHostResourcesWG.Wait()
 }
 
 func TestWaitForResourceTransition(t *testing.T) {
@@ -2198,6 +2174,119 @@ func TestContainerNextStateDependsStoppedContainer(t *testing.T) {
 			transition := mtask.containerNextState(containerToBeStopped)
 			assert.Equal(t, tc.actionRequired, transition.actionRequired)
 			assert.Equal(t, tc.err, transition.reason)
+		})
+	}
+}
+
+// TestTaskWaitForHostResources tests task queuing behavior based on available host resources
+func TestTaskWaitForHostResources(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.TODO())
+	defer cancel()
+
+	// 1 vCPU available on host
+	hostResourceManager := NewHostResourceManager(getTestHostResources())
+	taskEngine := &DockerTaskEngine{
+		managedTasks:           make(map[string]*managedTask),
+		monitorQueuedTaskEvent: make(chan struct{}, 1),
+		hostResourceManager:    &hostResourceManager,
+	}
+	go taskEngine.monitorQueuedTasks(ctx)
+	// 3 tasks requesting 0.5 vCPUs each
+	tasks := []*apitask.Task{}
+	for i := 0; i < 3; i++ {
+		task := testdata.LoadTask("sleep5")
+		task.Arn = fmt.Sprintf("arn%d", i)
+		task.CPU = float64(0.5)
+		mtask := &managedTask{
+			Task:                      task,
+			engine:                    taskEngine,
+			consumedHostResourceEvent: make(chan struct{}, 1),
+		}
+		tasks = append(tasks, task)
+		taskEngine.managedTasks[task.Arn] = mtask
+	}
+
+	// acquire for host resources order arn0, arn1, arn2
+	go func() {
+		taskEngine.managedTasks["arn0"].waitForHostResources()
+		taskEngine.managedTasks["arn1"].waitForHostResources()
+		taskEngine.managedTasks["arn2"].waitForHostResources()
+	}()
+	time.Sleep(500 * time.Millisecond)
+
+	// Verify waiting queue is waiting at arn2
+	topTask, err := taskEngine.topTask()
+	assert.NoError(t, err)
+	assert.Equal(t, topTask.Arn, "arn2")
+
+	// Remove 1 task
+	taskResources := taskEngine.managedTasks["arn0"].ToHostResources()
+	taskEngine.hostResourceManager.release("arn0", taskResources)
+	taskEngine.wakeUpTaskQueueMonitor()
+
+	time.Sleep(500 * time.Millisecond)
+
+	// Verify arn2 got dequeued
+	topTask, err = taskEngine.topTask()
+	assert.Error(t, err)
+}
+
+func TestUnstageVolumes(t *testing.T) {
+	tcs := []struct {
+		name      string
+		err       error
+		numErrors int
+	}{
+		{
+			name:      "Success",
+			err:       nil,
+			numErrors: 0,
+		},
+		{
+			name:      "Failure",
+			err:       errors.New("unable to unstage volume"),
+			numErrors: 1,
+		},
+		{
+			name:      "TimeoutFailure",
+			err:       errors.New("rpc error: code = DeadlineExceeded desc = context deadline exceeded"),
+			numErrors: 1,
+		},
+	}
+
+	for _, tc := range tcs {
+		t.Run(tc.name, func(t *testing.T) {
+			mockCtrl := gomock.NewController(t)
+			defer mockCtrl.Finish()
+			ctx, cancel := context.WithCancel(context.TODO())
+			defer cancel()
+			mtask := &managedTask{
+				Task: &apitask.Task{
+					ResourcesMapUnsafe:  make(map[string][]taskresource.TaskResource),
+					DesiredStatusUnsafe: apitaskstatus.TaskRunning,
+					Volumes: []apitask.TaskVolume{
+						{
+							Name: taskresourcevolume.TestVolumeName,
+							Type: apiresource.EBSTaskAttach,
+							Volume: &taskresourcevolume.EBSTaskVolumeConfig{
+								VolumeId:             taskresourcevolume.TestVolumeId,
+								VolumeName:           taskresourcevolume.TestVolumeId,
+								VolumeSizeGib:        taskresourcevolume.TestVolumeSizeGib,
+								SourceVolumeHostPath: taskresourcevolume.TestSourceVolumeHostPath,
+								DeviceName:           taskresourcevolume.TestDeviceName,
+								FileSystem:           taskresourcevolume.TestFileSystem,
+							},
+						},
+					},
+				},
+				ctx:                      ctx,
+				resourceStateChangeEvent: make(chan resourceStateChange),
+			}
+			mockCsiClient := mock_csiclient.NewMockCSIClient(mockCtrl)
+			mockCsiClient.EXPECT().NodeUnstageVolume(gomock.Any(), "vol-12345", "/mnt/ecs/ebs/taskarn_vol-12345").Return(tc.err).Times(1)
+
+			errors := mtask.UnstageVolumes(mockCsiClient)
+			assert.Len(t, errors, tc.numErrors)
 		})
 	}
 }

@@ -23,10 +23,11 @@ import (
 	"strings"
 	"time"
 
-	apierrors "github.com/aws/amazon-ecs-agent/agent/api/errors"
 	"github.com/aws/amazon-ecs-agent/agent/dockerclient"
-	"github.com/aws/amazon-ecs-agent/agent/ec2"
 	"github.com/aws/amazon-ecs-agent/agent/utils"
+	apierrors "github.com/aws/amazon-ecs-agent/ecs-agent/api/errors"
+	"github.com/aws/amazon-ecs-agent/ecs-agent/ec2"
+	commonutils "github.com/aws/amazon-ecs-agent/ecs-agent/utils"
 	"github.com/cihub/seelog"
 )
 
@@ -43,9 +44,6 @@ const (
 
 	// AgentIntrospectionPort is used to serve the metadata about the agent and to query the tasks being managed by the agent.
 	AgentIntrospectionPort = 51678
-
-	// AgentCredentialsPort is used to serve the credentials for tasks.
-	AgentCredentialsPort = 51679
 
 	// AgentPrometheusExpositionPort is used to expose Prometheus metrics that can be scraped by a Prometheus server
 	AgentPrometheusExpositionPort = 51680
@@ -207,7 +205,7 @@ func (cfg *Config) Merge(rhs Config) *Config {
 				leftField.Set(reflect.ValueOf(right.Field(i).Interface()))
 			}
 		default:
-			if utils.ZeroOrNil(leftField.Interface()) {
+			if commonutils.ZeroOrNil(leftField.Interface()) {
 				leftField.Set(reflect.ValueOf(right.Field(i).Interface()))
 			}
 		}
@@ -398,7 +396,7 @@ func (cfg *Config) checkMissingAndDepreciated() error {
 	fatalFields := []string{}
 	for i := 0; i < cfgElem.NumField(); i++ {
 		cfgField := cfgElem.Field(i)
-		if utils.ZeroOrNil(cfgField.Interface()) {
+		if commonutils.ZeroOrNil(cfgField.Interface()) {
 			missingTag := cfgStructField.Field(i).Tag.Get("missing")
 			if len(missingTag) == 0 {
 				continue
@@ -432,7 +430,7 @@ func (cfg *Config) complete() bool {
 	cfgElem := reflect.ValueOf(cfg).Elem()
 
 	for i := 0; i < cfgElem.NumField(); i++ {
-		if utils.ZeroOrNil(cfgElem.Field(i).Interface()) {
+		if commonutils.ZeroOrNil(cfgElem.Field(i).Interface()) {
 			return false
 		}
 	}
@@ -467,7 +465,7 @@ func fileConfig() (Config, error) {
 	}
 
 	// Handle any deprecated keys correctly here
-	if utils.ZeroOrNil(cfg.Cluster) && !utils.ZeroOrNil(cfg.ClusterArn) {
+	if commonutils.ZeroOrNil(cfg.Cluster) && !commonutils.ZeroOrNil(cfg.ClusterArn) {
 		cfg.Cluster = cfg.ClusterArn
 	}
 	return cfg, nil
@@ -590,12 +588,15 @@ func environmentConfig() (Config, error) {
 		CgroupCPUPeriod:                     parseCgroupCPUPeriod(),
 		SpotInstanceDrainingEnabled:         parseBooleanDefaultFalseConfig("ECS_ENABLE_SPOT_INSTANCE_DRAINING"),
 		GMSACapable:                         parseGMSACapability(),
+		GMSADomainlessCapable:               parseGMSADomainlessCapability(),
 		VolumePluginCapabilities:            parseVolumePluginCapabilities(),
 		FSxWindowsFileServerCapable:         parseFSxWindowsFileServerCapability(),
 		External:                            parseBooleanDefaultFalseConfig("ECS_EXTERNAL"),
 		EnableRuntimeStats:                  parseBooleanDefaultFalseConfig("ECS_ENABLE_RUNTIME_STATS"),
 		ShouldExcludeIPv6PortBinding:        parseBooleanDefaultTrueConfig("ECS_EXCLUDE_IPV6_PORTBINDING"),
 		WarmPoolsSupport:                    parseBooleanDefaultFalseConfig("ECS_WARM_POOLS_CHECK"),
+		DynamicHostPortRange:                parseDynamicHostPortRange("ECS_DYNAMIC_HOST_PORT_RANGE"),
+		TaskPidsLimit:                       parseTaskPidsLimit(),
 	}, err
 }
 
@@ -629,6 +630,7 @@ func (cfg *Config) String() string {
 			"DependentContainersPullUpfront: %v, "+
 			"TaskCPUMemLimit: %v, "+
 			"ShouldExcludeIPv6PortBinding: %v, "+
+			"DynamicHostPortRange: %v"+
 			"%s",
 		cfg.Cluster,
 		cfg.AWSRegion,
@@ -647,6 +649,7 @@ func (cfg *Config) String() string {
 		cfg.DependentContainersPullUpfront,
 		cfg.TaskCPUMemLimit,
 		cfg.ShouldExcludeIPv6PortBinding,
+		cfg.DynamicHostPortRange,
 		cfg.platformString(),
 	)
 }

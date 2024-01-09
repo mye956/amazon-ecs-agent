@@ -22,17 +22,17 @@ import (
 	"runtime"
 	"testing"
 
-	"github.com/aws/amazon-ecs-agent/agent/acs/model/ecsacs"
 	apicontainer "github.com/aws/amazon-ecs-agent/agent/api/container"
-	apicontainerstatus "github.com/aws/amazon-ecs-agent/agent/api/container/status"
-	apieni "github.com/aws/amazon-ecs-agent/agent/api/eni"
-	apitaskstatus "github.com/aws/amazon-ecs-agent/agent/api/task/status"
 	"github.com/aws/amazon-ecs-agent/agent/config"
 	"github.com/aws/amazon-ecs-agent/agent/ecscni"
 	"github.com/aws/amazon-ecs-agent/agent/taskresource"
 	"github.com/aws/amazon-ecs-agent/agent/taskresource/fsxwindowsfileserver"
 	taskresourcevolume "github.com/aws/amazon-ecs-agent/agent/taskresource/volume"
 	"github.com/aws/amazon-ecs-agent/agent/utils"
+	"github.com/aws/amazon-ecs-agent/ecs-agent/acs/model/ecsacs"
+	apicontainerstatus "github.com/aws/amazon-ecs-agent/ecs-agent/api/container/status"
+	apitaskstatus "github.com/aws/amazon-ecs-agent/ecs-agent/api/task/status"
+	ni "github.com/aws/amazon-ecs-agent/ecs-agent/netlib/model/networkinterface"
 	"github.com/golang/mock/gomock"
 
 	"github.com/aws/amazon-ecs-agent/agent/dockerclient"
@@ -41,9 +41,9 @@ import (
 	"github.com/stretchr/testify/require"
 
 	mock_asm_factory "github.com/aws/amazon-ecs-agent/agent/asm/factory/mocks"
-	mock_credentials "github.com/aws/amazon-ecs-agent/agent/credentials/mocks"
 	mock_fsx_factory "github.com/aws/amazon-ecs-agent/agent/fsx/factory/mocks"
 	mock_ssm_factory "github.com/aws/amazon-ecs-agent/agent/ssm/factory/mocks"
+	mock_credentials "github.com/aws/amazon-ecs-agent/ecs-agent/credentials/mocks"
 )
 
 const (
@@ -109,7 +109,6 @@ func TestPostUnmarshalWindowsCanonicalPaths(t *testing.T) {
 				},
 			},
 		},
-		StartSequenceNumber: 42,
 	}
 
 	seqNum := int64(42)
@@ -142,6 +141,7 @@ func removeEndpointConfigFromEnvironment(container *apicontainer.Container) {
 func TestWindowsPlatformHostConfigOverride(t *testing.T) {
 	// Testing Windows platform override for HostConfig.
 	// Expects MemorySwappiness option to be set to -1
+	// Expects NetworkMode to be set as nat only when the network mode is bridge.
 
 	task := &Task{}
 
@@ -155,6 +155,14 @@ func TestWindowsPlatformHostConfigOverride(t *testing.T) {
 	task.platformHostConfigOverride(hostConfig)
 	assert.Equal(t, int64(minimumCPUPercent), hostConfig.CPUPercent)
 	assert.Empty(t, hostConfig.CPUShares)
+
+	hostConfig = &dockercontainer.HostConfig{NetworkMode: BridgeNetworkMode}
+	task.platformHostConfigOverride(hostConfig)
+	assert.Equal(t, windowsDefaultNetworkName, hostConfig.NetworkMode.NetworkName())
+
+	hostConfig = &dockercontainer.HostConfig{NetworkMode: AWSVPCNetworkMode}
+	task.platformHostConfigOverride(hostConfig)
+	assert.Equal(t, AWSVPCNetworkMode, hostConfig.NetworkMode.NetworkName())
 }
 
 func TestDockerHostConfigRawConfigMerging(t *testing.T) {
@@ -563,12 +571,12 @@ func TestPostUnmarshalTaskWithFSxWindowsFileServerVolumes(t *testing.T) {
 func TestBuildCNIConfig(t *testing.T) {
 	testTask := &Task{}
 	testTask.NetworkMode = AWSVPCNetworkMode
-	testTask.AddTaskENI(&apieni.ENI{
+	testTask.AddTaskENI(&ni.NetworkInterface{
 		ID:                           "TestBuildCNIConfig",
 		MacAddress:                   mac,
-		InterfaceAssociationProtocol: apieni.DefaultInterfaceAssociationProtocol,
+		InterfaceAssociationProtocol: ni.DefaultInterfaceAssociationProtocol,
 		SubnetGatewayIPV4Address:     "10.0.1.0/24",
-		IPV4Addresses: []*apieni.ENIIPV4Address{
+		IPV4Addresses: []*ni.IPV4Address{
 			{
 				Primary: true,
 				Address: ipv4,
@@ -588,12 +596,12 @@ func TestBuildCNIConfig(t *testing.T) {
 	// For the task ns setup.
 	err = json.Unmarshal(cniConfig.NetworkConfigs[0].CNINetworkConfig.Bytes, &eniConfig)
 	require.NoError(t, err)
-	assert.EqualValues(t, ecscni.ECSVPCENIPluginName, eniConfig.Type)
+	assert.EqualValues(t, ecscni.VPCENIPluginName, eniConfig.Type)
 	assert.False(t, eniConfig.UseExistingNetwork)
 	// For the ecs-bridge setup.
 	err = json.Unmarshal(cniConfig.NetworkConfigs[1].CNINetworkConfig.Bytes, &eniConfig)
 	require.NoError(t, err)
-	assert.EqualValues(t, ecscni.ECSVPCENIPluginName, eniConfig.Type)
+	assert.EqualValues(t, ecscni.VPCENIPluginName, eniConfig.Type)
 	assert.True(t, eniConfig.UseExistingNetwork)
 	assert.EqualValues(t, ecscni.ECSBridgeNetworkName, cniConfig.NetworkConfigs[1].CNINetworkConfig.Network.Name)
 }

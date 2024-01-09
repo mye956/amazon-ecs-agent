@@ -21,18 +21,18 @@ import (
 	"time"
 
 	"github.com/aws/amazon-ecs-agent/agent/ecscni"
-	"github.com/aws/amazon-ecs-agent/agent/logger"
-	"github.com/aws/amazon-ecs-agent/agent/logger/field"
 	"github.com/aws/amazon-ecs-agent/agent/utils"
+	"github.com/aws/amazon-ecs-agent/ecs-agent/logger"
+	"github.com/aws/amazon-ecs-agent/ecs-agent/logger/field"
 	"github.com/containernetworking/cni/libcni"
 
-	apieni "github.com/aws/amazon-ecs-agent/agent/api/eni"
 	"github.com/aws/amazon-ecs-agent/agent/config"
-	"github.com/aws/amazon-ecs-agent/agent/credentials"
 	"github.com/aws/amazon-ecs-agent/agent/taskresource"
 	"github.com/aws/amazon-ecs-agent/agent/taskresource/fsxwindowsfileserver"
 	resourcetype "github.com/aws/amazon-ecs-agent/agent/taskresource/types"
 	taskresourcevolume "github.com/aws/amazon-ecs-agent/agent/taskresource/volume"
+	"github.com/aws/amazon-ecs-agent/ecs-agent/credentials"
+	ni "github.com/aws/amazon-ecs-agent/ecs-agent/netlib/model/networkinterface"
 	"github.com/cihub/seelog"
 	dockercontainer "github.com/docker/docker/api/types/container"
 	"github.com/pkg/errors"
@@ -43,6 +43,10 @@ const (
 	cpuSharesPerCore  = 1024
 	percentageFactor  = 100
 	minimumCPUPercent = 1
+
+	// windowsDefaultNetworkName is the name of the docker network to which the containers in
+	// default mode are attached to.
+	windowsDefaultNetworkName = "nat"
 )
 
 // PlatformFields consists of fields specific to Windows for a task
@@ -105,6 +109,13 @@ func (task *Task) platformHostConfigOverride(hostConfig *dockercontainer.HostCon
 		hostConfig.MemoryReservation = 0
 	}
 
+	// On Windows, bridge mode equivalent for Linux is "default" or "nat" network.
+	// We need to perform explicit conversion for the same.
+	networkMode := hostConfig.NetworkMode.NetworkName()
+	if networkMode == BridgeNetworkMode {
+		hostConfig.NetworkMode = windowsDefaultNetworkName
+	}
+
 	return nil
 }
 
@@ -122,7 +133,7 @@ func (task *Task) dockerCPUShares(containerCPU uint) int64 {
 	return int64(containerCPU)
 }
 
-func (task *Task) initializeCgroupResourceSpec(cgroupPath string, cGroupCPUPeriod time.Duration, resourceFields *taskresource.ResourceFields) error {
+func (task *Task) initializeCgroupResourceSpec(cgroupPath string, cGroupCPUPeriod time.Duration, taskPidsLimit int, resourceFields *taskresource.ResourceFields) error {
 	if !task.MemoryCPULimitsEnabled {
 		if task.CPU > 0 || task.Memory > 0 {
 			// Client-side validation/warning if a task with task-level CPU/memory limits specified somehow lands on an instance
@@ -217,7 +228,7 @@ func (task *Task) BuildCNIConfigAwsvpc(includeIPAMConfig bool, cniConfig *ecscni
 		switch eni.InterfaceAssociationProtocol {
 		// If the association protocol is set to "default" or unset (to preserve backwards
 		// compatibility), consider it a "standard" ENI attachment.
-		case "", apieni.DefaultInterfaceAssociationProtocol:
+		case "", ni.DefaultInterfaceAssociationProtocol:
 			cniConfig.ID = eni.MacAddress
 			netconf, err = ecscni.NewVPCENIPluginConfigForTaskNSSetup(eni, cniConfig)
 		default:

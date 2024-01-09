@@ -26,7 +26,8 @@ import (
 	"github.com/aws/amazon-ecs-agent/agent/engine"
 	handlersutils "github.com/aws/amazon-ecs-agent/agent/handlers/utils"
 	v1 "github.com/aws/amazon-ecs-agent/agent/handlers/v1"
-	"github.com/aws/amazon-ecs-agent/agent/utils/retry"
+	logginghandler "github.com/aws/amazon-ecs-agent/ecs-agent/tmds/logging"
+	"github.com/aws/amazon-ecs-agent/ecs-agent/utils/retry"
 	"github.com/cihub/seelog"
 )
 
@@ -81,7 +82,7 @@ func introspectionServerSetup(containerInstanceArn *string, taskEngine handlersu
 
 	// Log all requests and then pass through to serverMux
 	loggingServeMux := http.NewServeMux()
-	loggingServeMux.Handle("/", LoggingHandler{serverMux})
+	loggingServeMux.Handle("/", logginghandler.NewLoggingHandler(serverMux))
 
 	wTimeout := writeTimeout
 	if cfg.EnableRuntimeStats.Enabled() {

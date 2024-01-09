@@ -8,7 +8,7 @@ jobs:
     name: Windows unit tests
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v2
+      - uses: actions/checkout@v3
         with:
           path: src/github.com/aws/amazon-ecs-agent
       - name: get GO_VERSION
@@ -23,15 +23,15 @@ jobs:
             echo "invalid GO version"
             exit 1
           }
-          Write-Output "::set-output name=GO_VERSION_WINDOWS::$go_version_win"
-      - uses: actions/setup-go@v2
+          Write-Output "GO_VERSION_WINDOWS=$go_version_win" >> $GITHUB_OUTPUT
+      - uses: actions/setup-go@v3
         with:
           go-version: ${{ steps.get-go-version.outputs.GO_VERSION_WINDOWS }}
-      - uses: actions/checkout@v2
+      - uses: actions/checkout@v3
         with:
           submodules: true
           path: src/github.com/aws/amazon-ecs-agent
-      - name: run tests
+      - name: run agent tests
         working-directory:
         run: |
           $Env:GOPATH = "$Env:GITHUB_WORKSPACE"
@@ -40,4 +40,13 @@ jobs:
           gcc --version
           $env:ZZZ_SKIP_WINDOWS_SERVER_VERSION_CHECK_NOT_SUPPORTED_IN_PRODUCTION = 'true'
           $packages=go list .\... | Where-Object {$_ -NotMatch 'vendor'}
-          go test -v -tags unit -timeout=40s $packages
+          go test -v -tags unit -timeout=120s $packages
+      - name: run ecs-agent tests
+        working-directory:
+        run: |
+          $Env:GOPATH = "$Env:GITHUB_WORKSPACE"
+          cd "$Env:GITHUB_WORKSPACE"
+          cd "src/github.com/aws/amazon-ecs-agent/ecs-agent"
+          gcc --version
+          $packages=go list .\... | Where-Object {$_ -NotMatch 'vendor'}
+          go test -v -tags unit -timeout=120s $packages

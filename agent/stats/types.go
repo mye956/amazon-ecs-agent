@@ -62,9 +62,10 @@ type UsageStats struct {
 
 // ContainerMetadata contains meta-data information for a container.
 type ContainerMetadata struct {
-	DockerID    string `json:"-"`
-	Name        string `json:"-"`
-	NetworkMode string `json:"-"`
+	DockerID    string    `json:"-"`
+	Name        string    `json:"-"`
+	NetworkMode string    `json:"-"`
+	StartedAt   time.Time `json:"-"`
 }
 
 // TaskMetadata contains meta-data information for a task.
@@ -92,9 +93,4 @@ type StatsContainer struct {
 type taskDefinition struct {
 	family  string
 	version string
-}
-
-type NetworkStatsPerSec struct {
-	RxBytesPerSecond float32 `json:"rx_bytes_per_sec"`
-	TxBytesPerSecond float32 `json:"tx_bytes_per_sec"`
 }

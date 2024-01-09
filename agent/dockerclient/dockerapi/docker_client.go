@@ -28,13 +28,10 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/aws/amazon-ecs-agent/agent/logger"
-	"github.com/aws/amazon-ecs-agent/agent/logger/field"
+	"github.com/aws/amazon-ecs-agent/ecs-agent/logger"
+	"github.com/aws/amazon-ecs-agent/ecs-agent/logger/field"
 
 	apicontainer "github.com/aws/amazon-ecs-agent/agent/api/container"
-	apicontainerstatus "github.com/aws/amazon-ecs-agent/agent/api/container/status"
-	apierrors "github.com/aws/amazon-ecs-agent/agent/api/errors"
-	"github.com/aws/amazon-ecs-agent/agent/async"
 	"github.com/aws/amazon-ecs-agent/agent/config"
 	"github.com/aws/amazon-ecs-agent/agent/dockerclient"
 	"github.com/aws/amazon-ecs-agent/agent/dockerclient/dockerauth"
@@ -43,8 +40,11 @@ import (
 	"github.com/aws/amazon-ecs-agent/agent/ecr"
 	"github.com/aws/amazon-ecs-agent/agent/metrics"
 	"github.com/aws/amazon-ecs-agent/agent/utils"
-	"github.com/aws/amazon-ecs-agent/agent/utils/retry"
-	"github.com/aws/amazon-ecs-agent/agent/utils/ttime"
+	apicontainerstatus "github.com/aws/amazon-ecs-agent/ecs-agent/api/container/status"
+	apierrors "github.com/aws/amazon-ecs-agent/ecs-agent/api/errors"
+	"github.com/aws/amazon-ecs-agent/ecs-agent/async"
+	"github.com/aws/amazon-ecs-agent/ecs-agent/utils/retry"
+	"github.com/aws/amazon-ecs-agent/ecs-agent/utils/ttime"
 
 	"github.com/cihub/seelog"
 	"github.com/docker/docker/api/types"
@@ -341,7 +341,7 @@ func (dg *dockerGoClient) PullImage(ctx context.Context, image string,
 				}
 				return err
 			})
-		response <- DockerContainerMetadata{Error: wrapPullErrorAsNamedError(err)}
+		response <- DockerContainerMetadata{Error: wrapPullErrorAsNamedError(image, err)}
 	}()
 
 	select {
@@ -356,15 +356,17 @@ func (dg *dockerGoClient) PullImage(ctx context.Context, image string,
 		}
 		// Context was canceled even though there was no timeout. Send
 		// back an error.
+		err = redactEcrUrls(image, err)
 		return DockerContainerMetadata{Error: &CannotPullContainerError{err}}
 	}
 }
 
-func wrapPullErrorAsNamedError(err error) apierrors.NamedError {
+func wrapPullErrorAsNamedError(image string, err error) apierrors.NamedError {
 	var retErr apierrors.NamedError
 	if err != nil {
 		engErr, ok := err.(apierrors.NamedError)
 		if !ok {
+			err = redactEcrUrls(image, err)
 			engErr = CannotPullContainerError{err}
 		}
 		retErr = engErr
@@ -382,11 +384,12 @@ func (dg *dockerGoClient) pullImage(ctx context.Context, image string,
 
 	sdkAuthConfig, err := dg.getAuthdata(image, authData)
 	if err != nil {
-		return wrapPullErrorAsNamedError(err)
+		return wrapPullErrorAsNamedError(image, err)
 	}
 	// encode auth data
 	var buf bytes.Buffer
 	if err := json.NewEncoder(&buf).Encode(sdkAuthConfig); err != nil {
+		err = redactEcrUrls(image, err)
 		return CannotPullECRContainerError{err}
 	}
 
@@ -457,6 +460,7 @@ func (dg *dockerGoClient) pullImage(ctx context.Context, image string,
 		break
 	case pullErr := <-pullFinished:
 		if pullErr != nil {
+			pullErr = redactEcrUrls(image, pullErr)
 			return CannotPullContainerError{pullErr}
 		}
 		seelog.Debugf("DockerGoClient: pulling image complete: %s", image)
@@ -468,6 +472,7 @@ func (dg *dockerGoClient) pullImage(ctx context.Context, image string,
 
 	err = <-pullFinished
 	if err != nil {
+		err = redactEcrUrls(image, err)
 		return CannotPullContainerError{err}
 	}
 
@@ -522,6 +527,7 @@ func (dg *dockerGoClient) getAuthdata(image string, authData *apicontainer.Regis
 		provider := dockerauth.NewECRAuthProvider(dg.ecrClientFactory, dg.ecrTokenCache)
 		authConfig, err := provider.GetAuthconfig(image, authData)
 		if err != nil {
+			err = redactEcrUrls(image, err)
 			return authConfig, CannotPullECRContainerError{err}
 		}
 		return authConfig, nil
@@ -574,7 +580,7 @@ func (dg *dockerGoClient) createContainer(ctx context.Context,
 		return DockerContainerMetadata{Error: CannotGetDockerClientError{version: dg.version, err: err}}
 	}
 
-	dockerContainer, err := client.ContainerCreate(ctx, config, hostConfig, &network.NetworkingConfig{}, name)
+	dockerContainer, err := client.ContainerCreate(ctx, config, hostConfig, &network.NetworkingConfig{}, nil, name)
 	if err != nil {
 		return DockerContainerMetadata{Error: CannotCreateContainerError{err}}
 	}
@@ -714,7 +720,12 @@ func (dg *dockerGoClient) stopContainer(ctx context.Context, dockerID string, ti
 	if err != nil {
 		return DockerContainerMetadata{Error: CannotGetDockerClientError{version: dg.version, err: err}}
 	}
-	err = client.ContainerStop(ctx, dockerID, &timeout)
+
+	timeoutSeconds := int(timeout.Seconds())
+	containerOptions := dockercontainer.StopOptions{
+		Timeout: &timeoutSeconds,
+	}
+	err = client.ContainerStop(ctx, dockerID, containerOptions)
 	metadata := dg.containerMetadata(ctx, dockerID)
 	if err != nil {
 		seelog.Errorf("DockerGoClient: error stopping container ID=%s: %v", dockerID, err)
@@ -1232,7 +1243,7 @@ func (dg *dockerGoClient) createVolume(ctx context.Context,
 		return SDKVolumeResponse{DockerVolume: nil, Error: &CannotGetDockerClientError{version: dg.version, err: err}}
 	}
 
-	volumeOptions := volume.VolumeCreateBody{
+	volumeOptions := volume.CreateOptions{
 		Driver:     driver,
 		DriverOpts: driverOptions,
 		Labels:     labels,

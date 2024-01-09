@@ -18,7 +18,7 @@ package data
 
 import (
 	apicontainer "github.com/aws/amazon-ecs-agent/agent/api/container"
-	apicontainerstatus "github.com/aws/amazon-ecs-agent/agent/api/container/status"
+	apicontainerstatus "github.com/aws/amazon-ecs-agent/ecs-agent/api/container/status"
 
 	"testing"
 
@@ -34,8 +34,7 @@ const (
 )
 
 func TestManageContainers(t *testing.T) {
-	testClient, cleanup := newTestClient(t)
-	defer cleanup()
+	testClient := newTestClient(t)
 
 	// Test saving a container with SaveDockerContainer and updating it with SaveContainer.
 	testDockerContainer := &apicontainer.DockerContainer{
@@ -75,8 +74,7 @@ func TestManageContainers(t *testing.T) {
 }
 
 func TestSaveContainerInvalidID(t *testing.T) {
-	testClient, cleanup := newTestClient(t)
-	defer cleanup()
+	testClient := newTestClient(t)
 
 	testDockerContainer := &apicontainer.DockerContainer{
 		DockerID:   testDockerID,

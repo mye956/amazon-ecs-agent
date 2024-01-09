@@ -15,7 +15,7 @@ USERID=$(shell id -u)
 # default value of TARGET_OS
 TARGET_OS=linux
 
-.PHONY: all gobuild static xplatform-build docker release certs test clean netkitten test-registry benchmark-test gogenerate run-integ-tests pause-container get-cni-sources cni-plugins test-artifacts
+.PHONY: all gobuild static xplatform-build docker release certs test clean netkitten test-registry benchmark-test gogenerate run-integ-tests pause-container get-cni-sources cni-plugins test-artifacts release-agent release-agent-internal
 BUILD_PLATFORM:=$(shell uname -m)
 
 ifeq (${BUILD_PLATFORM},aarch64)
@@ -49,9 +49,6 @@ gobuild-init-deb:
 
 # Basic go build
 static:
-	./scripts/build
-
-static-with-pause:
 	./scripts/build true "" true true
 
 # Cross-platform build target for static checks
@@ -59,7 +56,7 @@ xplatform-build:
 	GOOS=linux GOARCH=arm64 ./scripts/build true "" false
 	GOOS=windows GOARCH=amd64 ./scripts/build true "" false
 	# Agent and its dependencies on Go 1.18.x are not compatible with Mac (Darwin).
-	# Mac is not a supported target platform for Agent, so commenting out 
+	# Mac is not a supported target platform for Agent, so commenting out
 	# cross-platform build step for Mac temporarily.
 	# GOOS=darwin GOARCH=amd64 ./scripts/build true "" false
 
@@ -111,7 +108,7 @@ docker-release: pause-container-release cni-plugins .out-stamp
 		--rm \
 		"amazon/amazon-ecs-agent-${BUILD}:make"
 
-# Release packages our agent into a "scratch" based dockerfile
+# Legacy target : Release packages our agent into a "scratch" based dockerfile
 release: certs docker-release
 	@./scripts/create-amazon-ecs-scratch
 	@docker build -f scripts/dockerfiles/Dockerfile.release -t "amazon/amazon-ecs-agent:latest" .
@@ -124,7 +121,7 @@ misc/certs/ca-certificates.crt:
 	docker run "amazon/amazon-ecs-agent-cert-source:make" cat /etc/ssl/certs/ca-certificates.crt > misc/certs/ca-certificates.crt
 
 gogenerate:
-	go generate -x ./agent/...
+	PATH=$(PATH):$(shell pwd)/scripts go generate -x ./agent/... ./ecs-agent/...
 	$(MAKE) goimports
 
 gogenerate-init:
@@ -141,36 +138,44 @@ VERBOSE=-v -cover
 # provide false positives when running integ tests, so we err on the side of
 # caution. See `go help test`
 # unit tests include the coverage profile
-GOTEST=${GO_EXECUTABLE} test -count=1 ${VERBOSE}
+GOTEST=${GO_EXECUTABLE} test -count=1
 
 # -race sometimes causes compile issues on Arm
 ifneq (${BUILD_PLATFORM},aarch64)
 	GOTEST += -race
 endif
 
-test:
-	${GOTEST} -tags unit -coverprofile cover.out -timeout=60s ./agent/...
+test-ebs-csi:
+	make -C ./ecs-agent/daemonimages/csidriver test
+
+test: test-ebs-csi
+	cd agent && GO111MODULE=on ${GOTEST} ${VERBOSE} -tags unit -mod vendor -coverprofile ../cover.out -timeout=120s ./... && cd ..
 	go tool cover -func cover.out > coverprofile.out
+	cd ecs-agent && GO111MODULE=on ${GOTEST} ${VERBOSE} -tags unit -mod vendor -coverprofile ../cover.out -timeout=120s ./... && cd ..
+	go tool cover -func cover.out > coverprofile-ecs-agent.out
 
 test-init:
 	go test -count=1 -short -v -coverprofile cover.out ./ecs-init/...
 	go tool cover -func cover.out > coverprofile-init.out
 
-test-silent:
-	$(eval VERBOSE=)
-	${GOTEST} -tags unit -coverprofile cover.out -timeout=60s ./agent/...
+test-silent: test-ebs-csi
+	cd agent && GO111MODULE=on ${GOTEST} -tags unit -mod vendor -coverprofile ../cover.out -timeout=120s ./... && cd ..
 	go tool cover -func cover.out > coverprofile.out
+	cd ecs-agent && GO111MODULE=on ${GOTEST} -tags unit -mod vendor -coverprofile ../cover.out -timeout=120s ./... && cd ..
+	go tool cover -func cover.out > coverprofile-ecs-agent.out
 
 .PHONY: analyze-cover-profile
-analyze-cover-profile: coverprofile.out
-	./scripts/analyze-cover-profile
+analyze-cover-profile: coverprofile.out coverprofile-ecs-agent.out
+	./scripts/analyze-cover-profile coverprofile.out
+	./scripts/analyze-cover-profile coverprofile-ecs-agent.out
 
 .PHONY: analyze-cover-profile-init
 analyze-cover-profile-init: coverprofile-init.out
-	./scripts/analyze-cover-profile-init
+	./scripts/analyze-cover-profile coverprofile-init.out
 
-run-integ-tests: test-registry gremlin container-health-check-image run-sudo-tests
-	ECS_LOGLEVEL=debug ${GOTEST} -tags integration -timeout=30m ./agent/...
+run-integ-tests: test-registry gremlin start-ebs-csi-driver container-health-check-image run-sudo-tests
+	ECS_LOGLEVEL=debug ${GOTEST} -tags integration -timeout=30m ./agent/... ./ecs-agent/...
+	$(MAKE) stop-ebs-csi-driver
 
 run-sudo-tests:
 	sudo -E ${GOTEST} -tags sudo -timeout=10m ./agent/...
@@ -200,9 +205,6 @@ pause-container: .out-stamp
 
 pause-container-release: pause-container
 	@docker save ${PAUSE_CONTAINER_IMAGE}:${PAUSE_CONTAINER_TAG} > "$(PWD)/out/${PAUSE_CONTAINER_TARBALL}"
-
-# Variable to determine branch/tag of amazon-ecs-cni-plugins
-ECS_CNI_REPOSITORY_REVISION=master
 
 # Variable to override cni repository location
 ECS_CNI_REPOSITORY_SRC_DIR=$(PWD)/amazon-ecs-cni-plugins
@@ -254,13 +256,19 @@ dockerfree-pause:
 dockerfree-certs:
 	./scripts/get-host-certs
 
-dockerfree-cni-plugins: get-cni-sources
+dockerfree-cni-plugins:
 	./scripts/build-cni-plugins
 
 # see dockerfree-pause above: assumes that the pre-compiled pause container tar exists
-dockerfree-agent-image: dockerfree-certs dockerfree-cni-plugins static-with-pause
+# builds agent image and saves on disk, assumes cni plugins have been pulled
+release-agent-internal: dockerfree-certs dockerfree-cni-plugins static
 	./scripts/build-agent-image
 
+# Default Agent target to build. Pulls cni plugins, builds agent image and save it to disk
+release-agent: get-cni-sources
+	$(MAKE) release-agent-internal
+
+# Legacy target used for building agent artifacts for functional tests
 .PHONY: codebuild
 codebuild: .out-stamp
 	$(MAKE) release TARGET_OS="linux"
@@ -282,13 +290,27 @@ exec-command-agent-test:
 
 	@./scripts/setup-test-registry
 
-.PHONY: fluentd gremlin image-cleanup-test-images
+.PHONY: fluentd gremlin ebs-csi-driver start-ebs-csi-driver stop-ebs-csi-driver image-cleanup-test-images
 
 gremlin:
 	$(MAKE) -C misc/gremlin $(MFLAGS)
 
 fluentd:
 	$(MAKE) -C misc/fluentd $(MFLAGS)
+
+EBS_CSI_DRIVER_DIR=./ecs-agent/daemonimages/csidriver
+
+ebs-csi-driver:
+	$(MAKE) -C $(EBS_CSI_DRIVER_DIR) $(MFLAGS) bin/ebs-csi-driver
+
+# Starts EBS CSI Driver as a background process.
+# The driver uses /tmp/ebs-csi-driver.sock as the socket file.
+start-ebs-csi-driver: ebs-csi-driver
+	$(EBS_CSI_DRIVER_DIR)/bin/ebs-csi-driver --endpoint unix:///tmp/ebs-csi-driver.sock &
+
+# Stops EBS CSI Driver process started by start-ebs-csi-driver target.
+stop-ebs-csi-driver:
+	ps aux | grep $(EBS_CSI_DRIVER_DIR)/bin/ebs-csi-driver | grep -v grep | awk '{print $$2}' | xargs -L1 kill
 
 image-cleanup-test-images:
 	$(MAKE) -C misc/image-cleanup-test-images $(MFLAGS)
@@ -297,20 +319,20 @@ container-health-check-image:
 	$(MAKE) -C misc/container-health $(MFLAGS)
 
 # all .go files in the agent, excluding vendor/, model/ and testutils/ directories, and all *_test.go and *_mocks.go files
-GOFILES:=$(shell go list -f '{{$$p := .}}{{range $$f := .GoFiles}}{{$$p.Dir}}/{{$$f}} {{end}}' ./agent/... \
+GOFILES:=$(shell go list -f '{{$$p := .}}{{range $$f := .GoFiles}}{{$$p.Dir}}/{{$$f}} {{end}}' ./agent/... ./ecs-agent/... \
 		| grep -v /testutils/ | grep -v _test\.go$ | grep -v _mocks\.go$ | grep -v /model)
 
 .PHONY: gocyclo
 gocyclo:
 	# Run gocyclo over all .go files
-	gocyclo -over 17 ${GOFILES}
+	gocyclo -over 40 ${GOFILES}
 
 # same as gofiles above, but without the `-f`
 .PHONY: govet
 govet:
-	go vet $(shell go list ./agent/... | grep -v /testutils/ | grep -v _test\.go$ | grep -v /mocks | grep -v /model)
+	go vet $(shell go list ./agent/... ./ecs-agent/... | grep -v /testutils/ | grep -v _test\.go$ | grep -v /mocks | grep -v /model)
 
-GOFMTFILES:=$(shell find ./agent -not -path './agent/vendor/*' -type f -iregex '.*\.go')
+GOFMTFILES:=$(shell find ./agent ./ecs-agent -not -path './agent/vendor/*' -not -path './ecs-agent/vendor/*' -type f -iregex '.*\.go')
 
 .PHONY: importcheck
 importcheck:
@@ -332,7 +354,7 @@ static-check: gocyclo govet importcheck gogenerate-check
 	# use default checks of staticcheck tool, except style checks (-ST*) and depracation checks (-SA1019)
 	# depracation checks have been left out for now; removing their warnings requires error handling for newer suggested APIs, changes in function signatures and their usages.
 	# https://github.com/dominikh/go-tools/tree/master/cmd/staticcheck
-	staticcheck -tests=false -checks "inherit,-ST*,-SA1019,-SA9002,-SA4006" ./agent/...
+	staticcheck -tests=false -checks "inherit,-ST*,-SA1019,-SA9002,-SA4006" ./agent/... ./ecs-agent/...
 
 .PHONY: static-check-init
 static-check-init: gocyclo govet importcheck gogenerate-check-init
@@ -350,24 +372,19 @@ install-golang:
 	./scripts/install-golang.sh
 
 .get-deps-stamp:
-	go get golang.org/x/tools/cmd/cover
-	go get github.com/golang/mock/mockgen
-	cd "${GOPATH}/src/github.com/golang/mock/mockgen" && git checkout 1.3.1 && go get ./... && go install ./... && cd -
-	go get golang.org/x/tools/cmd/goimports
-	GO111MODULE=on go install github.com/fzipp/gocyclo/cmd/gocyclo@v0.3.1
-	GO111MODULE=on go install honnef.co/go/tools/cmd/staticcheck@v0.3.2
+	go install github.com/golang/mock/mockgen@v1.6.0
+	go install golang.org/x/tools/cmd/goimports@v0.2.0
+	GO111MODULE=on go install github.com/fzipp/gocyclo/cmd/gocyclo@v0.6.0
+	GO111MODULE=on go install honnef.co/go/tools/cmd/staticcheck@v0.4.0
 	touch .get-deps-stamp
 
 get-deps: .get-deps-stamp
 
 get-deps-init:
-	go get golang.org/x/tools/cover
-	go get golang.org/x/tools/cmd/cover
-	go get github.com/golang/mock/mockgen
-	cd "${GOPATH}/src/github.com/golang/mock/mockgen" && git checkout 1.3.1 && go get ./... && go install ./... && cd -
-	GO111MODULE=on go install github.com/fzipp/gocyclo/cmd/gocyclo@v0.3.1
-	go get golang.org/x/tools/cmd/goimports
-	GO111MODULE=on go install honnef.co/go/tools/cmd/staticcheck@v0.3.2
+	go install github.com/golang/mock/mockgen@v1.6.0
+	go install golang.org/x/tools/cmd/goimports@v0.2.0
+	GO111MODULE=on go install github.com/fzipp/gocyclo/cmd/gocyclo@v0.6.0
+	GO111MODULE=on go install honnef.co/go/tools/cmd/staticcheck@v0.4.0
 
 amazon-linux-sources.tgz:
 	./scripts/update-version.sh
@@ -377,7 +394,7 @@ amazon-linux-sources.tgz:
 	cp packaging/amazon-linux-ami-integrated/amazon-ecs-volume-plugin.conf amazon-ecs-volume-plugin.conf
 	cp packaging/amazon-linux-ami-integrated/amazon-ecs-volume-plugin.service amazon-ecs-volume-plugin.service
 	cp packaging/amazon-linux-ami-integrated/amazon-ecs-volume-plugin.socket amazon-ecs-volume-plugin.socket
-	tar -czf ./sources.tgz ecs-init scripts misc agent amazon-ecs-cni-plugins amazon-vpc-cni-plugins agent-container VERSION
+	tar -czf ./sources.tgz ecs-init scripts misc agent amazon-ecs-cni-plugins amazon-vpc-cni-plugins agent-container Makefile VERSION RELEASE_COMMIT
 
 .amazon-linux-rpm-integrated-done: amazon-linux-sources.tgz
 	test -e SOURCES || ln -s . SOURCES
@@ -393,12 +410,13 @@ amazon-linux-rpm-integrated: .amazon-linux-rpm-integrated-done
 	cp packaging/generic-rpm-integrated/ecs.service ecs.service
 	cp packaging/generic-rpm-integrated/amazon-ecs-volume-plugin.service amazon-ecs-volume-plugin.service
 	cp packaging/generic-rpm-integrated/amazon-ecs-volume-plugin.socket amazon-ecs-volume-plugin.socket
-	tar -czf ./sources.tgz ecs-init scripts misc agent amazon-ecs-cni-plugins amazon-vpc-cni-plugins agent-container VERSION
+	tar -czf ./sources.tgz ecs-init scripts misc agent amazon-ecs-cni-plugins amazon-vpc-cni-plugins agent-container Makefile VERSION GO_VERSION
 	test -e SOURCES || ln -s . SOURCES
 	rpmbuild --define "%_topdir $(PWD)" -bb amazon-ecs-init.spec
 	find RPMS/ -type f -exec cp {} . \;
 	touch .generic-rpm-integrated-done
 
+# Build init rpm
 generic-rpm-integrated: .generic-rpm-integrated-done
 
 VERSION = $(shell cat ecs-init/ECSVERSION)
@@ -411,6 +429,7 @@ VERSION = $(shell cat ecs-init/ECSVERSION)
 	cd BUILDROOT && dpkg-buildpackage -uc -b
 	touch .generic-deb-integrated-done
 
+# Build init deb
 generic-deb-integrated: .generic-deb-integrated-done
 
 ARCH:=$(shell uname -m)
@@ -422,41 +441,6 @@ else ifeq (${ARCH},aarch64)
 else ifeq (${ARCH},arm64)
 	AGENT_FILENAME=ecs-agent-arm64-v${VERSION}.tar
 endif
-
-BUILDROOT/ecs-agent.tar:
-	mkdir -p BUILDROOT
-	curl -o BUILDROOT/ecs-agent.tar https://s3.amazonaws.com/amazon-ecs-agent/${AGENT_FILENAME}
-
-${AGENT_FILENAME}: BUILDROOT/ecs-agent.tar
-	cp BUILDROOT/ecs-agent.tar ${AGENT_FILENAME}
-
-rpm-in-docker: ${AGENT_FILENAME}
-	docker build -t "amazon/amazon-ecs-init:build" -f "scripts/dockerfiles/build.dockerfile" .
-	docker run -u "$(shell id -u)" --tmpfs /.cache -v "$(shell pwd):/workspace/amazon-ecs-init" "amazon/amazon-ecs-init:build"
-
-.generic-rpm-done: ${AGENT_FILENAME}
-	./scripts/update-version.sh
-	cp packaging/generic-rpm/amazon-ecs-init.spec amazon-ecs-init.spec
-	cp packaging/generic-rpm/ecs.service ecs.service
-	cp packaging/generic-rpm/amazon-ecs-volume-plugin.service amazon-ecs-volume-plugin.service
-	cp packaging/generic-rpm/amazon-ecs-volume-plugin.socket amazon-ecs-volume-plugin.socket
-	tar -czf ./sources.tgz ecs-init scripts
-	test -e SOURCES || ln -s . SOURCES
-	rpmbuild --define "%_topdir $(PWD)" -bb amazon-ecs-init.spec
-	find RPMS/ -type f -exec cp {} . \;
-	touch .generic-rpm-done
-
-generic-rpm: .generic-rpm-done
-
-.deb-done: BUILDROOT/ecs-agent.tar
-	./scripts/update-version.sh
-	tar -czf ./amazon-ecs-init_${VERSION}.orig.tar.gz ecs-init scripts README.md
-	cp -r packaging/generic-deb/debian ecs-init scripts README.md BUILDROOT
-	cd BUILDROOT && debuild -uc -us --lintian-opts --suppress-tags bad-distribution-in-changes-file,file-in-unusual-dir
-	touch .deb-done
-
-.PHONY: deb
-deb: .deb-done
 
 clean:
 	-rm -f misc/certs/host-certs.crt &> /dev/null
@@ -474,6 +458,7 @@ clean:
 	-rm -rf cover.out
 	-rm -rf coverprofile.out
 	-rm -rf coverprofile-init.out
+	-rm -rf coverprofile-ecs-agent.out
 	# ecs-init & rpm cleanup
 	-rm -f ecs-init.spec
 	-rm -f amazon-ecs-init.spec
@@ -498,6 +483,7 @@ clean:
 	-rm -f .amazon-linux-rpm-integrated-done
 	-rm -f .generic-rpm-integrated-done
 	-rm -f amazon-ecs-volume-plugin
+	-rm -rf $(EBS_CSI_DRIVER_DIR)/bin
 
 clean-all: clean
 	# for our dockerfree builds, we likely don't have docker

@@ -21,19 +21,18 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/aws/amazon-ecs-agent/agent/api"
-	"github.com/aws/amazon-ecs-agent/agent/api/appnet"
+	"github.com/aws/amazon-ecs-agent/ecs-agent/api/appnet"
 
 	apitask "github.com/aws/amazon-ecs-agent/agent/api/task"
-	"github.com/aws/amazon-ecs-agent/agent/logger"
-	"github.com/aws/amazon-ecs-agent/agent/logger/field"
-	"github.com/aws/amazon-ecs-agent/agent/tcs/model/ecstcs"
+	"github.com/aws/amazon-ecs-agent/ecs-agent/logger"
+	"github.com/aws/amazon-ecs-agent/ecs-agent/logger/field"
+	"github.com/aws/amazon-ecs-agent/ecs-agent/tcs/model/ecstcs"
 	prometheus "github.com/prometheus/client_model/go"
 )
 
 type ServiceConnectStats struct {
 	stats        []*ecstcs.GeneralMetricsWrapper
-	appnetClient api.AppnetClient
+	appnetClient appnet.AppNetClient
 	sent         bool
 	lock         sync.RWMutex
 }
@@ -50,13 +49,16 @@ var directionToMetricType = map[string]string{
 
 func newServiceConnectStats() (*ServiceConnectStats, error) {
 	return &ServiceConnectStats{
-		appnetClient: appnet.Client(),
+		appnetClient: appnet.CreateClient(),
 	}, nil
 }
 
 // TODO [SC]: Add retries on failure to retrieve service connect stats
 func (sc *ServiceConnectStats) retrieveServiceConnectStats(task *apitask.Task) {
-	stats, err := sc.appnetClient.GetStats(task.GetServiceConnectRuntimeConfig())
+	serviceConnectConfig := task.GetServiceConnectRuntimeConfig()
+	adminSocketPath := serviceConnectConfig.AdminSocketPath
+	statsRequest := serviceConnectConfig.StatsRequest
+	stats, err := sc.appnetClient.GetStats(adminSocketPath, statsRequest)
 	if err != nil {
 		logger.Error("Error retrieving Service Connect stats for task", logger.Fields{
 			field.TaskID: task.GetID(),
@@ -117,7 +119,17 @@ func convertToTACSStats(mf map[string]*prometheus.MetricFamily, taskId string) (
 					}
 					metricCounts = append(metricCounts, &metricCount)
 				}
-				metricCounts = convertHistogramMetricCounts(metricCounts)
+
+				metricValues, metricCounts = convertHistogramMetricCounts(metricValues, metricCounts)
+
+				// If all values are 0 in metricCount, then no need to send the metrics to TACS
+				if len(metricCounts) == 0 {
+					logger.Debug("There were no non-zero metricCount received for TargetResponseTime metric. Skipping this metric.", logger.Fields{
+						field.TaskID: taskId,
+					})
+					continue
+				}
+
 			default:
 				logger.Warn("Service connect stats received invalid Metric type", logger.Fields{
 					field.TaskID: taskId,
@@ -212,13 +224,20 @@ func (sc *ServiceConnectStats) resetStats() {
 }
 
 // CloudWatch accepts the histogram buckets in a disjoint manner while the prometheus emits these values in a cumulative way.
-// This method performs that conversion
-func convertHistogramMetricCounts(metricCounts []*int64) []*int64 {
-	prevCount := *metricCounts[0]
-	for i := 1; i < len(metricCounts); i++ {
+// This method performs that conversion. We discard any metricCount that is 0 and also its corresponding metricValue.
+func convertHistogramMetricCounts(metricValues []*float64, metricCounts []*int64) ([]*float64, []*int64) {
+	var mV []*float64
+	var mC []*int64
+	prevCount := int64(0)
+	for i := 0; i < len(metricCounts); i++ {
 		prevCount, *metricCounts[i] = *metricCounts[i], *metricCounts[i]-prevCount
+		if metricCounts[i] != nil && *metricCounts[i] != 0 {
+			mV = append(mV, metricValues[i])
+			mC = append(mC, metricCounts[i])
+		}
 	}
-	return metricCounts
+
+	return mV, mC
 }
 
 // This method sorts the dimensions according to the keyName.

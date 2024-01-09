@@ -29,11 +29,11 @@ import (
 	"syscall"
 	"time"
 
-	apierrors "github.com/aws/amazon-ecs-agent/agent/api/errors"
 	"github.com/aws/amazon-ecs-agent/agent/data"
 	"github.com/aws/amazon-ecs-agent/agent/engine"
 	"github.com/aws/amazon-ecs-agent/agent/engine/dockerstate"
 	"github.com/aws/amazon-ecs-agent/agent/sighandlers/exitcodes"
+	apierrors "github.com/aws/amazon-ecs-agent/ecs-agent/api/errors"
 
 	"github.com/cihub/seelog"
 	bolt "go.etcd.io/bbolt"
@@ -87,11 +87,11 @@ func FinalSave(state dockerstate.TaskEngineState, dataClient data.Client, taskEn
 	disableErr := <-engineDisabled
 
 	stateSaved := make(chan error)
-	saveTimer := time.AfterFunc(finalSaveTimeout, func() {
-		stateSaved <- errors.New("final save: timed out trying to save to disk")
-	})
 	go func() {
 		seelog.Debug("Saving state before shutting down")
+		saveTimer := time.AfterFunc(finalSaveTimeout, func() {
+			stateSaved <- errors.New("final save: timed out trying to save to disk")
+		})
 		saveStateAll(state, dataClient)
 		saveTimer.Stop()
 		stateSaved <- nil

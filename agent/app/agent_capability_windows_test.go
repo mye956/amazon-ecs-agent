@@ -24,11 +24,12 @@ import (
 	"github.com/aws/amazon-ecs-agent/agent/config"
 	"github.com/aws/amazon-ecs-agent/agent/dockerclient"
 	mock_dockerapi "github.com/aws/amazon-ecs-agent/agent/dockerclient/dockerapi/mocks"
-	"github.com/aws/amazon-ecs-agent/agent/ecs_client/model/ecs"
 	"github.com/aws/amazon-ecs-agent/agent/ecscni"
 	mock_ecscni "github.com/aws/amazon-ecs-agent/agent/ecscni/mocks"
+	dm "github.com/aws/amazon-ecs-agent/agent/engine/daemonmanager"
 	"github.com/aws/amazon-ecs-agent/agent/engine/serviceconnect"
 	mock_mobypkgwrapper "github.com/aws/amazon-ecs-agent/agent/utils/mobypkgwrapper/mocks"
+	"github.com/aws/amazon-ecs-agent/ecs-agent/api/ecs/model/ecs"
 
 	"github.com/aws/aws-sdk-go/aws"
 	aws_credentials "github.com/aws/aws-sdk-go/aws/credentials"
@@ -115,6 +116,7 @@ func TestVolumeDriverCapabilitiesWindows(t *testing.T) {
 		credentialProvider:    aws_credentials.NewCredentials(mockCredentialsProvider),
 		mobyPlugins:           mockMobyPlugins,
 		serviceconnectManager: serviceconnect.NewManager(),
+		daemonManagers:        make(map[string]dm.DaemonManager),
 	}
 	capabilities, err := agent.capabilities()
 	assert.NoError(t, err)
@@ -186,7 +188,9 @@ func TestSupportedCapabilitiesWindows(t *testing.T) {
 		attributePrefix + capabilityContainerOrdering,
 		attributePrefix + capabilityFullTaskSync,
 		attributePrefix + capabilityEnvFilesS3,
-		attributePrefix + taskENIBlockInstanceMetadataAttributeSuffix}
+		attributePrefix + taskENIBlockInstanceMetadataAttributeSuffix,
+		attributePrefix + capabilityContainerPortRange,
+	}
 
 	var expectedCapabilities []*ecs.Attribute
 	for _, name := range expectedCapabilityNames {
@@ -212,6 +216,7 @@ func TestSupportedCapabilitiesWindows(t *testing.T) {
 		credentialProvider:    aws_credentials.NewCredentials(mockCredentialsProvider),
 		mobyPlugins:           mockMobyPlugins,
 		serviceconnectManager: serviceconnect.NewManager(),
+		daemonManagers:        make(map[string]dm.DaemonManager),
 	}
 	capabilities, err := agent.capabilities()
 	assert.NoError(t, err)
@@ -234,7 +239,7 @@ func TestAppendGMSACapabilitiesFalse(t *testing.T) {
 
 	agent := &ecsAgent{
 		cfg: &config.Config{
-			GMSACapable: false,
+			GMSACapable: config.BooleanDefaultFalse{Value: config.ExplicitlyDisabled},
 		},
 	}
 
@@ -256,7 +261,7 @@ func TestAppendFSxWindowsFileServerCapabilities(t *testing.T) {
 
 	agent := &ecsAgent{
 		cfg: &config.Config{
-			FSxWindowsFileServerCapable: true,
+			FSxWindowsFileServerCapable: config.BooleanDefaultTrue{Value: config.ExplicitlyEnabled},
 		},
 	}
 
@@ -278,7 +283,7 @@ func TestAppendFSxWindowsFileServerCapabilitiesFalse(t *testing.T) {
 
 	agent := &ecsAgent{
 		cfg: &config.Config{
-			FSxWindowsFileServerCapable: false,
+			FSxWindowsFileServerCapable: config.BooleanDefaultTrue{Value: config.ExplicitlyDisabled},
 		},
 	}
 

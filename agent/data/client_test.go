@@ -17,20 +17,21 @@
 package data
 
 import (
-	"io/ioutil"
-	"os"
 	"path/filepath"
 	"testing"
+
+	generaldata "github.com/aws/amazon-ecs-agent/ecs-agent/data"
+	"github.com/aws/amazon-ecs-agent/ecs-agent/modeltransformer"
 
 	"github.com/stretchr/testify/require"
 	bolt "go.etcd.io/bbolt"
 )
 
-func newTestClient(t *testing.T) (Client, func()) {
-	testDir, err := ioutil.TempDir("", "agent_data_unit_test")
-	require.NoError(t, err)
+func newTestClient(t *testing.T) Client {
+	testDir := t.TempDir()
 
 	testDB, err := bolt.Open(filepath.Join(testDir, dbName), dbMode, nil)
+	transformer := modeltransformer.NewTransformer()
 	require.NoError(t, err)
 	require.NoError(t, testDB.Update(func(tx *bolt.Tx) error {
 		for _, b := range buckets {
@@ -43,12 +44,15 @@ func newTestClient(t *testing.T) (Client, func()) {
 		return nil
 	}))
 	testClient := &client{
-		db: testDB,
+		generaldata.Client{
+			Accessor:    generaldata.DBAccessor{},
+			DB:          testDB,
+			Transformer: transformer,
+		},
 	}
 
-	cleanup := func() {
+	t.Cleanup(func() {
 		require.NoError(t, testClient.Close())
-		require.NoError(t, os.RemoveAll(testDir))
-	}
-	return testClient, cleanup
+	})
+	return testClient
 }

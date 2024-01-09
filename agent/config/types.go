@@ -16,8 +16,9 @@ package config
 import (
 	"time"
 
+	cniTypes "github.com/containernetworking/cni/pkg/types"
+
 	"github.com/aws/amazon-ecs-agent/agent/dockerclient"
-	cnitypes "github.com/containernetworking/cni/pkg/types"
 )
 
 // ImagePullBehaviorType is an enum variable type corresponding to different agent pull
@@ -33,6 +34,7 @@ type Config struct {
 	// ClusterArn is the Name or full ARN of a Cluster to register into. It has
 	// been deprecated (and will eventually be removed) in favor of Cluster
 	ClusterArn string `deprecated:"Please use Cluster instead"`
+
 	// Cluster can either be the Name or full ARN of a Cluster. This is the
 	// cluster the agent should register this ContainerInstance into. If this
 	// value is not set, it will default to "default"
@@ -246,12 +248,12 @@ type Config struct {
 	// will limit you to running one `awsvpc` task at a time. IPv4 addresses
 	// must be specified in decimal-octet form and also specify the subnet
 	// size (e.g., "169.254.172.42/22").
-	OverrideAWSVPCLocalIPv4Address *cnitypes.IPNet
+	OverrideAWSVPCLocalIPv4Address *cniTypes.IPNet
 
 	// AWSVPCAdditionalLocalRoutes allows the specification of routing table
 	// entries that will be added in the task's network namespace via the
 	// instance bridge interface rather than via the ENI.
-	AWSVPCAdditionalLocalRoutes []cnitypes.IPNet
+	AWSVPCAdditionalLocalRoutes []cniTypes.IPNet
 
 	// ContainerMetadataEnabled specifies if the agent should provide a metadata
 	// file for containers.
@@ -328,14 +330,18 @@ type Config struct {
 
 	// GMSACapable is the config option to indicate if gMSA is supported.
 	// It should be enabled by default only if the container instance is part of a valid active directory domain.
-	GMSACapable bool
+	GMSACapable BooleanDefaultFalse
+
+	// GMSADomainlessCapable is the config option to indicate if gMSA domainless is supported.
+	// It should be enabled by if the container instance has a plugin to support active directory authentication.
+	GMSADomainlessCapable BooleanDefaultFalse
 
 	// VolumePluginCapabilities specifies the capabilities of the ecs volume plugin.
 	VolumePluginCapabilities []string
 
 	// FSxWindowsFileServerCapable is the config option to indicate if fsxWindowsFileServer is supported.
-	// It should be enabled by default only if the container instance is part of a valid active directory domain.
-	FSxWindowsFileServerCapable bool
+	// It is enabled by default on Windows and can be overridden by the ECS_FSX_WINDOWS_FILE_SERVER_SUPPORTED environment variable.
+	FSxWindowsFileServerCapable BooleanDefaultTrue
 
 	// External specifies whether agent is running on external compute capacity (i.e. outside of aws).
 	External BooleanDefaultFalse
@@ -359,4 +365,15 @@ type Config struct {
 	// WarmPoolsSupport specifies whether the agent should poll IMDS to check the target lifecycle state for a starting
 	// instance
 	WarmPoolsSupport BooleanDefaultFalse
+
+	// DynamicHostPortRange specifies the dynamic host port range that the agent
+	// uses to assign host ports from, for a container port range mapping.
+	// This defaults to the platform specific ephemeral host port range
+	DynamicHostPortRange string
+
+	// TaskPidsLimit specifies the per-task pids limit cgroup setting for each
+	// task launched on this container instance. This setting maps to the pids.max
+	// cgroup setting at the ECS task level.
+	// see https://www.kernel.org/doc/html/latest/admin-guide/cgroup-v2.html#pid
+	TaskPidsLimit int
 }

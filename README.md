@@ -2,17 +2,15 @@
 
 ![Amazon ECS logo](doc/ecs.png "Amazon ECS")
 
-![Build Status](https://github.com/aws/amazon-ecs-agent/workflows/Build/badge.svg?branch=dev)
-
 The Amazon ECS Container Agent is a component of Amazon Elastic Container Service
 ([Amazon ECS](http://aws.amazon.com/ecs/)) and is responsible for managing containers on behalf of Amazon ECS.
+
+This repository comes with ECS-Init, which is a [systemd](http://www.freedesktop.org/wiki/Software/systemd/) based service to support the Amazon ECS Container Agent and keep it running. It is used for systems that utilize `systemd` as init systems and is packaged as deb or rpm. The source for ECS-Init is available in this repository at `./ecs-init` while the packaging is available at `./packaging`.
 
 ## Usage
 
 The best source of information on running this software is the
 [Amazon ECS documentation](http://docs.aws.amazon.com/AmazonECS/latest/developerguide/ECS_agent.html).
-
-Please note that from Agent version 1.20.0, Minimum required Docker version is 1.9.0, corresponding to Docker API version 1.21. For more information, please visit [Amazon ECS Container Agent Versions](https://docs.aws.amazon.com/AmazonECS/latest/developerguide/container_agent_versions.html).
 
 ### On the Amazon Linux AMI
 
@@ -21,9 +19,11 @@ On the [Amazon Linux AMI](https://aws.amazon.com/amazon-linux-ami/), we provide 
 
 ### On Other Linux AMIs
 
+[Amazon ECS docs](https://docs.aws.amazon.com/AmazonECS/latest/developerguide/ecs-agent-install.html) provides deb and rpm packages and instructions to install ECS Container Agent on non-Amazon Linux instances.
+
 The Amazon ECS Container Agent may also be run in a Docker container on an EC2 instance with a recent Docker version
-installed. A Docker image is available in our
-[Docker Hub Repository](https://registry.hub.docker.com/u/amazon/amazon-ecs-agent/).
+installed. Docker images are available in
+[Docker Hub Repository](https://hub.docker.com/r/amazon/amazon-ecs-agent) and [ECR Public Gallery](https://gallery.ecr.aws/ecs/amazon-ecs-agent).
 
 ```bash
 $ # Set up directories the agent uses
@@ -109,6 +109,56 @@ PS C:\> $agentVersion = "v1.20.4"
 PS C:\> Initialize-ECSAgent -Cluster 'windows' -EnableTaskIAMRole -Version $agentVersion
 ```
 
+## Build ECS Agent from source
+
+### Build ECS Agent Image (Linux)
+
+ECS Agent can also be built locally from source on a linux machine. Use the following steps to build ECS Agent
+* Get ECS Agent source
+```
+git clone https://github.com/aws/amazon-ecs-agent.git
+```
+* Build Agent image using ```release-agent``` make target
+```
+make release-agent
+```
+This installs the required build dependencies, builds ECS Agent image and saves it at a path ```ecs-agent-v${AGENT_VERSION}.tar```. Load this using
+```
+docker load < ecs-agent-v${AGENT_VERSION}.tar
+```
+Follow the instructions [above](https://github.com/aws/amazon-ecs-agent#on-other-linux-amis) to continue with the installation
+
+### Build and run standalone (Linux)
+
+The Amazon ECS Container Agent may also be run outside of a Docker container as a Go binary. At this time, this is not recommended
+for production on Linux, but it can be useful for development or easier integration with your local Go tools.
+
+The following commands run the agent outside of Docker:
+
+```
+make gobuild
+./out/amazon-ecs-agent
+```
+
+### Standalone (Windows)
+
+The Amazon ECS Container Agent may be built by invoking `scripts\build_agent.ps1`
+
+### Scripts (Windows)
+
+The following scripts are available to help develop the Amazon ECS Container Agent on Windows:
+
+* `scripts\run-integ-tests.ps1` - Runs all integration tests in the `engine` and `stats` packages
+* `misc\windows-deploy\Install-ECSAgent.ps1` - Install the ECS agent as a Windows service
+* `misc\windows-deploy\amazon-ecs-agent.ps1` - Helper script to set up the host and run the agent as a process
+* `misc\windows-deploy\user-data.ps1` - Sample user-data that can be used with the Windows Server 2016 with Containers
+  AMI to run the agent as a process
+
+
+### Build ECS-Init Package (Linux)
+
+ECS-Init package can also be built as a deb or rpm depending on the linux system you are running. Follow instructions at [generic-deb-integrated](https://github.com/aws/amazon-ecs-agent/tree/master/packaging/generic-deb-integrated/debian) or [generic-rpm-integrated](https://github.com/aws/amazon-ecs-agent/tree/master/packaging/generic-rpm-integrated) to build and install ECS Agent with Init using deb or rpm.
+
 ## Advanced Usage
 
 The Amazon ECS Container Agent supports a number of configuration options, most of which should be set through
@@ -138,9 +188,9 @@ additional details on each available environment variable.
 | `ECS_CHECKPOINT`   | &lt;true &#124; false&gt; | Whether to checkpoint state to the DATADIR specified below. | true if `ECS_DATADIR` is explicitly set to a non-empty value; false otherwise | true if `ECS_DATADIR` is explicitly set to a non-empty value; false otherwise |
 | `ECS_DATADIR`      |   /data/                  | The container path where state is checkpointed for use across agent restarts. Note that on Linux, when you specify this, you will need to make sure that the Agent container has a bind mount of `$ECS_HOST_DATA_DIR/data:$ECS_DATADIR` with the corresponding values of `ECS_HOST_DATA_DIR` and `ECS_DATADIR`. | /data/ | `C:\ProgramData\Amazon\ECS\data`
 | `ECS_UPDATES_ENABLED` | &lt;true &#124; false&gt; | Whether to exit for an updater to apply updates when requested. | false | false |
-| `ECS_DISABLE_METRICS`     | &lt;true &#124; false&gt;  | Whether to disable metrics gathering for tasks. | false | true |
+| `ECS_DISABLE_METRICS`     | &lt;true &#124; false&gt;  | Whether to disable metrics gathering for tasks. | false | false |
 | `ECS_POLL_METRICS`     | &lt;true &#124; false&gt;  | Whether to poll or stream when gathering metrics for tasks. Setting this value to `true` can help reduce the CPU usage of dockerd and containerd on the ECS container instance. See also ECS_POLL_METRICS_WAIT_DURATION for setting the poll interval. | `false` | `false` |
-| `ECS_POLLING_METRICS_WAIT_DURATION` | 10s | Time to wait between polling for metrics for a task. Not used when ECS_POLL_METRICS is false. Maximum value is 20s and minimum value is 5s. If user sets above maximum it will be set to max, and if below minimum it will be set to min. | 10s | 10s |
+| `ECS_POLLING_METRICS_WAIT_DURATION` | 10s | Time to wait between polling for metrics for a task. Not used when ECS_POLL_METRICS is false. Maximum value is 20s and minimum value is 5s. If user sets above maximum it will be set to max, and if below minimum it will be set to min. As the number of tasks/containers increase, a higher `ECS_POLLING_METRICS_WAIT_DURATION` value can potentially cause a problem where memory reservation value of ECS cluster reported in metrics becomes unstable due to missing metrics sample at metric collection time. It is recommended to keep this value smaller than 18s. This behavior is only observed on certain OS and platforms. | 10s | 10s |
 | `ECS_PULL_DEPENDENT_CONTAINERS_UPFRONT` | &lt;true &#124; false&gt; | Whether to pull images for containers with dependencies before the dependsOn condition has been satisfied. | false | false |
 | `ECS_RESERVED_MEMORY` | 32 | Reduction, in MiB, of the memory capacity of the instance that is reported to Amazon ECS. Used by Amazon ECS when placing tasks on container instances. This doesn't reserve memory usage on the instance. | 0 | 0 |
 | `ECS_AVAILABLE_LOGGING_DRIVERS` | `["awslogs","fluentd","gelf","json-file","journald","logentries","splunk","syslog"]` | Which logging drivers are available on the container instance. | `["json-file","none"]` | `["json-file","none"]` |
@@ -203,8 +253,22 @@ additional details on each available environment variable.
 | `ECS_ENABLE_GPU_SUPPORT` | `true` | Whether you use container instances with GPU support. This parameter is specified for the agent. You must also configure your task definitions for GPU. For more information | `false` | `Not applicable` |
 | `HTTP_PROXY` | `10.0.0.131:3128` | The hostname (or IP address) and port number of an HTTP proxy to use for the Amazon ECS agent to connect to the internet. For example, this proxy will be used if your container instances do not have external network access through an Amazon VPC internet gateway or NAT gateway or instance. If this variable is set, you must also set the NO_PROXY variable to filter Amazon EC2 instance metadata and Docker daemon traffic from the proxy. | `null` | `null` |
 | `NO_PROXY` | <For Linux: 169.254.169.254,169.254.170.2,/var/run/docker.sock &#124; For Windows: 169.254.169.254,169.254.170.2,\\.\pipe\docker_engine> | The HTTP traffic that should not be forwarded to the specified HTTP_PROXY. You must specify 169.254.169.254,/var/run/docker.sock to filter Amazon EC2 instance metadata and Docker daemon traffic from the proxy. | `null` | `null` |
+| `ECS_GMSA_SUPPORTED` | `true` | Whether you use gMSA authentication to Active Directory in tasks. Each task must specify the location of a credential specification file in the `dockerSecurityOpts` parameter of a container definition. On Linux, this requires the [credentials-fetcher daemon](https://github.com/aws/credentials-fetcher). | `false` | `false` |
 | `CREDENTIALS_FETCHER_HOST`   | `unix:///var/credentials-fetcher/socket/credentials_fetcher.sock` | Used to create a connection to the [credentials-fetcher daemon](https://github.com/aws/credentials-fetcher); to support gMSA on Linux. The default is fine for most users, only needs to be modified if user is configuring a custom credentials-fetcher socket path, ie, [CF_UNIX_DOMAIN_SOCKET_DIR](https://github.com/aws/credentials-fetcher#default-environment-variables). | `unix:///var/credentials-fetcher/socket/credentials_fetcher.sock` | Not Applicable |
 | `CREDENTIALS_FETCHER_SECRET_NAME_FOR_DOMAINLESS_GMSA`   | `secretmanager-secretname` | Used to support scaling option for gMSA on Linux [credentials-fetcher daemon](https://github.com/aws/credentials-fetcher). If user is configuring gMSA on a non-domain joined instance, they need to create an Active Directory user with access to retrieve principals for the gMSA account and store it in secrets manager | `secretmanager-secretname` | Not Applicable |
+| `ECS_DYNAMIC_HOST_PORT_RANGE` | `100-200` | This specifies the dynamic host port range that the agent uses to assign host ports from, for container ports mapping. If there are no available ports in the range for containers, including customer containers and Service Connect Agent containers (if Service Connect is enabled), service deployments would fail. | Defined by `/proc/sys/net/ipv4/ip_local_port_range` | `49152-65535` |
+| `ECS_TASK_PIDS_LIMIT` | `100` | Specifies the per-task pids limit cgroup setting for each task launched on the container instance. This setting maps to the pids.max cgroup setting at the ECS task level. See https://www.kernel.org/doc/html/latest/admin-guide/cgroup-v2.html#pid. If unset, pids will be unlimited. Min value is 1 and max value is 4194304 (4*1024*1024) | `unset` | Not Supported on Windows |
+
+Additionally, the following environment variable(s) can be used to configure the behavior of the ecs-init service. When using ECS-Init, all env variables, including the ECS Agent variables above, are read from path `/etc/ecs/ecs.config`:
+| Environment Variable Name | Example Value(s)            | Description | Default value |
+|:----------------|:----------------------------|:------------|:-----------------------|
+| `ECS_SKIP_LOCALHOST_TRAFFIC_FILTER` | &lt;true &#124; false&gt; | By default, the ecs-init service adds an iptable rule to drop non-local packets to localhost if they're not part of an existing forwarded connection or DNAT, and removes the rule upon stop. If `ECS_SKIP_LOCALHOST_TRAFFIC_FILTER` is set to true, this rule will not be added/removed. | false |
+| `ECS_ALLOW_OFFHOST_INTROSPECTION_ACCESS` | &lt;true &#124; false&gt; | By default, the ecs-init service adds an iptable rule to block access to ECS Agent's introspection port from off-host (or containers in awsvpc network mode), and removes the rule upon stop. If `ECS_ALLOW_OFFHOST_INTROSPECTION_ACCESS` is set to true, this rule will not be added/removed. | false |
+| `ECS_OFFHOST_INTROSPECTION_INTERFACE_NAME` | `eth0` | Primary network interface name to be used for blocking offhost agent introspection port access. By default, this value is `eth0` | `eth0` |
+| `ECS_AGENT_LABELS` | `{"test.label.1":"value1","test.label.2":"value2"}` | The labels to add to the ECS Agent container. | |
+
+
+
 ### Persistence
 
 When you run the Amazon ECS Container Agent in production, its `datadir` should be persisted between runs of the Docker
@@ -220,29 +284,6 @@ The agent also supports the following flags:
 * ` -loglevel` &mdash; Options: `[<crit>|<error>|<warn>|<info>|<debug>]`. The agent will output on stdout at the given
   level. This is overridden by the `ECS_LOGLEVEL` environment variable, if present.
 
-## Building and Running from Source
-
-**Running the Amazon ECS Container Agent outside of Amazon EC2 is not supported.**
-
-### Docker Image (on Linux)
-
-The Amazon ECS Container Agent may be built by typing `make` with the [Docker
-daemon](https://docs.docker.com/installation/) (v1.5.0) running.
-
-This produces an image tagged `amazon/ecs-container-agent:make` that
-you may run as described above.
-
-### Standalone (on Linux)
-
-The Amazon ECS Container Agent may also be run outside of a Docker container as a Go binary. This is not recommended
-for production on Linux, but it can be useful for development or easier integration with your local Go tools.
-
-The following commands run the agent outside of Docker:
-
-```
-make gobuild
-./out/amazon-ecs-agent
-```
 
 ### Make Targets (on Linux)
 
@@ -250,27 +291,16 @@ The following targets are available. Each may be run with `make <target>`.
 
 | Make Target            | Description |
 |:-----------------------|:------------|
-| `release`              | *(Default)* Builds the agent within a Docker container and and packages it into a scratch-based image |
+| `release-agent`        | *(Default Agent build)* Builds Agent fetching required dependencies and saves image .tar to disk|
+| `generic-rpm-integrated`| Builds init rpm package and saves .rpm package to disk |
+| `generic-deb-integrated`| Builds init deb package and saves .deb package to disk |
+| `release`              | *(Legacy Agent build)* Builds the agent within a Docker container and packages it into a scratch-based image |
 | `gobuild`              | Runs a normal `go build` of the agent and stores the binary in `./out/amazon-ecs-agent` |
 | `static`               | Runs `go build` to produce a static binary in `./out/amazon-ecs-agent` |
 | `test`                 | Runs all unit tests using `go test` |
 | `test-in-docker`       | Runs all tests inside a Docker container |
 | `run-integ-tests`      | Runs all integration tests in the `engine` and `stats` packages |
 | `clean`                | Removes build artifacts. *Note: this does not remove Docker images* |
-
-### Standalone (on Windows)
-
-The Amazon ECS Container Agent may be built by invoking `scripts\build_agent.ps1`
-
-### Scripts (on Windows)
-
-The following scripts are available to help develop the Amazon ECS Container Agent on Windows:
-
-* `scripts\run-integ-tests.ps1` - Runs all integration tests in the `engine` and `stats` packages
-* `misc\windows-deploy\Install-ECSAgent.ps1` - Install the ECS agent as a Windows service
-* `misc\windows-deploy\amazon-ecs-agent.ps1` - Helper script to set up the host and run the agent as a process
-* `misc\windows-deploy\user-data.ps1` - Sample user-data that can be used with the Windows Server 2016 with Containers
-  AMI to run the agent as a process
 
 
 ## Contributing
