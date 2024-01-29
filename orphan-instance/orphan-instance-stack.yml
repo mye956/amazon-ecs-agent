@@ -12,6 +12,9 @@ Parameters:
     Type: Number
     Description: The number of seconds to wait for the instance to start and set up ECS
     Default: 300
+  S3BucketName:
+    Type: String
+    Description: The name of the orphan instance S3 bucket
   TerminateEnabled:
     Type: String
     Description: Whether to terminate instances if it's orphaned
@@ -248,7 +251,7 @@ Resources:
     Properties:
       FunctionName: "ECSOrphanInstanceLambda"
       Code:
-        S3Bucket: orphan-instance
+        S3Bucket: !Ref S3BucketName
         S3Key: myFunction.zip
       Description: ''
       MemorySize: 512
