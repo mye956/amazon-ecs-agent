@@ -42,7 +42,7 @@ func HandleRequest(ctx context.Context, event *MyEvent) (*string, error) {
 	}
 	log.Infof("Event received: %s", string(data))
 
-	documentName := "test-orphan-stack-ECSOrphanInstanceSSMDocument-OLO04TqElqbe"
+	documentName := "ECSOrphanInstanceCheck"
 
 	session, err := session.NewSession()
 	if err != nil {
