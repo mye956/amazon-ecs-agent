@@ -284,8 +284,7 @@ Resources:
         detail-type:
           - EC2 Instance Launch Successful
         detail:
-          AutoScalingGroupName:
-            - !Ref AutoScalingGroupName
+          AutoScalingGroupName: !Split [",", !Ref AutoScalingGroupName]
       Name: orphan-instance-eventbridge-rule
       State: ENABLED
       Targets:
