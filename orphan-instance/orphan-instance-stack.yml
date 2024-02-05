@@ -44,7 +44,7 @@ Resources:
             - | 
               cat << EOF > /tmp/Dockerfile
               FROM public.ecr.aws/docker/library/busybox:uclibc
-              CMD ["cat", "blah.txt"]
+              CMD ["ls"]
               EOF
             - |
               #!/bin/bash
@@ -97,28 +97,28 @@ Resources:
                 echo "* Containerd Status: $CONTAINERD_STATUS" >> validation_output.log
 
                 echo "Conducting Docker lifecycle test..." >> validation_output.log
-                IMAGE_BUILD_OUTPUT=$(docker build -t aws-hello .)
+                IMAGE_BUILD_OUTPUT=$(docker build -t aws-docker-test .)
                 if [ $? -eq 0 ]; then
                   echo "* Docker Image Build Status: Success" >> validation_output.log
-                  docker run --name aws-hello-world aws-hello
+                  docker run --name aws-docker-test aws-docker-test
                   sleep 5
-                  if [ "$(docker ps -aq -f status=exited -f name=aws-hello-world)" ]; then
+                  if [ "$(docker ps -aq -f status=exited -f name=aws-docker-test)" ]; then
                     echo "* Docker Container Test Run: Success" >> validation_output.log
                   else
                     echo "* Docker Container Test Run:: Failed" >> validation_output.log
                   fi
-                  DOCKER_CONTAINER_EXIT_CODE=$(docker inspect aws-hello-world --format="$DOCKER_STATE_EXIT_CODE")
+                  DOCKER_CONTAINER_EXIT_CODE=$(docker inspect aws-docker-test --format="$DOCKER_STATE_EXIT_CODE")
                   echo $DOCKER_CONTAINER_EXIT_CODE
                   if [[ $? -eq 0 && $DOCKER_CONTAINER_EXIT_CODE != "0" ]]; then
                     echo $DOCKER_CONTAINER_EXIT_CODE
-                    DOCKER_CONTAINER_ERROR=$(docker inspect aws-hello-world --format="$DOCKER_STATE_ERROR")
-                    DOCKER_CONTAINER_OOM=$(docker inspect aws-hello-world --format="$DOCKER_STATE_OOMKILLED")
+                    DOCKER_CONTAINER_ERROR=$(docker inspect aws-docker-test --format="$DOCKER_STATE_ERROR")
+                    DOCKER_CONTAINER_OOM=$(docker inspect aws-docker-test --format="$DOCKER_STATE_OOMKILLED")
                     echo "* Docker Container Exit Code: $DOCKER_CONTAINER_EXIT_CODE" >> validation_output.log
                     echo "* Docker Container Error: $DOCKER_CONTAINER_ERROR" >> validation_output.log
                     echo "* Docker Container OOM: $DOCKER_CONTAINER_OOM" >> validation_output.log
                   fi
-                  docker rm aws-hello-world
-                  docker image rm aws-hello
+                  docker rm aws-docker-test
+                  docker image rm aws-docker-test
                   docker image rm public.ecr.aws/docker/library/busybox:uclibc
                   rm Dockerfile
                 else
