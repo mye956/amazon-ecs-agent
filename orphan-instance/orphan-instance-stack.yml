@@ -20,13 +20,6 @@ Parameters:
 
 
 Resources:
-
-  # S3Bucket:
-  #   Type: 'AWS::S3::Bucket'
-  #   DeletionPolicy: Retain
-  #   Properties:
-  #     BucketName: orphan-instance
-
   ECSOrphanInstanceSSMDocument:
     Type: "AWS::SSM::Document"
     Properties:
@@ -263,9 +256,6 @@ Resources:
         Variables:
           TERMINATE_INSTANCE: !Ref TerminateEnabled
           WAIT_TIME: !Ref WaitTimer
-      # EventInvokeConfig:
-      #   MaximumEventAgeInSeconds: 21600
-      #   MaximumRetryAttempts: 2
       PackageType: Zip
       Role: !GetAtt ECSOrphanInstanceLambdaRole.Arn
       SnapStart:
