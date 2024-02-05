@@ -27,10 +27,6 @@ type Detail struct {
 	StatusCode string `json:"StatusCode"`
 }
 
-// type Detail struct {
-// 	InstanceId string `json:"instance-id"`
-// }
-
 func HandleRequest(ctx context.Context, event *MyEvent) (*string, error) {
 	var exitCode int64
 	if event == nil {
