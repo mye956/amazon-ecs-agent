@@ -14,7 +14,7 @@ Usage:
 
 Options:
 	--region  (Required) Region where the resources are to be created.
-	--asg-name   (Required) Name of the Autoscaling Group to track for unregistered/orphan instances.
+	--asg-name   (Required) Name(s) of the Autoscaling Group to track for unregistered/orphan instances. Multiple ASGs can be specified by using "," as the delimiter. (e.g. Name1,Name2,...)
 	--wait-time  (Optional) The amount of duration in seconds of when to check for orphan instances within an Autoscaling Group.
 	--instance-cleanup        (Optional) Whether to clean up the instance if it's been detected as an unregistered/orphan instance.
 
@@ -105,7 +105,7 @@ main() {
     aws s3 cp ./orphan-instance-stack.yml s3://$bucket_name/orphan-instance-stack.yml --region $REGION
     aws s3 cp ./myFunction.zip s3://$bucket_name/myFunction.zip --region $REGION
 
-    aws cloudformation create-stack --stack-name orphan-instance --template-body file://orphan-instance-stack.yml --region $REGION --parameters ParameterKey=AutoScalingGroupName,ParameterValue=$ASG_NAME ParameterKey=WaitTimer,ParameterValue=$WAIT_TIME ParameterKey=TerminateEnabled,ParameterValue=$TERMINATE_ENABLED ParameterKey=AutoScalingGroupArn,ParameterValue=blah ParameterKey=S3BucketName,ParameterValue=$bucket_name --capabilities CAPABILITY_NAMED_IAM
+    aws cloudformation create-stack --stack-name orphan-instance --template-body file://orphan-instance-stack.yml --region $REGION --parameters ParameterKey=AutoScalingGroupName,ParameterValue=$ASG_NAME ParameterKey=WaitTimer,ParameterValue=$WAIT_TIME ParameterKey=TerminateEnabled,ParameterValue=$TERMINATE_ENABLED ParameterKey=S3BucketName,ParameterValue=$bucket_name --capabilities CAPABILITY_NAMED_IAM
 
     echo "Deleting temporary directory $TMPDIR..."
     rm -rf $TMPDIR
