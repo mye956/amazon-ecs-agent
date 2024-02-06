@@ -264,6 +264,7 @@ Resources:
     Properties:
       FunctionName: !Ref ECSOrphanInstanceLambdaFunction
       MaximumRetryAttempts: 1
+      Qualifier: $LATEST
 
   ECSOrphanInstanceEventBrdigeRule:
     Type: AWS::Events::Rule
