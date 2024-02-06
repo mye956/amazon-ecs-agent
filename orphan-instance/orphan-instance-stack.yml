@@ -243,7 +243,7 @@ Resources:
       Code:
         S3Bucket: !Ref S3BucketName
         S3Key: myFunction.zip
-      Description: ''
+      Description: 'This lambda function is responsible for invoking the SSM document to run the orphan instance diagnostic checks.'
       MemorySize: 512
       Timeout: 900
       Handler: bootstrap
@@ -258,8 +258,6 @@ Resources:
           WAIT_TIME: !Ref WaitTimer
       PackageType: Zip
       Role: !GetAtt ECSOrphanInstanceLambdaRole.Arn
-      SnapStart:
-        ApplyOn: None
   
   ECSOrphanInstanceEventBrdigeRule:
     Type: AWS::Events::Rule
