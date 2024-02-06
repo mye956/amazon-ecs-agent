@@ -259,6 +259,12 @@ Resources:
       PackageType: Zip
       Role: !GetAtt ECSOrphanInstanceLambdaRole.Arn
   
+  LambdaEventInvokeConfig:
+    Type: AWS::Lambda::EventInvokeConfig
+    Properties:
+      FunctionName: !Ref ECSOrphanInstanceLambdaFunction
+      MaximumRetryAttempts: 1
+
   ECSOrphanInstanceEventBrdigeRule:
     Type: AWS::Events::Rule
     Properties:
