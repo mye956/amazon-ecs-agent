@@ -52,26 +52,17 @@ Resources:
               AZ=$(curl -s http://169.254.169.254/latest/meta-data/placement/availability-zone)
               REGION=$(echo "$AZ" | sed 's/[a-z]$//')
               EC2_INSTANCE_ID=$(curl http://169.254.169.254/latest/meta-data/instance-id)
-
               ECS_STATUS=""
               DOCKER_STATUS=""
               CONTAINERD_STATUS=""
-
-              DOCKER_IMAGE_BUILD_STATUS=""
-              DOCKER_RUN_OUTPUT=""
               DOCKER_CONTAINER_EXIT_CODE=""
               DOCKER_CONTAINER_ERROR=""
               DOCKER_CONTAINER_OOM=""
-
               AGENT_EXIT_CODE=""
               AGENT_ERROR=""
               AGENT_OOM=""
-
-              ECS_ENDPOINT_PING=""
-              ECS_CONFIG_FILE_ERROR=false
-
-              NVIDIA_DRIVER_STATUS=""
-
+              ECS_CONFIG_FILE_ERROR="false"
+              NVIDIA_DRIVER_AVAILABLE="false"
               DOCKER_STATE_ERROR="{{.State.Error}}"
               DOCKER_STATE_OOMKILLED="{{.State.OOMKilled}}"
               DOCKER_STATE_EXIT_CODE="{{.State.ExitCode}}"
@@ -150,40 +141,46 @@ Resources:
                   fi
                   validate_line=$(echo ${line} | grep -E "^[A-Za-z0-9_].+=.+$")
                   if [[ ${validate_line} == "" ]]; then
-                    ECS_CONFIG_FILE_ERROR=true
+                    ECS_CONFIG_FILE_ERROR="true"
                     echo "* Error in ECS configuration file wtih invalid contents: ${line}" >> validation_output.log
                   fi
                 done < "/etc/ecs/ecs.config"
         
-                # TODO: Add check if GPU AMI, otherwise try not to execute
                 echo "Checking Nvidia driver status" >> validation_output.log 
                 NVIDIA_DRIVER=$(nvidia-smi -L)
                 if [ $? -eq 0 ]; then
+                    NVIDIA_DRIVER_AVAILABLE="true"
                   echo "* Nvidia Driver Status: $NVIDIA_DRIVER" >> validation_output.log
-                else
-                  echo "* Unable to check Nvidia Driver Status. Disregard if the AMI is not GPU-supported, otherwise please ensure that the nvidia-smi library is installed." >> validation_output.log
                 fi
 
                 echo "----Analysis----" >> validation_output.log
 
                 if [[ $ECS_STATUS = "inactive" || $DOCKER_STATUS = "inactive" || $CONTAINERD_STATUS = "inactive" ]]; then 
-                  echo "* An essential service(s) is inactive. Please ensure that either ECS, Docker, and Containerd is up and running. To further debug, you can obtain the full logs via: journalctl -u <SERVICE_NAME>.service" >> validation_output.log
-                fi
-
-                if [[ $ECS_CONFIG_FILE_ERROR = true ]]; then
-                  echo "* Error found in ECS configuration file. Please ensure that the config file is properly formatted. Refer to the following link regarding agent configuration options: https://docs.aws.amazon.com/AmazonECS/latest/developerguide/ecs-agent-config.html" >> validation_output.log
+                  echo "* One or more essential service is inactive. Please ensure that either ECS, Docker, and Containerd is up and running. To further debug, you can obtain the full logs via: journalctl -u <SERVICE_NAME>.service" >> validation_output.log
                 fi
 
                 if [[ $DOCKER_CONTAINER_OOM = "true" || $AGENT_OOM = "true" ]]; then 
                   echo "* Unable to start up docker containers. Please ensure that there's enough resouces allocated within the instance. Refer to the following link for more information regarding OOM: https://docs.docker.com/config/containers/resource_constraints/" >> validation_output.log
                 fi
 
+                 if [[ $DOCKER_CONTAINER_EXIT_CODE != "0" ]]; then
+                  echo "* Error while running test container $DOCKER_EXIT_CODE. Please refer to the following link regarding docker diagnostics: https://docs.aws.amazon.com/AmazonECS/latest/developerguide/docker-diags.html" >> validation_output.log
+                fi
+
                 if [[ $AGENT_EXIT_CODE != "0" ]]; then
                   echo "* Agent was unable to start up properly. Please refer to the following doc to obtain agent logs: https://docs.aws.amazon.com/AmazonECS/latest/developerguide/ecs-logs-collector.html." >> validation_output.log
                 fi
 
-                if [[ $DOCKER_CONTAINER_EXIT_CODE != "0" ]]; then
-                  echo "* Error while running test container $DOCKER_EXIT_CODE. Please refer to the following link regarding docker diagnostics: https://docs.aws.amazon.com/AmazonECS/latest/developerguide/docker-diags.html" >> validation_output.log
+                if [[ -z "$IS_ENDPOINT_REACHABLE" ]]; then
+                  echo "* Unable to reach ECS Endpoint. Please ensure that your networking configuration is properly set up. https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/ec2-networking.html" >> validation_output.log
+                fi
+
+                if [[ $ECS_CONFIG_FILE_ERROR = "true" ]]; then
+                  echo "* Error found in ECS configuration file. Please ensure that the config file is properly formatted. Refer to the following link regarding agent configuration options: https://docs.aws.amazon.com/AmazonECS/latest/developerguide/ecs-agent-config.html" >> validation_output.log
+                fi
+
+                if [[ $NVIDIA_DRIVER_AVAILABLE = "true" ]]; then
+                    echo "* Unable to check Nvidia Driver Status. Disregard if the AMI is not GPU-supported, otherwise please ensure that the nvidia-smi library is installed." >> validation_output.log
                 fi
                 cat validation_output.log
                 exit 8
