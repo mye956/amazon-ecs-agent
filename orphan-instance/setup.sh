@@ -5,8 +5,6 @@ TERMINATE_ENABLED="false"
 WAIT_TIME="300"
 ASG_NAME=""
 
-PROGNAME="${0##*/}"
-
 usage() {
     cat <<-EOF
 Usage:
@@ -19,11 +17,9 @@ Options:
 	--instance-cleanup        (Optional) Whether to clean up the instance if it's been detected as an unregistered/orphan instance.
 
 Example:
-  $0 --region us-east-1 --asg-name SomeName --wait-time 300 --instance-cleanup
+  $0 --region us-east-1 --asg-name SomeName --wait-time 300 --enable-cleanup
 EOF
 }
-
-POSITIONAL_ARGS=()
 
 parse_args() {
     
@@ -42,7 +38,7 @@ parse_args() {
                 WAIT_TIME=$2
                 shift 2
                 ;;
-            --instance-cleanup)
+            --enable-cleanup)
                 TERMINATE_ENABLED="true"
                 shift
                 ;;
@@ -77,38 +73,36 @@ validate_args(){
 }
 
 main() {
-
-    TMPDIR=$(mktemp -d)
-    echo "Created temporary directory: $TMPDIR"
-    cd ${TMPDIR}
-
-    
+    echo "Creating resources for ECS Orphan Instance Diagnostic Checker..."
 
     parse_args "$@"
     validate_args
 
-    curl https://raw.githubusercontent.com/mye956/amazon-ecs-agent/orphan-instance/orphan-instance/orphan-instance-stack.yml -o orphan-instance-stack.yml
-    curl -L https://github.com/mye956/amazon-ecs-agent/raw/orphan-instance/orphan-instance/myFunction.zip -o myFunction.zip
+    TMPDIR=$(mktemp -d)
+    cd "${TMPDIR}" || exit 1
 
-    ls -l ./myFunction.zip
+    echo "Downloading Orphan Instance Cloudformation template..."
+    curl https://raw.githubusercontent.com/mye956/amazon-ecs-agent/orphan-instance/orphan-instance/orphan-instance-stack.yml -o orphan-instance-stack.yml
+    echo "Downloading Lambda function handler..."
+    curl -L https://github.com/mye956/amazon-ecs-agent/raw/orphan-instance/orphan-instance/lambdaFunction.zip -o lambdaFunction.zip
 
     bucket_name="orphan-instance-$REGION"
     bucket_exist=$(aws s3api list-buckets --query "Buckets[].Name" | grep "$bucket_name")
-    
     if [[ -z "${bucket_exist}" ]]; then
-        echo "Creating bucket"
         aws s3api create-bucket --bucket $bucket_name --region $REGION --create-bucket-configuration LocationConstraint=$REGION
     fi
     aws s3api wait bucket-exists --bucket $bucket_name
-    echo "Orphan instance S3 bucket exists"
+    echo "Orphan Instance S3 bucket created."
 
-    aws s3 cp ./orphan-instance-stack.yml s3://$bucket_name/orphan-instance-stack.yml --region $REGION
-    aws s3 cp ./myFunction.zip s3://$bucket_name/myFunction.zip --region $REGION
+    echo "Copying over lambda function handler ZIP file..."
+    aws s3 cp ./lambdaFunction.zip s3://$bucket_name/lambdaFunction.zip --region $REGION
 
+    echo "Creating Cloudformation stack..."
     aws cloudformation create-stack --stack-name orphan-instance --template-body file://orphan-instance-stack.yml --region $REGION --parameters ParameterKey=AutoScalingGroupName,ParameterValue=$ASG_NAME ParameterKey=WaitTimer,ParameterValue=$WAIT_TIME ParameterKey=TerminateEnabled,ParameterValue=$TERMINATE_ENABLED ParameterKey=S3BucketName,ParameterValue=$bucket_name --capabilities CAPABILITY_NAMED_IAM
+    aws cloudformation wait stack-create-complete --stack-name orphan-instance --region $REGION --cli-read-timeout 120 --cli-connect-timeout 120
 
-    echo "Deleting temporary directory $TMPDIR..."
-    rm -rf $TMPDIR
+    rm -rf "$TMPDIR"
+    echo "ECS Orphan Instance Dianostic Checker setup finished."
 }
 
 main "$@"

@@ -1,53 +1,4 @@
-AWSTemplateFormatVersion: 2010-09-09
-Description: >-
-  A Cloudformation template to create a lambda function and SSM script to detect orphan instances within an ASG.
-Parameters:
-  AutoScalingGroupName:
-    Type: String
-    Description: The name of the tracking Auto scaling group to execute the lambda function on.
-  WaitTimer:
-    Type: Number
-    Description: The number of seconds to wait for the instance to start and set up ECS
-    Default: 300
-  S3BucketName:
-    Type: String
-    Description: The name of the orphan instance S3 bucket
-  TerminateEnabled:
-    Type: String
-    Description: Whether to terminate instances if it's orphaned
-    Default: false
-    AllowedValues: [true, false]
-
-
-Resources:
-  ECSOrphanInstanceSSMDocument:
-    Type: "AWS::SSM::Document"
-    Properties:
-      DocumentFormat: "YAML"
-      DocumentType: "Command"
-      Name: "ECSOrphanInstanceCheck"
-      Content:
-        schemaVersion: "2.2"
-        description: "RegisterContainerInstance Check Command Document"
-        parameters:
-          Message:
-            type: "String"
-            description: "Example"
-            default: "Hello World"
-        mainSteps:
-        - action: "aws:runShellScript"
-          name: "example"
-          inputs:
-            workingDirectory: "/tmp"
-            timeoutSeconds: "900"
-            runCommand:
-            - | 
-              cat << EOF > /tmp/Dockerfile
-              FROM public.ecr.aws/docker/library/busybox:uclibc
-              CMD ["echo", "testing docker"]
-              EOF
-            - |
-              #!/bin/bash
+#!/bin/bash
               REGISTERED=$(curl -s http://localhost:51678/v1/metadata)
               AZ=$(curl -s http://169.254.169.254/latest/meta-data/placement/availability-zone)
               REGION=$(echo "$AZ" | sed 's/[a-z]$//')
@@ -68,7 +19,8 @@ Resources:
               DOCKER_STATE_EXIT_CODE="{{.State.ExitCode}}"
 
               if [  -z "$REGISTERED" ]; then
-                echo "Warning! Container instance is not registered to ECS. [Reported Instance ID: $EC2_INSTANCE_ID]" > validation_output.log
+                rm validation_output.log
+                echo "Warning! Container instance is not registered to ECS. [Reported Instance ID: $EC2_INSTANCE_ID]" >> validation_output.log
                 echo "----Summary----" >> validation_output.log
       
                 ERROR_OUTPUT=$(cat /var/log/ecs/ecs-agent.log | grep "Unable to register as a container instance with ECS" | tail -1)
@@ -184,105 +136,7 @@ Resources:
                 cat validation_output.log
                 exit 8
               else
-                echo "Container Instance is registered to an ECS Cluster" > validation_output.log
+                echo "Container Instance is registered to an ECS Cluster" >> validation_output.log
                 cat validation_output.log
                 exit 0
               fi
-
-  ECSOrphanInstanceSSMLogGroup:
-    Type: AWS::Logs::LogGroup
-    Properties: 
-      RetentionInDays: 14
-      LogGroupName: orphan-instance-log-group
-
-  ECSOrphanInstanceLambdaLogGroup: 
-    Type: AWS::Logs::LogGroup
-    Properties: 
-      RetentionInDays: 14
-
-  ECSOrphanInstanceLambdaRole:
-    Type: AWS::IAM::Role
-    Properties:
-      AssumeRolePolicyDocument:
-        Version: "2012-10-17"
-        Statement:
-          - Effect: Allow
-            Principal:
-              Service:
-                - lambda.amazonaws.com
-            Action:
-              - "sts:AssumeRole"
-      Policies:
-        - PolicyName: lambda
-          PolicyDocument:
-            Version: "2012-10-17"
-            Statement:
-              - Effect: Allow
-                Action:
-                    - logs:CreateLogStream
-                    - logs:PutLogEvents
-                Resource: !GetAtt ECSOrphanInstanceLambdaLogGroup.Arn
-              - Effect: Allow
-                Action:
-                  - ec2:DescribeInstances
-                  - ec2:DescribeInstanceStatus
-                  - ec2:TerminateInstances
-                  - logs:*
-                  - ssm:GetCommandInvocation
-                  - ssm:SendCommand
-                Resource: '*'
-
-  ECSOrphanInstanceLambdaFunction:
-    Type: AWS::Lambda::Function
-    Properties:
-      FunctionName: "ECSOrphanInstanceLambda"
-      Code:
-        S3Bucket: !Ref S3BucketName
-        S3Key: lambdaFunction.zip
-      Description: ''
-      MemorySize: 512
-      Timeout: 900
-      Handler: bootstrap
-      Runtime: go1.x
-      Architectures:
-        - x86_64
-      EphemeralStorage:
-        Size: 512
-      Environment:
-        Variables:
-          TERMINATE_INSTANCE: !Ref TerminateEnabled
-          WAIT_TIME: !Ref WaitTimer
-      PackageType: Zip
-      Role: !GetAtt ECSOrphanInstanceLambdaRole.Arn
-  
-  LambdaEventInvokeConfig:
-    Type: AWS::Lambda::EventInvokeConfig
-    Properties:
-      FunctionName: !Ref ECSOrphanInstanceLambdaFunction
-      MaximumRetryAttempts: 1
-      Qualifier: $LATEST
-
-  ECSOrphanInstanceEventBrdigeRule:
-    Type: AWS::Events::Rule
-    Properties:
-      EventBusName: default
-      EventPattern:
-        source:
-          - aws.autoscaling
-        detail-type:
-          - EC2 Instance Launch Successful
-        detail:
-          AutoScalingGroupName: !Split [",", !Ref AutoScalingGroupName]
-      Name: orphan-instance-eventbridge-rule
-      State: ENABLED
-      Targets:
-        - Id: "TargetFunction"
-          Arn: !GetAtt ECSOrphanInstanceLambdaFunction.Arn
-  
-  PermissionForEventsToInvokeLambda: 
-    Type: AWS::Lambda::Permission
-    Properties: 
-      FunctionName: "ECSOrphanInstanceLambda"
-      Action: "lambda:InvokeFunction"
-      Principal: "events.amazonaws.com"
-      SourceArn: !GetAtt ECSOrphanInstanceEventBrdigeRule.Arn
