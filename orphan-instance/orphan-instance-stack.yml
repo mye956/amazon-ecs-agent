@@ -18,7 +18,6 @@ Parameters:
     Default: false
     AllowedValues: [true, false]
 
-
 Resources:
   ECSOrphanInstanceSSMDocument:
     Type: "AWS::SSM::Document"
@@ -145,11 +144,13 @@ Resources:
                   fi
                 done < "/etc/ecs/ecs.config"
         
-                echo "Checking Nvidia driver status" >> validation_output.log 
+                echo "Checking Nvidia driver status..." >> validation_output.log 
                 NVIDIA_DRIVER=$(nvidia-smi -L)
                 if [ $? -eq 0 ]; then
-                    NVIDIA_DRIVER_AVAILABLE="true"
+                  NVIDIA_DRIVER_AVAILABLE="true"
                   echo "* Nvidia Driver Status: $NVIDIA_DRIVER" >> validation_output.log
+                else
+                  echo "* Nvidia Driver Status: Unavailable" >> validation_output.log
                 fi
 
                 echo "----Analysis----" >> validation_output.log
@@ -239,7 +240,7 @@ Resources:
       Code:
         S3Bucket: !Ref S3BucketName
         S3Key: lambdaFunction.zip
-      Description: ''
+      Description: 'This lambda function is responsible for invoking the SSM document to run the orphan instance diagnostic checks.'
       MemorySize: 512
       Timeout: 900
       Handler: bootstrap
@@ -261,7 +262,7 @@ Resources:
       FunctionName: !Ref ECSOrphanInstanceLambdaFunction
       MaximumRetryAttempts: 1
       Qualifier: $LATEST
-
+  
   ECSOrphanInstanceEventBrdigeRule:
     Type: AWS::Events::Rule
     Properties:
