@@ -351,7 +351,7 @@ Resources:
       Description: 'This lambda function is responsible for invoking the SSM document to run the orphan instance diagnostic checks.'
       MemorySize: 512
       Timeout: 900
-      Handler: index.handler
+      Handler: index.lambda_handler
       Runtime: python3.9
       Architectures:
         - x86_64
