@@ -261,6 +261,7 @@ Resources:
               commandId = ""
               logger.info(waitTime)
               logger.info(enableTerminateInstance)
+
               while True:
                   time.sleep(1)
                   try:
@@ -286,7 +287,7 @@ Resources:
                               'output': json.dumps('Unable to find instance' )
                           }
               logger.info("sleeping")
-              time.sleep(30)
+              time.sleep(int(waitTime))
               try:
                   response = ssmClient.send_command(
                       InstanceIds=[
@@ -295,7 +296,7 @@ Resources:
                       DocumentName='ECSOrphanInstanceCheck',
                       DocumentVersion='$LATEST',
                       CloudWatchOutputConfig={
-                          'CloudWatchLogGroupName': 'string',
+                          'CloudWatchLogGroupName': 'orphan-instance-log-group',
                           'CloudWatchOutputEnabled': True
                       },
                   )
@@ -322,7 +323,7 @@ Resources:
                       continue   
 
 
-              if responseCode == 8:
+              if responseCode == 8 and enableTerminateInstance == "true":
                   logger.info("instance unable to register to ECS")
                   try:
                       response = ec2Client.terminate_instances(
@@ -330,7 +331,6 @@ Resources:
                               instanceId,
                           ],
                       )
-                      status = response["Reservations"][0]["Instances"][0]["State"]["Name"]
                   except:
                       return {
                           'output': 'unable to termiante instance'
@@ -338,7 +338,11 @@ Resources:
                   while True:
                       time.sleep(1)
                       try:
-                          response = ec2Client.describe_instances
+                          response = ec2Client.describe_instances(
+                            InstanceIds=[
+                                instanceId,
+                            ],
+                          )
                           status = response["Reservations"][0]["Instances"][0]["State"]["Name"]
                           if status == "terminated":
                             logger.info("instance has been terminated")
