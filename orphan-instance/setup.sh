@@ -89,7 +89,7 @@ main() {
     # Note: The correct location of of this file will be updated once the public Github repository has been created
     # curl -L https://github.com/mye956/amazon-ecs-agent/raw/orphan-instance/orphan-instance/lambdaFunction.zip -o lambdaFunction.zip
 
-    # bucket_name="orphan-instance-$REGION"
+    bucket_name="orphan-instance-$REGION"
     # bucket_exist=$(aws s3api list-buckets --query "Buckets[].Name" | grep "$bucket_name")
     # if [[ -z "${bucket_exist}" ]]; then
     #     aws s3api create-bucket --bucket $bucket_name --region $REGION --create-bucket-configuration LocationConstraint=$REGION

@@ -352,7 +352,7 @@ Resources:
       MemorySize: 512
       Timeout: 900
       Handler: index.handler
-      Runtime: python3.6
+      Runtime: python3.*
       Architectures:
         - x86_64
       EphemeralStorage:
