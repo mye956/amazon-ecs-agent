@@ -238,7 +238,7 @@ Resources:
     Properties:
       FunctionName: "ECSOrphanInstanceLambda"
       Code:
-        ZipFile: >
+        ZipFile: |
           import boto3
           import os
           import logging
