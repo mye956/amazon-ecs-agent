@@ -292,7 +292,7 @@ Resources:
                       InstanceIds=[
                           instanceId,
                       ],
-                      DocumentName='',
+                      DocumentName='ECSOrphanInstanceCheck',
                       DocumentVersion='$LATEST',
                       CloudWatchOutputConfig={
                           'CloudWatchLogGroupName': 'string',
