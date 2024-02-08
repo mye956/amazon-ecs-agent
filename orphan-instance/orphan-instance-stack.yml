@@ -323,8 +323,9 @@ Resources:
 
 
               if responseCode == 8:
+                  logger.info("instance unable to register to ECS")
                   try:
-                      response = ec2Client.describe_instances(
+                      response = ec2Client.terminate_instances(
                           InstanceIds=[
                               instanceId,
                           ],
@@ -340,8 +341,10 @@ Resources:
                           response = ec2Client.describe_instances
                           status = response["Reservations"][0]["Instances"][0]["State"]["Name"]
                           if status == "terminated":
-                              logger.info("instance has been terminated")
-                              break
+                            logger.info("instance has been terminated")
+                            break
+                          else:
+                            continue
                       except:
                           logger.info("instance no longer exists")
                           break
