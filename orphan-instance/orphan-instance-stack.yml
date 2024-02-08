@@ -238,13 +238,121 @@ Resources:
     Properties:
       FunctionName: "ECSOrphanInstanceLambda"
       Code:
-        S3Bucket: !Ref S3BucketName
-        S3Key: lambdaFunction.zip
+        Zipfile: |
+          import boto3
+          import os
+          import logging
+          import json
+          import time
+
+          ssmClient = boto3.client('ssm')
+          ec2Client = boto3.client('ec2')
+
+          logger = logging.getLogger()
+          logger.setLevel(logging.INFO)
+
+          waitTime = os.environ.get('WAIT_TIME')
+          enableTerminateInstance = os.environ.get('TERMINATE_INSTANCE')
+
+          def lambda_handler(event, context):
+              logger.info("Instance Id: %s", event["detail"]["EC2InstanceId"])
+              instanceId = event["detail"]["EC2InstanceId"]
+              responseCode = -1
+              commandId = ""
+              logger.info(waitTime)
+              logger.info(enableTerminateInstance)
+              while True:
+                  time.sleep(1)
+                  try:
+                      response = ec2Client.describe_instances(
+                          InstanceIds=[
+                              instanceId,
+                          ],
+                      )
+                      status = response["Reservations"][0]["Instances"][0]["State"]["Name"]
+                      logger.info(status)
+                      if status != "pending" and status != "running":
+                          logger.info("instance is no longer running")
+                          return {
+                              'output': json.dumps('Instance is no longer in a startup/running state' )
+                          }
+
+                      if status == "running":
+                          logger.info("instance is running")
+                          break
+                  except:
+                      logger.info("Unable to find instance")
+                      return {
+                              'output': json.dumps('Unable to find instance' )
+                          }
+              logger.info("sleeping")
+              time.sleep(30)
+              try:
+                  response = ssmClient.send_command(
+                      InstanceIds=[
+                          instanceId,
+                      ],
+                      DocumentName='',
+                      DocumentVersion='$LATEST',
+                      CloudWatchOutputConfig={
+                          'CloudWatchLogGroupName': 'string',
+                          'CloudWatchOutputEnabled': True
+                      },
+                  )
+                  
+                  commandId = response['Command']['CommandId']
+              except:
+                  logger.info("unable to send command to instance")
+                  return {
+                      'output': 'unable to send command to instance'
+                  }
+                      
+              while True:
+                  time.sleep(1)
+                  try:
+                      response = ssmClient.get_command_invocation(
+                          CommandId=commandId,
+                          InstanceId=instanceId
+                      )
+                      commandStatus = response['Status']
+                      if commandStatus != "Pending" and commandStatus != "InProgress" and commandStatus != "Delayed":
+                          responseCode = response['ResponseCode']
+                          break
+                  except:
+                      continue   
+
+
+              if responseCode == 8:
+                  try:
+                      response = ec2Client.describe_instances(
+                          InstanceIds=[
+                              instanceId,
+                          ],
+                      )
+                      status = response["Reservations"][0]["Instances"][0]["State"]["Name"]
+                  except:
+                      return {
+                          'output': 'unable to termiante instance'
+                      }
+                  while True:
+                      time.sleep(1)
+                      try:
+                          response = ec2Client.describe_instances
+                          status = response["Reservations"][0]["Instances"][0]["State"]["Name"]
+                          if status == "terminated":
+                              logger.info("instance has been terminated")
+                              break
+                      except:
+                          logger.info("instance no longer exists")
+                          break
+              return {
+                  'output': json.dumps('Hello Lambda!')
+              }
       Description: 'This lambda function is responsible for invoking the SSM document to run the orphan instance diagnostic checks.'
       MemorySize: 512
       Timeout: 900
-      Handler: bootstrap
-      Runtime: go1.x
+      Handler: index.handler
+      Runtime: python3.6
       Architectures:
         - x86_64
       EphemeralStorage:
