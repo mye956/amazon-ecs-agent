@@ -84,24 +84,9 @@ main() {
     # TODO: Update this to the correct link
     # Note: The correct location of of this file will be updated once the public Github repository has been created
     curl https://raw.githubusercontent.com/mye956/amazon-ecs-agent/orphan-instance/orphan-instance/orphan-instance-stack.yml -o orphan-instance-stack.yml
-    echo "Downloading Lambda function handler..."
-    # TODO: Update this to the correct link
-    # Note: The correct location of of this file will be updated once the public Github repository has been created
-    # curl -L https://github.com/mye956/amazon-ecs-agent/raw/orphan-instance/orphan-instance/lambdaFunction.zip -o lambdaFunction.zip
-
-    bucket_name="orphan-instance-$REGION"
-    # bucket_exist=$(aws s3api list-buckets --query "Buckets[].Name" | grep "$bucket_name")
-    # if [[ -z "${bucket_exist}" ]]; then
-    #     aws s3api create-bucket --bucket $bucket_name --region $REGION --create-bucket-configuration LocationConstraint=$REGION
-    # fi
-    # aws s3api wait bucket-exists --bucket $bucket_name
-    # echo "Orphan Instance S3 bucket created."
-
-    # echo "Copying over lambda function handler ZIP file..."
-    # aws s3 cp ./lambdaFunction.zip s3://$bucket_name/lambdaFunction.zip --region $REGION
 
     echo "Creating Cloudformation stack..."
-    aws cloudformation create-stack --stack-name orphan-instance --template-body file://orphan-instance-stack.yml --region $REGION --parameters ParameterKey=AutoScalingGroupName,ParameterValue=$ASG_NAME ParameterKey=WaitTimer,ParameterValue=$WAIT_TIME ParameterKey=TerminateEnabled,ParameterValue=$TERMINATE_ENABLED ParameterKey=S3BucketName,ParameterValue=$bucket_name --capabilities CAPABILITY_NAMED_IAM
+    aws cloudformation create-stack --stack-name orphan-instance --template-body file://orphan-instance-stack.yml --region $REGION --parameters ParameterKey=AutoScalingGroupName,ParameterValue=$ASG_NAME ParameterKey=WaitTimer,ParameterValue=$WAIT_TIME ParameterKey=TerminateEnabled,ParameterValue=$TERMINATE_ENABLED --capabilities CAPABILITY_NAMED_IAM
     aws cloudformation wait stack-create-complete --stack-name orphan-instance --region $REGION
     echo "Cloudfromation stack has been created."
 
