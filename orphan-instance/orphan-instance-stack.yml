@@ -255,13 +255,11 @@ Resources:
           enableTerminateInstance = os.environ.get('TERMINATE_INSTANCE')
 
           def lambda_handler(event, context):
-              logger.info("Instance Id: %s", event["detail"]["EC2InstanceId"])
               instanceId = event["detail"]["EC2InstanceId"]
               responseCode = -1
               commandId = ""
-              logger.info(waitTime)
-              logger.info(enableTerminateInstance)
-
+              
+              # Waiting until the instance is up and running
               while True:
                   time.sleep(1)
                   try:
@@ -271,22 +269,18 @@ Resources:
                           ],
                       )
                       status = response["Reservations"][0]["Instances"][0]["State"]["Name"]
-                      logger.info(status)
                       if status != "pending" and status != "running":
-                          logger.info("instance is no longer running")
                           return {
-                              'output': json.dumps('Instance is no longer in a startup/running state' )
+                              'output': json.dumps('Instance is no longer in a startup/running state')
                           }
-
                       if status == "running":
-                          logger.info("instance is running")
                           break
                   except:
-                      logger.info("Unable to find instance")
                       return {
-                              'output': json.dumps('Unable to find instance' )
+                              'output': json.dumps('Unable to find instance')
                           }
-              logger.info("sleeping")
+              
+              # Sleeping the configured wait time to give the instance a chance to register to ECS 
               time.sleep(int(waitTime))
               try:
                   response = ssmClient.send_command(
@@ -303,11 +297,11 @@ Resources:
                   
                   commandId = response['Command']['CommandId']
               except:
-                  logger.info("unable to send command to instance")
                   return {
-                      'output': 'unable to send command to instance'
+                      'output': json.dumps('Unable to send command to instance')
                   }
                       
+              # We're waiting until the SSM document finishes running
               while True:
                   time.sleep(1)
                   try:
@@ -321,10 +315,10 @@ Resources:
                           break
                   except:
                       continue   
-
-
+              
+              # The SSM Document will return a custom exit code 8 which will correlate with an instance failing to register to ECS
               if responseCode == 8 and enableTerminateInstance == "true":
-                  logger.info("instance unable to register to ECS")
+                  logger.info("RegisterContainerInstance failed for instance %s, terminating...", instanceId)
                   try:
                       response = ec2Client.terminate_instances(
                           InstanceIds=[
@@ -333,7 +327,7 @@ Resources:
                       )
                   except:
                       return {
-                          'output': 'unable to termiante instance'
+                          'output': json.dumps('Unable to termiante instance')
                       }
                   while True:
                       time.sleep(1)
@@ -345,15 +339,13 @@ Resources:
                           )
                           status = response["Reservations"][0]["Instances"][0]["State"]["Name"]
                           if status == "terminated":
-                            logger.info("instance has been terminated")
                             break
                           else:
                             continue
                       except:
-                          logger.info("instance no longer exists")
                           break
               return {
-                  'output': json.dumps('Hello Lambda!')
+                  'output': json.dumps('ECS Orphan Instance Lambda function finished.')
               }
       Description: 'This lambda function is responsible for invoking the SSM document to run the orphan instance diagnostic checks.'
       MemorySize: 512
