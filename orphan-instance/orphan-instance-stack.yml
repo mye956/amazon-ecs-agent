@@ -28,17 +28,17 @@ Resources:
         parameters:
           Message:
             type: "String"
-            description: "Example"
-            default: "Hello World"
+            description: "ECS Orphan Instance Checker"
         mainSteps:
         - action: "aws:runShellScript"
-          name: "example"
+          name: "ECSOrphanInstanceChecker"
           inputs:
             workingDirectory: "/tmp"
             timeoutSeconds: "900"
             runCommand:
+            - mkdir /tmp/docker-test/
             - | 
-              cat << EOF > /tmp/Dockerfile
+              cat << EOF > /tmp/docker-test/Dockerfile
               FROM public.ecr.aws/docker/library/busybox:uclibc
               CMD ["echo", "testing docker"]
               EOF
@@ -83,7 +83,7 @@ Resources:
                 echo "* Containerd Status: $CONTAINERD_STATUS" >> validation_output.log
 
                 echo "Conducting Docker lifecycle test..." >> validation_output.log
-                IMAGE_BUILD_OUTPUT=$(docker build -t aws-docker-test .)
+                docker build -t aws-docker-test /tmp/docker-test/
                 if [ $? -eq 0 ]; then
                   echo "* Docker Image Build Status: Success" >> validation_output.log
                   docker run --name aws-docker-test aws-docker-test
@@ -103,10 +103,9 @@ Resources:
                   fi
                   docker rm aws-docker-test
                   docker image rm aws-docker-test
-                  docker image rm public.ecr.aws/docker/library/busybox:uclibc
                   rm Dockerfile
                 else
-                echo "* Docker Image Build Status: Failed with $IMAGE_BUILD_OUTPUT" >> validation_output.log
+                  echo "* Docker Image Build Status: Failed" >> validation_output.log
                 fi
 
                 echo "Checking status of ECS Agent..." >> validation_output.log 
@@ -135,7 +134,7 @@ Resources:
                   validate_line=$(echo ${line} | grep -E "^[A-Za-z0-9_].+=.+$")
                   if [[ ${validate_line} == "" ]]; then
                     ECS_CONFIG_FILE_ERROR="true"
-                    echo "* Error in ECS configuration file wtih invalid contents: ${line}" >> validation_output.log
+                    echo "* Error in ECS configuration file with invalid contents: ${line}" >> validation_output.log
                   fi
                 done < "/etc/ecs/ecs.config"
         
@@ -189,12 +188,13 @@ Resources:
     Type: AWS::Logs::LogGroup
     Properties: 
       RetentionInDays: 14
-      LogGroupName: orphan-instance-log-group
+      LogGroupName: ecs-orphan-instance-log-group
 
   ECSOrphanInstanceLambdaLogGroup: 
     Type: AWS::Logs::LogGroup
     Properties: 
       RetentionInDays: 14
+      LogGroupName: ecs-orphan-instance-lambda-log-group
 
   ECSOrphanInstanceLambdaRole:
     Type: AWS::IAM::Role
@@ -249,11 +249,13 @@ Resources:
           waitTime = os.environ.get('WAIT_TIME')
           enableTerminateInstance = os.environ.get('TERMINATE_INSTANCE')
 
+          ssmDocumentName = 'ECSOrphanInstanceCheck'
+          logGroupName = 'ecs-orphan-instance-log-group'
+
           def lambda_handler(event, context):
               instanceId = event["detail"]["EC2InstanceId"]
               responseCode = -1
               commandId = ""
-              
               # Waiting until the instance is up and running
               while True:
                   time.sleep(1)
@@ -270,11 +272,10 @@ Resources:
                           }
                       if status == "running":
                           break
-                  except:
+                  except Exception as e:
                       return {
-                              'output': json.dumps('Unable to find instance')
-                          }
-              
+                              'output': json.dumps('Unable to find instance, error: ' + str(e))
+                      }
               # Sleeping the configured wait time to give the instance a chance to register to ECS 
               time.sleep(int(waitTime))
               try:
@@ -282,18 +283,18 @@ Resources:
                       InstanceIds=[
                           instanceId,
                       ],
-                      DocumentName='ECSOrphanInstanceCheck',
+                      DocumentName=ssmDocumentName,
                       DocumentVersion='$LATEST',
                       CloudWatchOutputConfig={
-                          'CloudWatchLogGroupName': 'orphan-instance-log-group',
+                          'CloudWatchLogGroupName': logGroupName,
                           'CloudWatchOutputEnabled': True
                       },
                   )
                   
                   commandId = response['Command']['CommandId']
-              except:
+              except Exception as e:
                   return {
-                      'output': json.dumps('Unable to send command to instance')
+                      'output': json.dumps('Unable to send command to instance, error: ' + str(e))
                   }
                       
               # We're waiting until the SSM document finishes running
@@ -308,7 +309,8 @@ Resources:
                       if commandStatus != "Pending" and commandStatus != "InProgress" and commandStatus != "Delayed":
                           responseCode = response['ResponseCode']
                           break
-                  except:
+                  except Exception as e:
+                      logger.warn(e)
                       continue   
               
               # The SSM Document will return a custom exit code 8 which will correlate with an instance failing to register to ECS
@@ -320,25 +322,10 @@ Resources:
                               instanceId,
                           ],
                       )
-                  except:
+                  except Exception as e:
                       return {
-                          'output': json.dumps('Unable to termiante instance')
+                          'output': json.dumps('Unable to termiante instance, error: ' + str(e))
                       }
-                  while True:
-                      time.sleep(1)
-                      try:
-                          response = ec2Client.describe_instances(
-                            InstanceIds=[
-                                instanceId,
-                            ],
-                          )
-                          status = response["Reservations"][0]["Instances"][0]["State"]["Name"]
-                          if status == "terminated":
-                            break
-                          else:
-                            continue
-                      except:
-                          break
               return {
                   'output': json.dumps('ECS Orphan Instance Lambda function finished.')
               }
@@ -357,6 +344,8 @@ Resources:
           WAIT_TIME: !Ref WaitTimer
       PackageType: Zip
       Role: !GetAtt ECSOrphanInstanceLambdaRole.Arn
+      LoggingConfig:
+        LogGroup: ecs-orphan-instance-lambda-log-group
   
   LambdaEventInvokeConfig:
     Type: AWS::Lambda::EventInvokeConfig
@@ -365,7 +354,7 @@ Resources:
       MaximumRetryAttempts: 1
       Qualifier: $LATEST
   
-  ECSOrphanInstanceEventBrdigeRule:
+  ECSOrphanInstanceEventBridgeRule:
     Type: AWS::Events::Rule
     Properties:
       EventBusName: default
@@ -388,4 +377,4 @@ Resources:
       FunctionName: "ECSOrphanInstanceLambda"
       Action: "lambda:InvokeFunction"
       Principal: "events.amazonaws.com"
-      SourceArn: !GetAtt ECSOrphanInstanceEventBrdigeRule.Arn
+      SourceArn: !GetAtt ECSOrphanInstanceEventBridgeRule.Arn

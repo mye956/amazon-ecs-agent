@@ -17,7 +17,7 @@ Options:
 	--enable-cleanup        (Optional) Whether to clean up the instance if it's been detected as an unregistered/orphan instance.
 
 Example:
-  $0 --region us-east-1 --asg-name SomeName --wait-time 300 --enable-cleanup
+  AWS_REGION=us-east-1 $0 --asg-name SomeName --wait-time 300 --enable-cleanup
 EOF
 }
 
@@ -25,10 +25,6 @@ parse_args() {
     
     while :; do
         case $1 in
-            --region)
-                REGION=$2
-                shift 2
-                ;;
             --asg-name)
                 ASG_NAME=\"$2\"
                 shift 2
@@ -60,11 +56,6 @@ parse_args() {
 }
 
 validate_args(){
-    if [[ -z "${REGION}" ]]; then
-        echo "ERROR: Region must not be empty"
-        exit 1
-    fi
-
     if [[ -z "${ASG_NAME}" ]]; then
         echo "ERROR: Autoscaling group name must not be empty"
         exit 1
@@ -78,6 +69,7 @@ main() {
     validate_args
 
     TMPDIR=$(mktemp -d)
+    trap "rm -rf $TMPDIR" EXIT
     cd "${TMPDIR}" || exit 1
 
     echo "Downloading Orphan Instance Cloudformation template..."
@@ -86,11 +78,9 @@ main() {
     curl https://raw.githubusercontent.com/mye956/amazon-ecs-agent/orphan-instance/orphan-instance/orphan-instance-stack.yml -o orphan-instance-stack.yml
 
     echo "Creating Cloudformation stack..."
-    aws cloudformation create-stack --stack-name orphan-instance --template-body file://orphan-instance-stack.yml --region $REGION --parameters ParameterKey=AutoScalingGroupName,ParameterValue=$ASG_NAME ParameterKey=WaitTimer,ParameterValue=$WAIT_TIME ParameterKey=TerminateEnabled,ParameterValue=$TERMINATE_ENABLED --capabilities CAPABILITY_NAMED_IAM
-    aws cloudformation wait stack-create-complete --stack-name orphan-instance --region $REGION
+    aws cloudformation create-stack --stack-name ecs-orphan-instance-detector --template-body file://orphan-instance-stack.yml --region $AWS_REGION --parameters ParameterKey=AutoScalingGroupName,ParameterValue=$ASG_NAME ParameterKey=WaitTimer,ParameterValue=$WAIT_TIME ParameterKey=TerminateEnabled,ParameterValue=$TERMINATE_ENABLED --capabilities CAPABILITY_NAMED_IAM
+    aws cloudformation wait stack-create-complete --stack-name ecs-orphan-instance-detector --region $AWS_REGION
     echo "Cloudfromation stack has been created."
-
-    rm -rf "$TMPDIR"
     echo "ECS Orphan Instance Dianostic Checker setup finished."
 }
 
