@@ -14,9 +14,6 @@ Parameters:
     Description: Whether to terminate instances if it's orphaned
     Default: false
     AllowedValues: [true, false]
-  Region:
-    Type: String
-    Description: The region of where all of the orphan instances resources will be in
 
 Resources:
   ECSOrphanInstanceSSMDocument:
@@ -29,12 +26,12 @@ Resources:
         schemaVersion: "2.2"
         description: "RegisterContainerInstance Check Command Document"
         parameters:
-          instanceId:
+          InstanceId:
             type: "String"
-            Description: "ID of the tracking EC2 Instance"
-          Message:
+            description: "Instance ID of the tracking EC2 Instance"
+          Region:
             type: "String"
-            description: "ECS Orphan Instance Checker"
+            description: "Region of the tracking EC2 Instance"
         mainSteps:
         - action: "aws:runShellScript"
           name: "ECSOrphanInstanceChecker"
@@ -51,9 +48,8 @@ Resources:
             - |
               #!/bin/bash
               REGISTERED=$(curl -s http://localhost:51678/v1/metadata)
-              AZ=$(curl -s http://169.254.169.254/latest/meta-data/placement/availability-zone)
-              REGION=$(echo "$AZ" | sed 's/[a-z]$//')
-              EC2_INSTANCE_ID=$(curl http://169.254.169.254/latest/meta-data/instance-id)
+              REGION=$Region
+              EC2_INSTANCE_ID=$InstanceId
               ECS_STATUS=""
               DOCKER_STATUS=""
               CONTAINERD_STATUS=""
@@ -263,6 +259,7 @@ Resources:
 
           def lambda_handler(event, context):
               instanceId = event["detail"]["EC2InstanceId"]
+              region = event["region"]
               responseCode = -1
               commandId = ""
               # Waiting until the instance is up and running
@@ -301,19 +298,23 @@ Resources:
                           },
                       ],
                       Parameters={
-                        'instanceId': [
+                        'InstanceId': [
                           instanceId,
+                        ],
+                        'Region': [
+                          region,
                         ]
                       },
                       DocumentName=ssmDocumentName,
                       DocumentVersion='$LATEST',
                       CloudWatchOutputConfig={
-                          'CloudWatchLogGroupName': logGroupName,
+                          'CloudWatchLogGroupName': 'ecs-orphan-instance-log-group',
                           'CloudWatchOutputEnabled': True
                       },
                   )
                   
                   commandId = response['Command']['CommandId']
+                  logger.Info("Running SSM Document with command ID: %s", commandId)
               except Exception as e:
                   return {
                       'output': json.dumps('Unable to send command to instance, error: ' + str(e))

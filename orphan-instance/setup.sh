@@ -78,7 +78,7 @@ main() {
     curl https://raw.githubusercontent.com/mye956/amazon-ecs-agent/orphan-instance/orphan-instance/orphan-instance-stack.yml -o orphan-instance-stack.yml
 
     echo "Creating Cloudformation stack..."
-    aws cloudformation create-stack --stack-name ecs-orphan-instance-detector --template-body file://orphan-instance-stack.yml --region $AWS_REGION --parameters ParameterKey=AutoScalingGroupName,ParameterValue=$ASG_NAME ParameterKey=WaitTimer,ParameterValue=$WAIT_TIME ParameterKey=TerminateEnabled,ParameterValue=$TERMINATE_ENABLED --capabilities CAPABILITY_NAMED_IAM
+    aws cloudformation create-stack --stack-name ecs-orphan-instance-detector --template-body file://orphan-instance-stack.yml --region $AWS_REGION --parameters ParameterKey=AutoScalingGroupName,ParameterValue=$ASG_NAME ParameterKey=WaitTimer,ParameterValue=$WAIT_TIME ParameterKey=TerminateEnabled,ParameterValue=$TERMINATE_ENABLED ParameterKey=Region,ParameterValue=$AWS_REGION --capabilities CAPABILITY_NAMED_IAM
     aws cloudformation wait stack-create-complete --stack-name ecs-orphan-instance-detector --region $AWS_REGION
     echo "Cloudfromation stack has been created."
     echo "ECS Orphan Instance Dianostic Checker setup finished."
