@@ -14,6 +14,9 @@ Parameters:
     Description: Whether to terminate instances if it's orphaned
     Default: false
     AllowedValues: [true, false]
+  Region:
+    Type: String
+    Description: The region of where all of the orphan instances resources will be in
 
 Resources:
   ECSOrphanInstanceSSMDocument:
@@ -26,6 +29,9 @@ Resources:
         schemaVersion: "2.2"
         description: "RegisterContainerInstance Check Command Document"
         parameters:
+          instanceId:
+            type: "String"
+            Description: "ID of the tracking EC2 Instance"
           Message:
             type: "String"
             description: "ECS Orphan Instance Checker"
@@ -62,6 +68,9 @@ Resources:
               DOCKER_STATE_ERROR="{{.State.Error}}"
               DOCKER_STATE_OOMKILLED="{{.State.OOMKilled}}"
               DOCKER_STATE_EXIT_CODE="{{.State.ExitCode}}"
+
+              INSTANCE_ID="{{ instanceId }}"
+              echo "$INSTANCE_ID"
 
               if [  -z "$REGISTERED" ]; then
                 echo "Warning! Container instance is not registered to ECS. [Reported Instance ID: $EC2_INSTANCE_ID]" > validation_output.log
@@ -283,6 +292,19 @@ Resources:
                       InstanceIds=[
                           instanceId,
                       ],
+                      Targets=[
+                          {
+                            'Key': 'InstanceIds',
+                            'Values': [
+                              instanceId,
+                            ]
+                          },
+                      ],
+                      Parameters={
+                        'instanceId': [
+                          instanceId,
+                        ]
+                      },
                       DocumentName=ssmDocumentName,
                       DocumentVersion='$LATEST',
                       CloudWatchOutputConfig={
