@@ -314,7 +314,7 @@ Resources:
                   )
                   
                   commandId = response['Command']['CommandId']
-                  logger.Info("Running SSM Document with command ID: %s", commandId)
+                  logger.info("Running SSM Document with command ID: %s", commandId)
               except Exception as e:
                   return {
                       'output': json.dumps('Unable to send command to instance, error: ' + str(e))
