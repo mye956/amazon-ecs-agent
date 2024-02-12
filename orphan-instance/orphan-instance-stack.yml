@@ -258,6 +258,7 @@ Resources:
           logGroupName = 'ecs-orphan-instance-log-group'
 
           def lambda_handler(event, context):
+            logger.info(str(event))
               instanceId = event["detail"]["EC2InstanceId"]
               region = event["region"]
               responseCode = -1
@@ -279,6 +280,7 @@ Resources:
                       if status == "running":
                           break
                   except Exception as e:
+                      logger.warn(e)
                       return {
                               'output': json.dumps('Unable to find instance, error: ' + str(e))
                       }
@@ -316,6 +318,7 @@ Resources:
                   commandId = response['Command']['CommandId']
                   logger.info("Running SSM Document with command ID: %s", commandId)
               except Exception as e:
+                  logger.warn(e)
                   return {
                       'output': json.dumps('Unable to send command to instance, error: ' + str(e))
                   }
@@ -346,6 +349,7 @@ Resources:
                           ],
                       )
                   except Exception as e:
+                      logger.warn(e)
                       return {
                           'output': json.dumps('Unable to termiante instance, error: ' + str(e))
                       }
