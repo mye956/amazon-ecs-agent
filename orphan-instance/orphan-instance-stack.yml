@@ -283,6 +283,7 @@ Resources:
                               'output': json.dumps('Instance is no longer in a startup/running state')
                           }
                       if status == "running":
+                          logger.info("EC2 instance %s is up and running.", instanceId)
                           break
                   except Exception as e:
                       logger.exception(e)
@@ -290,7 +291,7 @@ Resources:
                               'output': json.dumps('Unable to find instance, error: ' + str(e))
                       }
               # Sleeping the configured wait time to give the instance a chance to register to ECS 
-              logger.info("Sleeping for $s seconds to give the instance a chance to register to ECS", waitTime)
+              logger.info("Sleeping for %s seconds to give the instance a chance to register to ECS", waitTime)
               time.sleep(int(waitTime))
               try:
                   response = ssmClient.send_command(
