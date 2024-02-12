@@ -187,7 +187,7 @@ Resources:
                 cat validation_output.log
                 exit 8
               else
-                echo "Container Instance is registered to an ECS Cluster." > validation_output.log
+                echo "Container Instance with ID: ${EC2_INSTANCE_ID} is registered to an ECS Cluster." > validation_output.log
                 cat validation_output.log
                 exit 0
               fi
@@ -290,6 +290,7 @@ Resources:
                               'output': json.dumps('Unable to find instance, error: ' + str(e))
                       }
               # Sleeping the configured wait time to give the instance a chance to register to ECS 
+              logger.info("Sleeping for $s seconds to give the instance a chance to register to ECS", waitTime)
               time.sleep(int(waitTime))
               try:
                   response = ssmClient.send_command(
