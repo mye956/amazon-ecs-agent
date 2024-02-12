@@ -111,7 +111,7 @@ Resources:
                   fi
                   docker rm aws-docker-test
                   docker image rm aws-docker-test
-                  rm Dockerfile
+                  rm /tmp/docker-test/Dockerfile
                 else
                   echo "* Docker Image Build Status: Failed" >> validation_output.log
                 fi
@@ -196,7 +196,7 @@ Resources:
     Type: AWS::Logs::LogGroup
     Properties: 
       RetentionInDays: 14
-      LogGroupName: ecs-orphan-instance-log-group
+      LogGroupName: ecs-orphan-instance-checker-output-log-group
 
   ECSOrphanInstanceLambdaLogGroup: 
     Type: AWS::Logs::LogGroup
@@ -258,7 +258,7 @@ Resources:
           enableTerminateInstance = os.environ.get('TERMINATE_INSTANCE')
 
           ssmDocumentName = 'ECSOrphanInstanceCheck'
-          logGroupName = 'ecs-orphan-instance-log-group'
+          logGroupName = 'ecs-orphan-instance-checker-output-log-group'
 
           def lambda_handler(event, context):
               instanceId = event["detail"]["EC2InstanceId"]
@@ -317,7 +317,7 @@ Resources:
                       DocumentName=ssmDocumentName,
                       DocumentVersion='$LATEST',
                       CloudWatchOutputConfig={
-                          'CloudWatchLogGroupName': 'ecs-orphan-instance-log-group',
+                          'CloudWatchLogGroupName': logGroupName,
                           'CloudWatchOutputEnabled': True
                       },
                   )
