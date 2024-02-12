@@ -48,8 +48,8 @@ Resources:
             - |
               #!/bin/bash
               REGISTERED=$(curl -s http://localhost:51678/v1/metadata)
-              REGION=$Region
-              EC2_INSTANCE_ID=$InstanceId
+              REGION={{ Region }}
+              EC2_INSTANCE_ID={{ InstanceId }}
               ECS_STATUS=""
               DOCKER_STATUS=""
               CONTAINERD_STATUS=""
