@@ -76,10 +76,18 @@ main() {
     # Note: The correct location of of this file will be updated once the public Github repository has been created
     curl https://raw.githubusercontent.com/mye956/amazon-ecs-agent/orphan-instance/orphan-instance/orphan-instance-stack.yml -o orphan-instance-stack.yml
 
-    echo "Creating Cloudformation stack..."
-    aws cloudformation create-stack --stack-name ecs-orphan-instance-detector --template-body file://orphan-instance-stack.yml --region $AWS_REGION --parameters ParameterKey=AutoScalingGroupName,ParameterValue=$ASG_NAME ParameterKey=WaitTimer,ParameterValue=$WAIT_TIME ParameterKey=TerminateEnabled,ParameterValue=$TERMINATE_ENABLED --capabilities CAPABILITY_NAMED_IAM
-    aws cloudformation wait stack-create-complete --stack-name ecs-orphan-instance-detector --region $AWS_REGION
-    echo "Cloudfromation stack has been created."
+    aws cloudformation describe-stacks --stack-name ecs-orphan-instance-detector --region $AWS_REGION > /dev/null
+    if [ $? -eq 0  ]; then
+        echo "ECS Orphan Instance Detector Cloudformation Stack already exists. Updating existing stack..."
+        aws cloudformation update-stack --stack-name ecs-orphan-instance-detector --template-body file://orphan-instance-stack.yml --region $AWS_REGION --parameters ParameterKey=AutoScalingGroupName,ParameterValue=$ASG_NAME ParameterKey=WaitTimer,ParameterValue=$WAIT_TIME ParameterKey=TerminateEnabled,ParameterValue=$TERMINATE_ENABLED --capabilities CAPABILITY_NAMED_IAM
+        aws cloudformation wait stack-update-complete --stack-name ecs-orphan-instance-detector --region $AWS_REGION
+    else
+        echo "Creating Cloudformation stack..."
+        aws cloudformation create-stack --stack-name ecs-orphan-instance-detector --template-body file://orphan-instance-stack.yml --region $AWS_REGION --parameters ParameterKey=AutoScalingGroupName,ParameterValue=$ASG_NAME ParameterKey=WaitTimer,ParameterValue=$WAIT_TIME ParameterKey=TerminateEnabled,ParameterValue=$TERMINATE_ENABLED --capabilities CAPABILITY_NAMED_IAM
+        aws cloudformation wait stack-create-complete --stack-name ecs-orphan-instance-detector --region $AWS_REGION
+    fi
+    
+    echo "Cloudfromation stack is ready."
     echo "ECS Orphan Instance Dianostic Checker setup finished."
 }
 
