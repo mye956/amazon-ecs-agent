@@ -258,7 +258,7 @@ Resources:
           logGroupName = 'ecs-orphan-instance-log-group'
 
           def lambda_handler(event, context):
-            logger.info(str(event))
+              logger.info(str(event))
               instanceId = event["detail"]["EC2InstanceId"]
               region = event["region"]
               responseCode = -1
