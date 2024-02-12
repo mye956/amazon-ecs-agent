@@ -65,7 +65,7 @@ Resources:
               DOCKER_STATE_OOMKILLED="{{.State.OOMKilled}}"
               DOCKER_STATE_EXIT_CODE="{{.State.ExitCode}}"
 
-              INSTANCE_ID="{{ instanceId }}"
+              INSTANCE_ID=$InstanceId
               echo "$INSTANCE_ID"
 
               if [  -z "$REGISTERED" ]; then
