@@ -10,9 +10,8 @@ Usage:
   $0
 
 Options:
-	--region  (Required) Region where the resources are to be created.
-	--asg-name   (Required) Name(s) of the Autoscaling Group to track for unregistered/orphan instances. Multiple ASGs can be specified by using "," as the delimiter. (e.g. Name1,Name2,...)
-	--wait-time  (Optional) The amount of duration in seconds of when to check for orphan instances within an Autoscaling Group.
+	--asg-name              (Required) Name(s) of the Autoscaling Group to track for unregistered/orphan instances. Multiple ASGs can be specified by using "," as the delimiter. (e.g. Name1,Name2,...)
+	--wait-time             (Optional) The amount of duration in seconds of when to check for orphan instances within an Autoscaling Group.
 	--enable-cleanup        (Optional) Whether to clean up the instance if it's been detected as an unregistered/orphan instance.
 
 Example:
