@@ -39,9 +39,9 @@ Resources:
             workingDirectory: "/tmp"
             timeoutSeconds: "900"
             runCommand:
-            - mkdir /tmp/docker-test/
+            - mkdir /tmp/ecs-orphan-instance-diagnostic-checker/
             - | 
-              cat << EOF > /tmp/docker-test/Dockerfile
+              cat << EOF > /tmp/ecs-orphan-instance-diagnostic-checker/Dockerfile
               FROM public.ecr.aws/docker/library/busybox:uclibc
               CMD ["echo", "testing docker"]
               EOF
@@ -111,7 +111,7 @@ Resources:
                   fi
                   docker rm aws-docker-test
                   docker image rm aws-docker-test
-                  rm /tmp/docker-test/Dockerfile
+                  rm /tmp/ecs-orphan-instance-diagnostic-checker/Dockerfile
                 else
                   echo "* Docker Image Build Status: Failed" >> validation_output.log
                 fi
