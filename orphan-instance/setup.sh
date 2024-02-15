@@ -81,28 +81,24 @@ main() {
         echo "ECS Orphan Instance Detector Cloudformation Stack already exists. Updating existing stack..."
         aws cloudformation update-stack --stack-name ecs-orphan-instance-detector --template-body file://orphan-instance-stack.yml --region $AWS_REGION \
          --parameters ParameterKey=AutoScalingGroupName,ParameterValue=$ASG_NAME ParameterKey=WaitTimer,ParameterValue=$WAIT_TIME \
-         ParameterKey=TerminateEnabled,ParameterValue=$TERMINATE_ENABLED --capabilities CAPABILITY_NAMED_IAM
-        if [ $? -ne 0 ]; then
-            echo "ERROR: Unable to update stack"
-            exit 1
-        fi
+         ParameterKey=TerminateEnabled,ParameterValue=$TERMINATE_ENABLED --capabilities CAPABILITY_NAMED_IAM \
+         || { echo "ERROR: Unable to update Cloudformation stack" ; exit 1; }
+
         aws cloudformation wait stack-update-complete --stack-name ecs-orphan-instance-detector --region $AWS_REGION \
-        || { echo "ERROR: Unable to determine if Cloudformation stack has been updated" ; exit 1; } 
+        || { echo "ERROR: Unable to determine if Cloudformation stack has been updated" ; exit 1; }
     else
         echo "Creating Cloudformation stack..."
         aws cloudformation create-stack --stack-name ecs-orphan-instance-detector --template-body file://orphan-instance-stack.yml --region $AWS_REGION \
         --parameters ParameterKey=AutoScalingGroupName,ParameterValue=$ASG_NAME ParameterKey=WaitTimer,ParameterValue=$WAIT_TIME \
-        ParameterKey=TerminateEnabled,ParameterValue=$TERMINATE_ENABLED --capabilities CAPABILITY_NAMED_IAM
-        if [ $? -ne 0 ]; then
-            echo "ERROR: Unable to create stack"
-            exit 1
-        fi
+        ParameterKey=TerminateEnabled,ParameterValue=$TERMINATE_ENABLED --capabilities CAPABILITY_NAMED_IAM \
+        || { echo "ERROR: Unable to create Cloudformation stack" ; exit 1; }
+
         aws cloudformation wait stack-create-complete --stack-name ecs-orphan-instance-detector --region $AWS_REGION \
         || { echo "ERROR: Unable to determine if Cloudformation stack has been created" ; exit 1; } 
     fi
     
-    echo "Cloudfromation stack is ready."
-    echo "ECS Orphan Instance Dianostic Checker setup finished."
+    echo "Cloudformation stack is ready."
+    echo "ECS Orphan Instance Diagnostic Checker setup finished."
 }
 
 main "$@"

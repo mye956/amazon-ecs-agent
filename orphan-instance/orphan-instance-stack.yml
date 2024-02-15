@@ -343,7 +343,7 @@ Resources:
                           responseCode = response['ResponseCode']
                           break
                   except Exception as e:
-                      logger.info("SSM document stil hasn't finished executing. Checking again with error: %s", str(e))
+                      logger.info("Encountered exception: %s. Waiting until SSM document finish executing.", str(e))
                       continue   
               
               # The SSM Document will return a custom exit code 8 which will correlate with an instance failing to register to ECS
@@ -399,7 +399,7 @@ Resources:
           - EC2 Instance Launch Successful
         detail:
           AutoScalingGroupName: !Split [",", !Ref AutoScalingGroupName]
-      Name: orphan-instance-eventbridge-rule
+      Name: ecs-orphan-instance-eventbridge-rule
       State: ENABLED
       Targets:
         - Id: "TargetFunction"
