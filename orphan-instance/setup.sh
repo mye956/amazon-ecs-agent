@@ -73,7 +73,8 @@ main() {
     echo "Downloading Orphan Instance Cloudformation template..."
     # TODO: Update this to the correct link
     # Note: The correct location of of this file will be updated once the public Github repository has been created
-    curl https://raw.githubusercontent.com/mye956/amazon-ecs-agent/orphan-instance/orphan-instance/orphan-instance-stack.yml -o orphan-instance-stack.yml
+    curl https://raw.githubusercontent.com/mye956/amazon-ecs-agent/orphan-instance/orphan-instance/orphan-instance-stack.yml -o orphan-instance-stack.yml \
+    || { echo "ERROR: Unable to download Cloudformation stack template from public Github repository" ; exit 1; }
 
     aws cloudformation describe-stacks --stack-name ecs-orphan-instance-detector --region $AWS_REGION > /dev/null 2>&1
     if [ $? -eq 0  ]; then
@@ -85,7 +86,8 @@ main() {
             echo "ERROR: Unable to update stack"
             exit 1
         fi
-        aws cloudformation wait stack-update-complete --stack-name ecs-orphan-instance-detector --region $AWS_REGION
+        aws cloudformation wait stack-update-complete --stack-name ecs-orphan-instance-detector --region $AWS_REGION \
+        || { echo "ERROR: Unable to determine if Cloudformation stack has been updated" ; exit 1; } 
     else
         echo "Creating Cloudformation stack..."
         aws cloudformation create-stack --stack-name ecs-orphan-instance-detector --template-body file://orphan-instance-stack.yml --region $AWS_REGION \
@@ -95,7 +97,8 @@ main() {
             echo "ERROR: Unable to create stack"
             exit 1
         fi
-        aws cloudformation wait stack-create-complete --stack-name ecs-orphan-instance-detector --region $AWS_REGION
+        aws cloudformation wait stack-create-complete --stack-name ecs-orphan-instance-detector --region $AWS_REGION \
+        || { echo "ERROR: Unable to determine if Cloudformation stack has been created" ; exit 1; } 
     fi
     
     echo "Cloudfromation stack is ready."

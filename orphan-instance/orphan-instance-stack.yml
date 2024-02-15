@@ -91,7 +91,7 @@ Resources:
                 echo "* Containerd Status: $CONTAINERD_STATUS" >> validation_output.log
 
                 echo "Conducting Docker lifecycle test..." >> validation_output.log
-                docker build -t aws-docker-test /tmp/docker-test/
+                docker build -t aws-docker-test /tmp/ecs-orphan-instance-diagnostic-checker/
                 if [ $? -eq 0 ]; then
                   echo "* Docker Image Build Status: Success" >> validation_output.log
                   docker run --name aws-docker-test aws-docker-test
