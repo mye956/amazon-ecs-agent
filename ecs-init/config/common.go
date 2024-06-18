@@ -109,6 +109,9 @@ const (
 	// on AppArmor-enabled platforms (such as Ubuntu and Debian).
 	ECSAgentAppArmorProfileNameEnvVar  = "ECS_AGENT_APPARMOR_PROFILE"
 	ECSAgentAppArmorDefaultProfileName = "ecs-agent-default"
+
+	EuIsoeWest1RegionID  = "eu-isoe-west-1"
+	UsIsofSouth1RegionID = "us-isof-south-1"
 )
 
 // partitionBucketRegion provides the "partitional" bucket region
@@ -119,6 +122,8 @@ var partitionBucketRegion = map[string]string{
 	endpoints.AwsUsGovPartitionID: endpoints.UsGovWest1RegionID,
 	endpoints.AwsIsoPartitionID:   endpoints.UsIsoEast1RegionID,
 	endpoints.AwsIsoBPartitionID:  endpoints.UsIsobEast1RegionID,
+	endpoints.AwsIsoEPartitionID:  EuIsoeWest1RegionID,
+	endpoints.AwsIsoFPartitionID:  UsIsofSouth1RegionID,
 }
 
 // goarch is an injectable GOARCH runtime string. This controls the
