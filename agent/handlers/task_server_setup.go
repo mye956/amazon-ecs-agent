@@ -158,6 +158,7 @@ func v4HandlersSetup(muxRouter *mux.Router,
 	muxRouter.HandleFunc(v4.ContainerAssociationsPath, v4.ContainerAssociationsHandler(state))
 	muxRouter.HandleFunc(v4.ContainerAssociationPathWithSlash, v4.ContainerAssociationHandler(state))
 	muxRouter.HandleFunc(v4.ContainerAssociationPath, v4.ContainerAssociationHandler(state))
+	muxRouter.HandleFunc(tmdsv4.FISBlackholeFaultPath(), tmdsv4.FISBlackHoleHandler(tmdsAgentState, metricsFactory))
 }
 
 // agentAPIV1HandlersSetup adds handlers for Agent API V1

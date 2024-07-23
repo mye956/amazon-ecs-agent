@@ -13,9 +13,14 @@
 package v4
 
 import (
+	"bytes"
+	"context"
 	"errors"
 	"fmt"
 	"net/http"
+	"os/exec"
+	"strings"
+	"time"
 
 	"github.com/aws/amazon-ecs-agent/ecs-agent/logger"
 	"github.com/aws/amazon-ecs-agent/ecs-agent/logger/field"
@@ -32,6 +37,11 @@ const (
 	version                    = "v4"
 	containerStatsErrorPrefix  = "V4 container stats handler"
 	taskStatsErrorPrefix       = "V4 task stats handler"
+)
+
+var (
+	//used to determine when to start/stop
+	requestCount = 0
 )
 
 // ContainerMetadataPath specifies the relative URI path for serving container metadata.
@@ -62,6 +72,11 @@ func ContainerStatsPath() string {
 // Returns a standard URI path for v4 task stats endpoint.
 func TaskStatsPath() string {
 	return fmt.Sprintf("/v4/%s/task/stats",
+		utils.ConstructMuxVar(EndpointContainerIDMuxName, utils.AnythingButSlashRegEx))
+}
+
+func FISBlackholeFaultPath() string {
+	return fmt.Sprintf("/v4/%s/fis",
 		utils.ConstructMuxVar(EndpointContainerIDMuxName, utils.AnythingButSlashRegEx))
 }
 
@@ -266,4 +281,207 @@ func getStatsErrorResponse(endpointContainerID string, err error, errorPrefix st
 		field.Error: err,
 	})
 	return http.StatusInternalServerError, "failed to get stats"
+}
+
+func FISBlackHoleHandler(
+	agentState state.AgentState,
+	metricsFactory metrics.EntryFactory,
+) func(http.ResponseWriter, *http.Request) {
+	return func(w http.ResponseWriter, r *http.Request) {
+		endpointContainerID := mux.Vars(r)[EndpointContainerIDMuxName]
+		containerMetadata, err := agentState.GetContainerMetadata(endpointContainerID)
+		if err != nil {
+			logger.Error("Failed to get v4 container metadata", logger.Fields{
+				field.TMDSEndpointContainerID: endpointContainerID,
+				field.Error:                   err,
+			})
+
+			responseCode, responseBody := getContainerErrorResponse(endpointContainerID, err)
+			utils.WriteJSONResponse(w, responseCode, responseBody, utils.RequestTypeContainerMetadata)
+
+			if utils.Is5XXStatus(responseCode) {
+				metricsFactory.New(metrics.InternalServerErrorMetricName).Done(err)
+			}
+
+			return
+		}
+
+		taskMetadata, err := agentState.GetTaskMetadata(endpointContainerID)
+		if err != nil {
+			logger.Error("error not able to get task metadata", logger.Fields{
+				"error":               err,
+				"endpointContainerId": endpointContainerID,
+			})
+		}
+		requestCount++
+		if taskMetadata.Netns != "" {
+			if requestCount%2 == 0 {
+				res, err := startFault(taskMetadata)
+				if err != nil {
+					logger.Error("Unable to start fault", logger.Fields{
+						"err": err,
+					})
+				}
+				logger.Info("Successfully started fault", logger.Fields{
+					"output": res,
+				})
+			} else {
+				res, err := stopFault(taskMetadata)
+				if err != nil {
+					logger.Error("Unable to stop fault", logger.Fields{
+						"err": err,
+					})
+				}
+				logger.Info("Successfully stopped fault", logger.Fields{
+					"output": res,
+				})
+			}
+			res, err := checkBlackHoleFault(taskMetadata)
+			if err != nil {
+				logger.Error("Unable to check fault status", logger.Fields{
+					"err": err,
+				})
+			}
+			logger.Info("Status of fault", logger.Fields{
+				"output": res,
+			})
+		} else {
+			logger.Warn("Task Network namespace is not set")
+		}
+
+		logger.Info("Writing response for v4 container metadata", logger.Fields{
+			field.TMDSEndpointContainerID: endpointContainerID,
+			field.Container:               containerMetadata.ID,
+		})
+		utils.WriteJSONResponse(w, http.StatusOK, containerMetadata, utils.RequestTypeContainerMetadata)
+	}
+}
+
+func startFault(taskMetadata state.TaskResponse) (string, error) {
+	ctx := context.Background()
+	ctxWithTimeout, cancel := context.WithDeadline(ctx, time.Now().Add(time.Second*5))
+	defer cancel()
+
+	cmdList := []string{"nsenter", "-t ", taskMetadata.PauseContainerPid}
+	parameterString := "/faults/network_blackhole_port_start.sh --port 80 --protocol tcp ingress --assertion-script-path assertion-script.sh"
+	parameterList := strings.Split(parameterString, " ")
+	cmdList = append(cmdList, parameterList...)
+	cmd := exec.CommandContext(ctxWithTimeout, cmdList[0], cmdList[1:]...)
+
+	stdErr := &bytes.Buffer{}
+	stdOut := &bytes.Buffer{}
+	cmd.Stderr = stdErr
+	cmd.Stdout = stdOut
+
+	err := cmd.Run()
+
+	if err != nil {
+		logger.Error("Can't run command", logger.Fields{
+			"pid":     taskMetadata.PauseContainerPid,
+			"netns":   taskMetadata.Netns,
+			"command": strings.Join(cmdList, " "),
+			"stdErr":  stdErr.String(),
+			"stdOut":  stdOut.String(),
+			"err":     err,
+		})
+		return "", err
+	}
+
+	logger.Debug("Running command", logger.Fields{
+		"pid":     taskMetadata.PauseContainerPid,
+		"netns":   taskMetadata.Netns,
+		"command": strings.Join(cmdList, " "),
+		"stdErr":  stdErr.String(),
+		"stdOut":  stdOut.String(),
+		"err":     err,
+	})
+
+	return "fault started", nil
+
+}
+
+func stopFault(taskMetadata state.TaskResponse) (string, error) {
+	ctx := context.Background()
+	ctxWithTimeout, cancel := context.WithDeadline(ctx, time.Now().Add(time.Second*5))
+	defer cancel()
+
+	cmdList := []string{"nsenter", "-t ", taskMetadata.PauseContainerPid}
+	parameterString := "/faults/network_blackhole_port_stop.sh --traffic-type ingress"
+	parameterList := strings.Split(parameterString, " ")
+	cmdList = append(cmdList, parameterList...)
+	cmd := exec.CommandContext(ctxWithTimeout, cmdList[0], cmdList[1:]...)
+
+	stdErr := &bytes.Buffer{}
+	stdOut := &bytes.Buffer{}
+	cmd.Stderr = stdErr
+	cmd.Stdout = stdOut
+
+	err := cmd.Run()
+
+	if err != nil {
+		logger.Error("Can't run command", logger.Fields{
+			"pid":     taskMetadata.PauseContainerPid,
+			"netns":   taskMetadata.Netns,
+			"command": strings.Join(cmdList, " "),
+			"stdErr":  stdErr.String(),
+			"stdOut":  stdOut.String(),
+			"err":     err,
+		})
+		return stdOut.String(), err
+	}
+
+	logger.Debug("Running command", logger.Fields{
+		"pid":     taskMetadata.PauseContainerPid,
+		"netns":   taskMetadata.Netns,
+		"command": strings.Join(cmdList, " "),
+		"stdErr":  stdErr.String(),
+		"stdOut":  stdOut.String(),
+		"err":     err,
+	})
+
+	return stdOut.String(), nil
+
+}
+
+func checkBlackHoleFault(taskMetadata state.TaskResponse) (string, error) {
+	ctx := context.Background()
+	ctxWithTimeout, cancel := context.WithDeadline(ctx, time.Now().Add(time.Second*5))
+	defer cancel()
+
+	cmdList := []string{"nsenter", "-t ", taskMetadata.PauseContainerPid}
+	parameterString := "iptabls -nL"
+	parameterList := strings.Split(parameterString, " ")
+	cmdList = append(cmdList, parameterList...)
+	cmd := exec.CommandContext(ctxWithTimeout, cmdList[0], cmdList[1:]...)
+
+	stdErr := &bytes.Buffer{}
+	stdOut := &bytes.Buffer{}
+	cmd.Stderr = stdErr
+	cmd.Stdout = stdOut
+
+	err := cmd.Run()
+
+	if err != nil {
+		logger.Error("Can't run command", logger.Fields{
+			"pid":     taskMetadata.PauseContainerPid,
+			"netns":   taskMetadata.Netns,
+			"command": strings.Join(cmdList, " "),
+			"stdErr":  stdErr.String(),
+			"stdOut":  stdOut.String(),
+			"err":     err,
+		})
+		return "", err
+	}
+
+	logger.Debug("Running command", logger.Fields{
+		"pid":     taskMetadata.PauseContainerPid,
+		"netns":   taskMetadata.Netns,
+		"command": strings.Join(cmdList, " "),
+		"stdErr":  stdErr.String(),
+		"stdOut":  stdOut.String(),
+		"err":     err,
+	})
+
+	return stdOut.String(), nil
+
 }

@@ -297,6 +297,10 @@ type Task struct {
 	NetworkMode string `json:"NetworkMode,omitempty"`
 
 	IsInternal bool `json:"IsInternal,omitempty"`
+
+	NetNsPath string
+
+	PauseId string
 }
 
 // TaskFromACS translates ecsacs.Task to apitask.Task by first marshaling the received

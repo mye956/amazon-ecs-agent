@@ -62,10 +62,12 @@ func NewTaskResponse(
 	}
 
 	return &tmdsv4.TaskResponse{
-		TaskResponse: v2Resp,
-		Containers:   containers,
-		VPCID:        vpcID,
-		ServiceName:  serviceName,
+		TaskResponse:      v2Resp,
+		Containers:        containers,
+		VPCID:             vpcID,
+		ServiceName:       serviceName,
+		Netns:             task.NetNsPath,
+		PauseContainerPid: task.PauseId,
 	}, nil
 }
 

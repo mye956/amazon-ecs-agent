@@ -16,6 +16,7 @@ package engine
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -2275,7 +2276,16 @@ func (engine *DockerTaskEngine) provisionContainerResourcesAwsvpc(task *apitask.
 		}
 	}
 
+	data, _ := json.Marshal(&containerInspectOutput)
+	logger.Info("Container Inspect output", logger.Fields{
+		"Container name":   containerInspectOutput.Name,
+		"Container output": string(data),
+	})
+
 	task.SetPausePIDInVolumeResources(strconv.Itoa(containerInspectOutput.State.Pid))
+
+	task.NetNsPath = fmt.Sprintf(ecscni.NetnsFormat, strconv.Itoa(containerInspectOutput.State.Pid))
+	task.PauseId = strconv.Itoa(containerInspectOutput.State.Pid)
 
 	cniConfig, err := engine.buildCNIConfigFromTaskContainerAwsvpc(task, containerInspectOutput, true)
 	if err != nil {
