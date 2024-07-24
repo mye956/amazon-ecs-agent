@@ -449,8 +449,8 @@ func checkBlackHoleFault(taskMetadata state.TaskResponse) (string, error) {
 	ctxWithTimeout, cancel := context.WithDeadline(ctx, time.Now().Add(time.Second*5))
 	defer cancel()
 
-	cmdList := []string{"nsenter", "-t", taskMetadata.PauseContainerPid}
-	parameterString := "-n iptables -nL"
+	cmdList := []string{"nsenter", "-t", taskMetadata.PauseContainerPid, "-n"}
+	parameterString := "iptables -nL"
 	parameterList := strings.Split(parameterString, " ")
 	cmdList = append(cmdList, parameterList...)
 	cmd := exec.CommandContext(ctxWithTimeout, cmdList[0], cmdList[1:]...)
