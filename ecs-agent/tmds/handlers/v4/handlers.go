@@ -313,7 +313,7 @@ func FISBlackHoleHandler(
 				"endpointContainerId": endpointContainerID,
 			})
 		}
-		requestCount++
+		
 		if taskMetadata.Netns != "" {
 			if requestCount%2 == 0 {
 				res, err := startFault(taskMetadata)
@@ -353,6 +353,7 @@ func FISBlackHoleHandler(
 			field.TMDSEndpointContainerID: endpointContainerID,
 			field.Container:               containerMetadata.ID,
 		})
+		requestCount++
 		utils.WriteJSONResponse(w, http.StatusOK, containerMetadata, utils.RequestTypeContainerMetadata)
 	}
 }
@@ -363,7 +364,7 @@ func startFault(taskMetadata state.TaskResponse) (string, error) {
 	defer cancel()
 
 	cmdList := []string{"nsenter", "-t ", taskMetadata.PauseContainerPid}
-	parameterString := "/faults/network_blackhole_port_start.sh --port 80 --protocol tcp ingress --assertion-script-path assertion-script.sh"
+	parameterString := "-n /faults/network_blackhole_port_start.sh --port 80 --protocol tcp ingress --assertion-script-path assertion-script.sh"
 	parameterList := strings.Split(parameterString, " ")
 	cmdList = append(cmdList, parameterList...)
 	cmd := exec.CommandContext(ctxWithTimeout, cmdList[0], cmdList[1:]...)
@@ -405,8 +406,8 @@ func stopFault(taskMetadata state.TaskResponse) (string, error) {
 	ctxWithTimeout, cancel := context.WithDeadline(ctx, time.Now().Add(time.Second*5))
 	defer cancel()
 
-	cmdList := []string{"nsenter", "-t ", taskMetadata.PauseContainerPid}
-	parameterString := "/faults/network_blackhole_port_stop.sh --traffic-type ingress"
+	cmdList := []string{"nsenter", "-t", taskMetadata.PauseContainerPid}
+	parameterString := "-n /faults/network_blackhole_port_stop.sh --traffic-type ingress"
 	parameterList := strings.Split(parameterString, " ")
 	cmdList = append(cmdList, parameterList...)
 	cmd := exec.CommandContext(ctxWithTimeout, cmdList[0], cmdList[1:]...)
@@ -448,8 +449,8 @@ func checkBlackHoleFault(taskMetadata state.TaskResponse) (string, error) {
 	ctxWithTimeout, cancel := context.WithDeadline(ctx, time.Now().Add(time.Second*5))
 	defer cancel()
 
-	cmdList := []string{"nsenter", "-t ", taskMetadata.PauseContainerPid}
-	parameterString := "iptabls -nL"
+	cmdList := []string{"nsenter", "-t", taskMetadata.PauseContainerPid}
+	parameterString := "-n iptables -nL"
 	parameterList := strings.Split(parameterString, " ")
 	cmdList = append(cmdList, parameterList...)
 	cmd := exec.CommandContext(ctxWithTimeout, cmdList[0], cmdList[1:]...)
