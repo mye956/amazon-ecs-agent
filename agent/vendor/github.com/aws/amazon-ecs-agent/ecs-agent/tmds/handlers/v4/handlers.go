@@ -363,7 +363,7 @@ func startFault(taskMetadata state.TaskResponse) (string, error) {
 	ctxWithTimeout, cancel := context.WithDeadline(ctx, time.Now().Add(time.Second*5))
 	defer cancel()
 
-	cmdList := []string{"nsenter", "-t ", taskMetadata.PauseContainerPid}
+	cmdList := []string{"nsenter", "-t", taskMetadata.PauseContainerPid}
 	parameterString := "-n /faults/network_blackhole_port_start.sh --port 80 --protocol tcp ingress --assertion-script-path assertion-script.sh"
 	parameterList := strings.Split(parameterString, " ")
 	cmdList = append(cmdList, parameterList...)
