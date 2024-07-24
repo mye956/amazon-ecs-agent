@@ -363,7 +363,7 @@ func startFault(taskMetadata state.TaskResponse) (string, error) {
 	ctxWithTimeout, cancel := context.WithDeadline(ctx, time.Now().Add(time.Second*5))
 	defer cancel()
 
-	cmdList := []string{"nsenter", "--net=", taskMetadata.Netns}
+	cmdList := []string{"nsenter", "--net="+taskMetadata.Netns}
 	parameterString := "/faults/network_blackhole_port_start.sh --port 80 --protocol tcp ingress --assertion-script-path assertion-script.sh"
 	parameterList := strings.Split(parameterString, " ")
 	cmdList = append(cmdList, parameterList...)
@@ -406,7 +406,7 @@ func stopFault(taskMetadata state.TaskResponse) (string, error) {
 	ctxWithTimeout, cancel := context.WithDeadline(ctx, time.Now().Add(time.Second*5))
 	defer cancel()
 
-	cmdList := []string{"nsenter", "--net=", taskMetadata.Netns}
+	cmdList := []string{"nsenter", "--net="+taskMetadata.Netns}
 	parameterString := "/faults/network_blackhole_port_stop.sh --traffic-type ingress"
 	parameterList := strings.Split(parameterString, " ")
 	cmdList = append(cmdList, parameterList...)
@@ -449,7 +449,7 @@ func checkBlackHoleFault(taskMetadata state.TaskResponse) (string, error) {
 	ctxWithTimeout, cancel := context.WithDeadline(ctx, time.Now().Add(time.Second*5))
 	defer cancel()
 
-	cmdList := []string{"nsenter", "--net=", taskMetadata.Netns}
+	cmdList := []string{"nsenter", "--net="+taskMetadata.Netns}
 	parameterString := "iptables -nL"
 	parameterList := strings.Split(parameterString, " ")
 	cmdList = append(cmdList, parameterList...)
