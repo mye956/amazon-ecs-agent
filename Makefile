@@ -410,7 +410,7 @@ amazon-linux-rpm-integrated: .amazon-linux-rpm-integrated-done
 	cp packaging/amazon-linux-ami-integrated/ecs-agent.spec ecs-agent.spec
 	cp packaging/amazon-linux-ami-integrated/ecs.conf ecs.conf
 	cp packaging/amazon-linux-ami-integrated/ecs.service ecs.service
-	cp packaging/amazon-linux-ami-integrated/amazon-ecs-volume-plugin.conf amazon-ecs-volume-plugin.conf faults
+	cp packaging/amazon-linux-ami-integrated/amazon-ecs-volume-plugin.conf amazon-ecs-volume-plugin.conf
 	cp packaging/amazon-linux-ami-integrated/amazon-ecs-volume-plugin.service amazon-ecs-volume-plugin.service
 	cp packaging/amazon-linux-ami-integrated/amazon-ecs-volume-plugin.socket amazon-ecs-volume-plugin.socket
 	tar -czf ./sources.tgz ecs-init scripts misc agent amazon-ecs-cni-plugins amazon-vpc-cni-plugins agent-container Makefile VERSION GO_VERSION
@@ -427,7 +427,7 @@ amazon-linux-rpm-codebuild: .amazon-linux-rpm-codebuild-done
 	cp packaging/generic-rpm-integrated/ecs.service ecs.service
 	cp packaging/generic-rpm-integrated/amazon-ecs-volume-plugin.service amazon-ecs-volume-plugin.service
 	cp packaging/generic-rpm-integrated/amazon-ecs-volume-plugin.socket amazon-ecs-volume-plugin.socket
-	cp faults
+	cp -R faults faults
 	tar -czf ./sources.tgz ecs-init scripts misc agent amazon-ecs-cni-plugins amazon-vpc-cni-plugins agent-container Makefile VERSION GO_VERSION
 	test -e SOURCES || ln -s . SOURCES
 	rpmbuild --define "%_topdir $(PWD)" -bb amazon-ecs-init.spec
