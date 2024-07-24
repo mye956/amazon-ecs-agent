@@ -359,15 +359,24 @@ func FISBlackHoleHandler(
 }
 
 func startFault(taskMetadata state.TaskResponse) (string, error) {
+	chainName := "fault-in"
+	protocol := "tcp"
+	port := "1234"
+	iptablesInsert := "IPTABLES_INSERT"
+
 	ctx := context.Background()
 	ctxWithTimeout, cancel := context.WithDeadline(ctx, time.Now().Add(time.Second*5))
 	defer cancel()
 
-	cmdList := []string{"nsenter", "--net="+taskMetadata.Netns}
-	parameterString := "/faults/network_blackhole_port_start.sh --port 80 --protocol tcp ingress --assertion-script-path assertion-script.sh"
-	parameterList := strings.Split(parameterString, " ")
-	cmdList = append(cmdList, parameterList...)
-	cmd := exec.CommandContext(ctxWithTimeout, cmdList[0], cmdList[1:]...)
+	cmdName := "nsenter"
+	netNsArg := "--net="+taskMetadata.Netns
+	// cmdList := []string{"nsenter", "--net="+taskMetadata.Netns}
+	// parameterString := "/faults/network_blackhole_port_start.sh --port 80 --protocol tcp ingress --assertion-script-path assertion-script.sh"
+	// parameterList := strings.Split(parameterString, " ")
+
+	parameterList := []string{netNsArg, "iptables", "-N", chainName}
+	// cmdList = append(cmdList, parameterList...)
+	cmd := exec.CommandContext(ctxWithTimeout, cmdName, parameterList[0:]...)
 
 	stdErr := &bytes.Buffer{}
 	stdOut := &bytes.Buffer{}
@@ -380,7 +389,7 @@ func startFault(taskMetadata state.TaskResponse) (string, error) {
 		logger.Error("Can't run command", logger.Fields{
 			"pid":     taskMetadata.PauseContainerPid,
 			"netns":   taskMetadata.Netns,
-			"command": strings.Join(cmdList, " "),
+			"command": cmdName + strings.Join(parameterList, " "),
 			"stdErr":  stdErr.String(),
 			"stdOut":  stdOut.String(),
 			"err":     err,
@@ -391,7 +400,53 @@ func startFault(taskMetadata state.TaskResponse) (string, error) {
 	logger.Debug("Running command", logger.Fields{
 		"pid":     taskMetadata.PauseContainerPid,
 		"netns":   taskMetadata.Netns,
-		"command": strings.Join(cmdList, " "),
+		"command": cmdName + strings.Join(parameterList, " "),
+		"stdErr":  stdErr.String(),
+		"stdOut":  stdOut.String(),
+		"err":     err,
+	})
+
+	parameterList = []string{netNsArg, "iptables", "-A", chainName, "-p", protocol, "--dport", port, "-j", "DROP"}
+	cmd = exec.CommandContext(ctxWithTimeout, cmdName, parameterList[0:]...)
+	err = cmd.Run()
+	if err != nil {
+		logger.Error("Can't run command", logger.Fields{
+			"pid":     taskMetadata.PauseContainerPid,
+			"netns":   taskMetadata.Netns,
+			"command": cmdName + strings.Join(parameterList, " "),
+			"stdErr":  stdErr.String(),
+			"stdOut":  stdOut.String(),
+			"err":     err,
+		})
+		return "", err
+	}
+	logger.Debug("Running command", logger.Fields{
+		"pid":     taskMetadata.PauseContainerPid,
+		"netns":   taskMetadata.Netns,
+		"command": cmdName + strings.Join(parameterList, " "),
+		"stdErr":  stdErr.String(),
+		"stdOut":  stdOut.String(),
+		"err":     err,
+	})
+
+	parameterList = []string{netNsArg, "iptables", "-I", iptablesInsert, "-j", chainName}
+	cmd = exec.CommandContext(ctxWithTimeout, cmdName, parameterList[0:]...)
+	err = cmd.Run()
+	if err != nil {
+		logger.Error("Can't run command", logger.Fields{
+			"pid":     taskMetadata.PauseContainerPid,
+			"netns":   taskMetadata.Netns,
+			"command": cmdName + strings.Join(parameterList, " "),
+			"stdErr":  stdErr.String(),
+			"stdOut":  stdOut.String(),
+			"err":     err,
+		})
+		return "", err
+	}
+	logger.Debug("Running command", logger.Fields{
+		"pid":     taskMetadata.PauseContainerPid,
+		"netns":   taskMetadata.Netns,
+		"command": cmdName + strings.Join(parameterList, " "),
 		"stdErr":  stdErr.String(),
 		"stdOut":  stdOut.String(),
 		"err":     err,
@@ -402,15 +457,18 @@ func startFault(taskMetadata state.TaskResponse) (string, error) {
 }
 
 func stopFault(taskMetadata state.TaskResponse) (string, error) {
+	chainName := "fault-in"
+	iptablesInsert := "IPTABLES_INSERT"
+	
 	ctx := context.Background()
 	ctxWithTimeout, cancel := context.WithDeadline(ctx, time.Now().Add(time.Second*5))
 	defer cancel()
 
-	cmdList := []string{"nsenter", "--net="+taskMetadata.Netns}
-	parameterString := "/faults/network_blackhole_port_stop.sh --traffic-type ingress"
-	parameterList := strings.Split(parameterString, " ")
-	cmdList = append(cmdList, parameterList...)
-	cmd := exec.CommandContext(ctxWithTimeout, cmdList[0], cmdList[1:]...)
+	cmdName := "nsenter"
+	netNsArg := "--net="+taskMetadata.Netns
+	parameterList := []string{netNsArg, "iptables", "-F", chainName}
+
+	cmd := exec.CommandContext(ctxWithTimeout, cmdName, parameterList[0:]...)
 
 	stdErr := &bytes.Buffer{}
 	stdOut := &bytes.Buffer{}
@@ -423,24 +481,69 @@ func stopFault(taskMetadata state.TaskResponse) (string, error) {
 		logger.Error("Can't run command", logger.Fields{
 			"pid":     taskMetadata.PauseContainerPid,
 			"netns":   taskMetadata.Netns,
-			"command": strings.Join(cmdList, " "),
+			"command": cmdName + strings.Join(parameterList, " "),
 			"stdErr":  stdErr.String(),
 			"stdOut":  stdOut.String(),
 			"err":     err,
 		})
 		return stdOut.String(), err
 	}
-
 	logger.Debug("Running command", logger.Fields{
 		"pid":     taskMetadata.PauseContainerPid,
 		"netns":   taskMetadata.Netns,
-		"command": strings.Join(cmdList, " "),
+		"command": cmdName + strings.Join(parameterList, " "),
 		"stdErr":  stdErr.String(),
 		"stdOut":  stdOut.String(),
 		"err":     err,
 	})
 
-	return stdOut.String(), nil
+	parameterList = []string{netNsArg, "iptables", "-D", iptablesInsert, "-j", chainName}
+	cmd = exec.CommandContext(ctxWithTimeout, cmdName, parameterList[0:]...)
+	err = cmd.Run()
+	if err != nil {
+		logger.Error("Can't run command", logger.Fields{
+			"pid":     taskMetadata.PauseContainerPid,
+			"netns":   taskMetadata.Netns,
+			"command": cmdName + strings.Join(parameterList, " "),
+			"stdErr":  stdErr.String(),
+			"stdOut":  stdOut.String(),
+			"err":     err,
+		})
+		return "", err
+	}
+	logger.Debug("Running command", logger.Fields{
+		"pid":     taskMetadata.PauseContainerPid,
+		"netns":   taskMetadata.Netns,
+		"command": cmdName + strings.Join(parameterList, " "),
+		"stdErr":  stdErr.String(),
+		"stdOut":  stdOut.String(),
+		"err":     err,
+	})
+
+	parameterList = []string{netNsArg, "iptables", "-X", chainName}
+	cmd = exec.CommandContext(ctxWithTimeout, cmdName, parameterList[0:]...)
+	err = cmd.Run()
+	if err != nil {
+		logger.Error("Can't run command", logger.Fields{
+			"pid":     taskMetadata.PauseContainerPid,
+			"netns":   taskMetadata.Netns,
+			"command": cmdName + strings.Join(parameterList, " "),
+			"stdErr":  stdErr.String(),
+			"stdOut":  stdOut.String(),
+			"err":     err,
+		})
+		return "", err
+	}
+	logger.Debug("Running command", logger.Fields{
+		"pid":     taskMetadata.PauseContainerPid,
+		"netns":   taskMetadata.Netns,
+		"command": cmdName + strings.Join(parameterList, " "),
+		"stdErr":  stdErr.String(),
+		"stdOut":  stdOut.String(),
+		"err":     err,
+	})
+
+	return "success", nil
 
 }
 
