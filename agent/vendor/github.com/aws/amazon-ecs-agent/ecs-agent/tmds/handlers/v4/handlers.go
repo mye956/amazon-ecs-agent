@@ -362,7 +362,7 @@ func startFault(taskMetadata state.TaskResponse) (string, error) {
 	chainName := "fault-in"
 	protocol := "tcp"
 	port := "1234"
-	iptablesInsert := "IPTABLES_INSERT"
+	iptablesInsert := "INPUT"
 
 	ctx := context.Background()
 	ctxWithTimeout, cancel := context.WithDeadline(ctx, time.Now().Add(time.Second*5))
@@ -461,7 +461,7 @@ func startFault(taskMetadata state.TaskResponse) (string, error) {
 
 func stopFault(taskMetadata state.TaskResponse) (string, error) {
 	chainName := "fault-in"
-	iptablesInsert := "IPTABLES_INSERT"
+	iptablesInsert := "INPUT"
 	
 	ctx := context.Background()
 	ctxWithTimeout, cancel := context.WithDeadline(ctx, time.Now().Add(time.Second*5))
