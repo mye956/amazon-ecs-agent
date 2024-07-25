@@ -558,7 +558,7 @@ func checkBlackHoleFault(taskMetadata state.TaskResponse) (string, error) {
 	defer cancel()
 
 	cmdList := []string{"nsenter", "--net="+taskMetadata.Netns}
-	parameterString := "iptables -nL"
+	parameterString := "iptables -nL fault-in"
 	parameterList := strings.Split(parameterString, " ")
 	cmdList = append(cmdList, parameterList...)
 	cmd := exec.CommandContext(ctxWithTimeout, cmdList[0], cmdList[1:]...)
