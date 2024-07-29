@@ -702,7 +702,7 @@ func startLatencyFault(taskMetadata state.TaskResponse) (string, error) {
 	cmd.Stderr = stdErr
 	cmd.Stdout = stdOut
 
-	err := cmd.Run()
+	err = cmd.Run()
 
 	if err != nil {
 		logger.Error("Can't run command", logger.Fields{
