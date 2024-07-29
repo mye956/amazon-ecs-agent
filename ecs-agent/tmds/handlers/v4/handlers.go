@@ -313,7 +313,7 @@ func FISBlackHoleHandler(
 				"endpointContainerId": endpointContainerID,
 			})
 		}
-		
+
 		if taskMetadata.Netns != "" {
 			if requestCount%2 == 0 {
 				res, err := startFault(taskMetadata)
@@ -369,7 +369,7 @@ func startFault(taskMetadata state.TaskResponse) (string, error) {
 	defer cancel()
 
 	cmdName := []string{"nsenter"}
-	netNsArg := "--net="+taskMetadata.Netns
+	netNsArg := "--net=" + taskMetadata.Netns
 	// cmdList := []string{"nsenter", "--net="+taskMetadata.Netns}
 	// parameterString := "/faults/network_blackhole_port_start.sh --port 80 --protocol tcp ingress --assertion-script-path assertion-script.sh"
 	// parameterList := strings.Split(parameterString, " ")
@@ -390,7 +390,7 @@ func startFault(taskMetadata state.TaskResponse) (string, error) {
 		logger.Error("Can't run command", logger.Fields{
 			"pid":     taskMetadata.PauseContainerPid,
 			"netns":   taskMetadata.Netns,
-			"command":  strings.Join(parameterList, " "),
+			"command": strings.Join(parameterList, " "),
 			"stdErr":  stdErr.String(),
 			"stdOut":  stdOut.String(),
 			"err":     err,
@@ -455,6 +455,13 @@ func startFault(taskMetadata state.TaskResponse) (string, error) {
 		"err":     err,
 	})
 
+	cmd = exec.Command("ls")
+	out, err := cmd.CombinedOutput()
+	logger.Info("Is fault scripts present", logger.Fields{
+		"output": string(out),
+		"err":    err,
+	})
+
 	return "fault started", nil
 
 }
@@ -462,13 +469,13 @@ func startFault(taskMetadata state.TaskResponse) (string, error) {
 func stopFault(taskMetadata state.TaskResponse) (string, error) {
 	chainName := "fault-in"
 	iptablesInsert := "INPUT"
-	
+
 	ctx := context.Background()
 	ctxWithTimeout, cancel := context.WithDeadline(ctx, time.Now().Add(time.Second*5))
 	defer cancel()
 
 	cmdName := []string{"nsenter"}
-	netNsArg := "--net="+taskMetadata.Netns
+	netNsArg := "--net=" + taskMetadata.Netns
 	parameterList := []string{netNsArg, "iptables", "-F", chainName}
 	parameterList = append(cmdName, parameterList...)
 	cmd := exec.CommandContext(ctxWithTimeout, parameterList[0], parameterList[1:]...)
@@ -557,7 +564,7 @@ func checkBlackHoleFault(taskMetadata state.TaskResponse) (string, error) {
 	ctxWithTimeout, cancel := context.WithDeadline(ctx, time.Now().Add(time.Second*5))
 	defer cancel()
 
-	cmdList := []string{"nsenter", "--net="+taskMetadata.Netns}
+	cmdList := []string{"nsenter", "--net=" + taskMetadata.Netns}
 	parameterString := "iptables -nL fault-in"
 	parameterList := strings.Split(parameterString, " ")
 	cmdList = append(cmdList, parameterList...)
@@ -592,5 +599,181 @@ func checkBlackHoleFault(taskMetadata state.TaskResponse) (string, error) {
 	})
 
 	return stdOut.String(), nil
+
+}
+
+func FISLatencyHandler(
+	agentState state.AgentState,
+	metricsFactory metrics.EntryFactory,
+) func(http.ResponseWriter, *http.Request) {
+	return func(w http.ResponseWriter, r *http.Request) {
+		endpointContainerID := mux.Vars(r)[EndpointContainerIDMuxName]
+		containerMetadata, err := agentState.GetContainerMetadata(endpointContainerID)
+		if err != nil {
+			logger.Error("Failed to get v4 container metadata", logger.Fields{
+				field.TMDSEndpointContainerID: endpointContainerID,
+				field.Error:                   err,
+			})
+
+			responseCode, responseBody := getContainerErrorResponse(endpointContainerID, err)
+			utils.WriteJSONResponse(w, responseCode, responseBody, utils.RequestTypeContainerMetadata)
+
+			if utils.Is5XXStatus(responseCode) {
+				metricsFactory.New(metrics.InternalServerErrorMetricName).Done(err)
+			}
+
+			return
+		}
+
+		taskMetadata, err := agentState.GetTaskMetadata(endpointContainerID)
+		if err != nil {
+			logger.Error("error not able to get task metadata", logger.Fields{
+				"error":               err,
+				"endpointContainerId": endpointContainerID,
+			})
+		}
+
+		if taskMetadata.Netns != "" {
+			if requestCount%2 == 0 {
+				res, err := startFault(taskMetadata)
+				if err != nil {
+					logger.Error("Unable to start fault", logger.Fields{
+						"err": err,
+					})
+				}
+				logger.Info("Successfully started fault", logger.Fields{
+					"output": res,
+				})
+			} else {
+				res, err := stopFault(taskMetadata)
+				if err != nil {
+					logger.Error("Unable to stop fault", logger.Fields{
+						"err": err,
+					})
+				}
+				logger.Info("Successfully stopped fault", logger.Fields{
+					"output": res,
+				})
+			}
+			res, err := checkBlackHoleFault(taskMetadata)
+			if err != nil {
+				logger.Error("Unable to check fault status", logger.Fields{
+					"err": err,
+				})
+			}
+			logger.Info("Status of fault", logger.Fields{
+				"output": res,
+			})
+		} else {
+			logger.Warn("Task Network namespace is not set")
+		}
+
+		logger.Info("Writing response for v4 container metadata", logger.Fields{
+			field.TMDSEndpointContainerID: endpointContainerID,
+			field.Container:               containerMetadata.ID,
+		})
+		requestCount++
+		utils.WriteJSONResponse(w, http.StatusOK, containerMetadata, utils.RequestTypeContainerMetadata)
+	}
+}
+
+func startLatencyFault(taskMetadata state.TaskResponse) (string, error) {
+	chainName := "fault-in"
+	protocol := "tcp"
+	port := "1234"
+	iptablesInsert := "INPUT"
+
+	ctx := context.Background()
+	ctxWithTimeout, cancel := context.WithDeadline(ctx, time.Now().Add(time.Second*5))
+	defer cancel()
+
+	cmdName := []string{"nsenter"}
+	netNsArg := "--net=" + taskMetadata.Netns
+	// cmdList := []string{"nsenter", "--net="+taskMetadata.Netns}
+	// parameterString := "/faults/network_blackhole_port_start.sh --port 80 --protocol tcp ingress --assertion-script-path assertion-script.sh"
+	// parameterList := strings.Split(parameterString, " ")
+
+	parameterList := []string{netNsArg, "iptables", "-N", chainName}
+	// cmdList = append(cmdList, parameterList...)
+	parameterList = append(cmdName, parameterList...)
+	cmd := exec.CommandContext(ctxWithTimeout, parameterList[0], parameterList[1:]...)
+
+	stdErr := &bytes.Buffer{}
+	stdOut := &bytes.Buffer{}
+	cmd.Stderr = stdErr
+	cmd.Stdout = stdOut
+
+	err := cmd.Run()
+
+	if err != nil {
+		logger.Error("Can't run command", logger.Fields{
+			"pid":     taskMetadata.PauseContainerPid,
+			"netns":   taskMetadata.Netns,
+			"command": strings.Join(parameterList, " "),
+			"stdErr":  stdErr.String(),
+			"stdOut":  stdOut.String(),
+			"err":     err,
+		})
+		return "", err
+	}
+
+	logger.Debug("Running command", logger.Fields{
+		"pid":     taskMetadata.PauseContainerPid,
+		"netns":   taskMetadata.Netns,
+		"command": strings.Join(parameterList, " "),
+		"stdErr":  stdErr.String(),
+		"stdOut":  stdOut.String(),
+		"err":     err,
+	})
+
+	parameterList = []string{netNsArg, "iptables", "-A", chainName, "-p", protocol, "--dport", port, "-j", "DROP"}
+	parameterList = append(cmdName, parameterList...)
+	cmd = exec.CommandContext(ctxWithTimeout, parameterList[0], parameterList[1:]...)
+	err = cmd.Run()
+	if err != nil {
+		logger.Error("Can't run command", logger.Fields{
+			"pid":     taskMetadata.PauseContainerPid,
+			"netns":   taskMetadata.Netns,
+			"command": strings.Join(parameterList, " "),
+			"stdErr":  stdErr.String(),
+			"stdOut":  stdOut.String(),
+			"err":     err,
+		})
+		return "", err
+	}
+	logger.Debug("Running command", logger.Fields{
+		"pid":     taskMetadata.PauseContainerPid,
+		"netns":   taskMetadata.Netns,
+		"command": strings.Join(parameterList, " "),
+		"stdErr":  stdErr.String(),
+		"stdOut":  stdOut.String(),
+		"err":     err,
+	})
+
+	parameterList = []string{netNsArg, "iptables", "-I", iptablesInsert, "-j", chainName}
+	parameterList = append(cmdName, parameterList...)
+	cmd = exec.CommandContext(ctxWithTimeout, parameterList[0], parameterList[1:]...)
+	err = cmd.Run()
+	if err != nil {
+		logger.Error("Can't run command", logger.Fields{
+			"pid":     taskMetadata.PauseContainerPid,
+			"netns":   taskMetadata.Netns,
+			"command": strings.Join(parameterList, " "),
+			"stdErr":  stdErr.String(),
+			"stdOut":  stdOut.String(),
+			"err":     err,
+		})
+		return "", err
+	}
+	logger.Debug("Running command", logger.Fields{
+		"pid":     taskMetadata.PauseContainerPid,
+		"netns":   taskMetadata.Netns,
+		"command": strings.Join(parameterList, " "),
+		"stdErr":  stdErr.String(),
+		"stdOut":  stdOut.String(),
+		"err":     err,
+	})
+
+	return "fault started", nil
 
 }
