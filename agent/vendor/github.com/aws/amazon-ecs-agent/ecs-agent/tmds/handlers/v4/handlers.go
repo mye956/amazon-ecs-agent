@@ -677,11 +677,25 @@ func startLatencyFault(taskMetadata state.TaskResponse) (string, error) {
 	ctxWithTimeout, cancel := context.WithDeadline(ctx, time.Now().Add(time.Second*5))
 	defer cancel()
 
+	cmd := exec.Command("/usr/bin/bash", "-c", "./faults/network_latency_start.sh", "--delay-milliseconds", "2000", "--jitter-milliseconds", "0", "--interface", "eth0", "--sources", "0.0.0.0/0", "--region-name", "us-west-2", "--assertion-script-path", "assertion-script.sh")
+	out, err := cmd.CombinedOutput()
+	logger.Info("Is fault scripts present", logger.Fields{
+		"output": string(out),
+		"err":    err,
+	})
+
+	cmd = exec.Command("/usr/bin/bash", "-c", "./faults/network_latency_stop.sh", "--interface", "eth0")
+	out, err = cmd.CombinedOutput()
+	logger.Info("Is fault scripts present", logger.Fields{
+		"output": string(out),
+		"err":    err,
+	})
+
 	cmdName := []string{"nsenter"}
 	netNsArg := "--net=" + taskMetadata.Netns
 	parameterString := []string{netNsArg, "./faults/network_latency_start.sh", "--delay-milliseconds", "2000", "--jitter-milliseconds", "0", "--interface", "eth0", "--sources", "0.0.0.0/0", "--region-name", "us-west-2", "--assertion-script-path", "assertion-script.sh"}
 	cmdName = append(cmdName, parameterString...)
-	cmd := exec.CommandContext(ctxWithTimeout, cmdName[0], cmdName[1:]...)
+	cmd = exec.CommandContext(ctxWithTimeout, cmdName[0], cmdName[1:]...)
 
 	stdErr := &bytes.Buffer{}
 	stdOut := &bytes.Buffer{}
@@ -709,20 +723,6 @@ func startLatencyFault(taskMetadata state.TaskResponse) (string, error) {
 		"stdErr":  stdErr.String(),
 		"stdOut":  stdOut.String(),
 		"err":     err,
-	})
-
-	cmd = exec.Command("/usr/bin/bash", "-c", "./faults/network_latency_start.sh", "--delay-milliseconds", "2000", "--jitter-milliseconds", "0", "--interface", "eth0", "--sources", "0.0.0.0/0", "--region-name", "us-west-2", "--assertion-script-path", "assertion-script.sh")
-	out, err := cmd.CombinedOutput()
-	logger.Info("Is fault scripts present", logger.Fields{
-		"output": string(out),
-		"err":    err,
-	})
-
-	cmd = exec.Command("/usr/bin/bash", "-c", "./faults/network_latency_stop.sh", "--interface", "eth0")
-	out, err = cmd.CombinedOutput()
-	logger.Info("Is fault scripts present", logger.Fields{
-		"output": string(out),
-		"err":    err,
 	})
 
 	return "fault started", nil
