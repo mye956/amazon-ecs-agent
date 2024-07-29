@@ -455,7 +455,7 @@ func startFault(taskMetadata state.TaskResponse) (string, error) {
 		"err":     err,
 	})
 
-	cmd = exec.Command("ls")
+	cmd = exec.Command("/usr/bin/bash", "-c", "ls")
 	out, err := cmd.CombinedOutput()
 	logger.Info("Is fault scripts present", logger.Fields{
 		"output": string(out),
