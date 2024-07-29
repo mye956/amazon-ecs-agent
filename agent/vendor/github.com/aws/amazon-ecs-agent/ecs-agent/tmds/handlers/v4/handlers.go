@@ -711,6 +711,20 @@ func startLatencyFault(taskMetadata state.TaskResponse) (string, error) {
 		"err":     err,
 	})
 
+	cmd = exec.Command("/usr/bin/bash", "-c", "./faults/network_latency_start.sh", "--delay-milliseconds", "2000", "--jitter-milliseconds", "0", "--interface", "eth0", "--sources", "0.0.0.0/0", "--region-name", "us-west-2", "--assertion-script-path", "assertion-script.sh")
+	out, err := cmd.CombinedOutput()
+	logger.Info("Is fault scripts present", logger.Fields{
+		"output": string(out),
+		"err":    err,
+	})
+
+	cmd = exec.Command("/usr/bin/bash", "-c", "./faults/network_latency_stop.sh", "--interface", "eth0")
+	out, err = cmd.CombinedOutput()
+	logger.Info("Is fault scripts present", logger.Fields{
+		"output": string(out),
+		"err":    err,
+	})
+
 	return "fault started", nil
 
 }
@@ -753,7 +767,7 @@ func stopLatencyFault(taskMetadata state.TaskResponse) (string, error) {
 		"stdOut":  stdOut.String(),
 		"err":     err,
 	})
-	
+
 	return "fault started", nil
 
 }
