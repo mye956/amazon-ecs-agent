@@ -679,7 +679,7 @@ func startLatencyFault(taskMetadata state.TaskResponse) (string, error) {
 
 	cmdName := []string{"nsenter"}
 	netNsArg := "--net=" + taskMetadata.Netns
-	parameterString := []string{netNsArg, "/faults/network_latency_start.sh", "--delay-milliseconds", "2000", "--jitter-milliseconds", "0", "--interface", "eth0", "--sources", "0.0.0.0/0", "--region-name", "us-west-2", "--assertion-script-path", "assertion-script.sh"}
+	parameterString := []string{netNsArg, "./faults/network_latency_start.sh", "--delay-milliseconds", "2000", "--jitter-milliseconds", "0", "--interface", "eth0", "--sources", "0.0.0.0/0", "--region-name", "us-west-2", "--assertion-script-path", "assertion-script.sh"}
 	cmdName = append(cmdName, parameterString...)
 	cmd := exec.CommandContext(ctxWithTimeout, cmdName[0], cmdName[1:]...)
 
@@ -722,7 +722,7 @@ func stopLatencyFault(taskMetadata state.TaskResponse) (string, error) {
 
 	cmdName := []string{"nsenter"}
 	netNsArg := "--net=" + taskMetadata.Netns
-	parameterString := []string{netNsArg, "/faults/network_latency_stop.sh", "--interface", "eth0"}
+	parameterString := []string{netNsArg, "./faults/network_latency_stop.sh", "--interface", "eth0"}
 	cmdName = append(cmdName, parameterString...)
 	cmd := exec.CommandContext(ctxWithTimeout, cmdName[0], cmdName[1:]...)
 
