@@ -51,6 +51,7 @@ func createHostConfig(binds []string) *godocker.HostConfig {
 		"/usr/bin/dig:/usr/bin/dig",
 		"/usr/bin/jq:/usr/bin/jq",
 		"/usr/bin/grep:/usr/bin/grep",
+		"/usr/bin/chmod:/usr/bin/chmod",
 	)
 
 	logConfig := config.AgentDockerLogDriverConfiguration()
