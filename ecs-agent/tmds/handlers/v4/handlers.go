@@ -83,6 +83,10 @@ func FISLatencyFaultPath() string {
 	return fmt.Sprintf("/v4/%s/fis/latency",
 		utils.ConstructMuxVar(EndpointContainerIDMuxName, utils.AnythingButSlashRegEx))
 }
+func FISPacketLossFaultPath() string {
+	return fmt.Sprintf("/v4/%s/fis/packet-loss",
+		utils.ConstructMuxVar(EndpointContainerIDMuxName, utils.AnythingButSlashRegEx))
+}
 
 // ContainerMetadataHandler returns the HTTP handler function for handling container metadata requests.
 func ContainerMetadataHandler(
@@ -737,6 +741,158 @@ func stopLatencyFault(taskMetadata state.TaskResponse) (string, error) {
 	cmdName := []string{"nsenter"}
 	netNsArg := "--net=" + taskMetadata.Netns
 	parameterString := []string{netNsArg, "./faults/network_latency_stop.sh", "--interface", "eth0"}
+	cmdName = append(cmdName, parameterString...)
+	cmd := exec.CommandContext(ctxWithTimeout, cmdName[0], cmdName[1:]...)
+
+	stdErr := &bytes.Buffer{}
+	stdOut := &bytes.Buffer{}
+	cmd.Stderr = stdErr
+	cmd.Stdout = stdOut
+
+	err := cmd.Run()
+
+	if err != nil {
+		logger.Error("Can't run command", logger.Fields{
+			"pid":     taskMetadata.PauseContainerPid,
+			"netns":   taskMetadata.Netns,
+			"command": strings.Join(cmdName, " "),
+			"stdErr":  stdErr.String(),
+			"stdOut":  stdOut.String(),
+			"err":     err,
+		})
+		return "", err
+	}
+
+	logger.Debug("Running command", logger.Fields{
+		"pid":     taskMetadata.PauseContainerPid,
+		"netns":   taskMetadata.Netns,
+		"command": strings.Join(cmdName, " "),
+		"stdErr":  stdErr.String(),
+		"stdOut":  stdOut.String(),
+		"err":     err,
+	})
+
+	return "fault started", nil
+
+}
+
+func FISPacketLossHandler(
+	agentState state.AgentState,
+	metricsFactory metrics.EntryFactory,
+) func(http.ResponseWriter, *http.Request) {
+	return func(w http.ResponseWriter, r *http.Request) {
+		endpointContainerID := mux.Vars(r)[EndpointContainerIDMuxName]
+		containerMetadata, err := agentState.GetContainerMetadata(endpointContainerID)
+		if err != nil {
+			logger.Error("Failed to get v4 container metadata", logger.Fields{
+				field.TMDSEndpointContainerID: endpointContainerID,
+				field.Error:                   err,
+			})
+
+			responseCode, responseBody := getContainerErrorResponse(endpointContainerID, err)
+			utils.WriteJSONResponse(w, responseCode, responseBody, utils.RequestTypeContainerMetadata)
+
+			if utils.Is5XXStatus(responseCode) {
+				metricsFactory.New(metrics.InternalServerErrorMetricName).Done(err)
+			}
+
+			return
+		}
+
+		taskMetadata, err := agentState.GetTaskMetadata(endpointContainerID)
+		if err != nil {
+			logger.Error("error not able to get task metadata", logger.Fields{
+				"error":               err,
+				"endpointContainerId": endpointContainerID,
+			})
+		}
+
+		if taskMetadata.Netns != "" {
+			if requestCount%2 == 0 {
+				res, err := startPacketLossFault(taskMetadata)
+				if err != nil {
+					logger.Error("Unable to start fault", logger.Fields{
+						"err": err,
+					})
+				}
+				logger.Info("Successfully started fault", logger.Fields{
+					"output": res,
+				})
+			} else {
+				res, err := stopPacketLossFault(taskMetadata)
+				if err != nil {
+					logger.Error("Unable to stop fault", logger.Fields{
+						"err": err,
+					})
+				}
+				logger.Info("Successfully stopped fault", logger.Fields{
+					"output": res,
+				})
+			}
+		} else {
+			logger.Warn("Task Network namespace is not set")
+		}
+
+		logger.Info("Writing response for v4 container metadata", logger.Fields{
+			field.TMDSEndpointContainerID: endpointContainerID,
+			field.Container:               containerMetadata.ID,
+		})
+		requestCount++
+		utils.WriteJSONResponse(w, http.StatusOK, containerMetadata, utils.RequestTypeContainerMetadata)
+	}
+}
+
+func startPacketLossFault(taskMetadata state.TaskResponse) (string, error) {
+	ctx := context.Background()
+	ctxWithTimeout, cancel := context.WithDeadline(ctx, time.Now().Add(time.Second*5))
+	defer cancel()
+
+	cmdName := []string{"nsenter"}
+	netNsArg := "--net=" + taskMetadata.Netns
+	parameterString := []string{netNsArg, "./faults/network_packet_loss_start.sh", "--loss-percent", "50", "--interface", "eth0", "--sources", "0.0.0.0/0", "--region-name", "us-west-2", "--assertion-script-path", "assertion-script.sh"}
+	cmdName = append(cmdName, parameterString...)
+	cmd := exec.CommandContext(ctxWithTimeout, cmdName[0], cmdName[1:]...)
+
+	stdErr := &bytes.Buffer{}
+	stdOut := &bytes.Buffer{}
+	cmd.Stderr = stdErr
+	cmd.Stdout = stdOut
+
+	err := cmd.Run()
+
+	if err != nil {
+		logger.Error("Can't run command", logger.Fields{
+			"pid":     taskMetadata.PauseContainerPid,
+			"netns":   taskMetadata.Netns,
+			"command": strings.Join(cmdName, " "),
+			"stdErr":  stdErr.String(),
+			"stdOut":  stdOut.String(),
+			"err":     err,
+		})
+		return "", err
+	}
+
+	logger.Debug("Running command", logger.Fields{
+		"pid":     taskMetadata.PauseContainerPid,
+		"netns":   taskMetadata.Netns,
+		"command": strings.Join(cmdName, " "),
+		"stdErr":  stdErr.String(),
+		"stdOut":  stdOut.String(),
+		"err":     err,
+	})
+
+	return "fault started", nil
+
+}
+
+func stopPacketLossFault(taskMetadata state.TaskResponse) (string, error) {
+	ctx := context.Background()
+	ctxWithTimeout, cancel := context.WithDeadline(ctx, time.Now().Add(time.Second*5))
+	defer cancel()
+
+	cmdName := []string{"nsenter"}
+	netNsArg := "--net=" + taskMetadata.Netns
+	parameterString := []string{netNsArg, "./faults/network_packet_loss_stop.sh", "--interface", "eth0"}
 	cmdName = append(cmdName, parameterString...)
 	cmd := exec.CommandContext(ctxWithTimeout, cmdName[0], cmdName[1:]...)
 
