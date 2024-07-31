@@ -46,7 +46,6 @@ func createHostConfig(binds []string) *godocker.HostConfig {
 		"/usr/bin/lsblk:/usr/bin/lsblk",
 		"/usr/bin/nsenter:/usr/bin/nsenter",
 		"/usr/bin/bash:/usr/bin/bash",
-		"/usr/sbin/tc:/usr/bin/tc",
 		"/usr/bin/curl:/usr/bin/curl",
 		"/usr/bin/dig:/usr/bin/dig",
 		"/usr/bin/jq:/usr/bin/jq",
