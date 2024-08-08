@@ -853,10 +853,10 @@ func startPacketLossFault(taskMetadata state.TaskResponse) (string, error) {
 
 	cmdName := []string{"nsenter"}
 	if taskMetadata.Netns == "" {
+		parameterString = []string{"./faults/network_packet_loss_start.sh", "--loss-percent", "100", "--interface", "eth0", "--sources", "0.0.0.0/0", "--region-name", "us-west-2", "--assertion-script-path", "assertion-script.sh"}
+	} else {
 		netNsArg = "--net=" + taskMetadata.Netns
 		parameterString = []string{netNsArg, "./faults/network_packet_loss_start.sh", "--loss-percent", "100", "--interface", "eth0", "--sources", "0.0.0.0/0", "--region-name", "us-west-2", "--assertion-script-path", "assertion-script.sh"}
-	} else {
-		parameterString = []string{"./faults/network_packet_loss_start.sh", "--loss-percent", "100", "--interface", "eth0", "--sources", "0.0.0.0/0", "--region-name", "us-west-2", "--assertion-script-path", "assertion-script.sh"}
 	}
 
 	cmdName = append(cmdName, parameterString...)
