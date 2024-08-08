@@ -808,29 +808,31 @@ func FISPacketLossHandler(
 		}
 
 		if taskMetadata.Netns != "" {
-			if requestCount%2 == 0 {
-				res, err := startPacketLossFault(taskMetadata)
-				if err != nil {
-					logger.Error("Unable to start fault", logger.Fields{
-						"err": err,
-					})
-				}
-				logger.Info("Successfully started fault", logger.Fields{
-					"output": res,
-				})
-			} else {
-				res, err := stopPacketLossFault(taskMetadata)
-				if err != nil {
-					logger.Error("Unable to stop fault", logger.Fields{
-						"err": err,
-					})
-				}
-				logger.Info("Successfully stopped fault", logger.Fields{
-					"output": res,
-				})
-			}
+			logger.Warn("Task Network namespace is set")
 		} else {
 			logger.Warn("Task Network namespace is not set")
+		}
+
+		if requestCount%2 == 0 {
+			res, err := startPacketLossFault(taskMetadata)
+			if err != nil {
+				logger.Error("Unable to start fault", logger.Fields{
+					"err": err,
+				})
+			}
+			logger.Info("Successfully started fault", logger.Fields{
+				"output": res,
+			})
+		} else {
+			res, err := stopPacketLossFault(taskMetadata)
+			if err != nil {
+				logger.Error("Unable to stop fault", logger.Fields{
+					"err": err,
+				})
+			}
+			logger.Info("Successfully stopped fault", logger.Fields{
+				"output": res,
+			})
 		}
 
 		logger.Info("Writing response for v4 container metadata", logger.Fields{
