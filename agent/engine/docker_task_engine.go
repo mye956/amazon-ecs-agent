@@ -2284,6 +2284,7 @@ func (engine *DockerTaskEngine) provisionContainerResources(task *apitask.Task, 
 	} else if task.IsNetworkModeBridge() {
 		return engine.provisionContainerResourcesBridgeMode(task, container)
 	}
+	task.NetNsPath = ""
 	return dockerapi.DockerContainerMetadata{}
 }
 
