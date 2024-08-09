@@ -677,6 +677,8 @@ func FISLatencyHandler(
 }
 
 func startLatencyFault(taskMetadata state.TaskResponse) (string, error) {
+	var netNsArg string
+	var parameterString []string
 	ctx := context.Background()
 	ctxWithTimeout, cancel := context.WithDeadline(ctx, time.Now().Add(time.Second*5))
 	defer cancel()
@@ -696,8 +698,13 @@ func startLatencyFault(taskMetadata state.TaskResponse) (string, error) {
 	// })
 
 	cmdName := []string{"nsenter"}
-	netNsArg := "--net=" + taskMetadata.Netns
-	parameterString := []string{netNsArg, "./faults/network_latency_start.sh", "--delay-milliseconds", "2000", "--jitter-milliseconds", "0", "--interface", "eth0", "--sources", "0.0.0.0/0", "--region-name", "us-west-2", "--assertion-script-path", "assertion-script.sh"}
+	if taskMetadata.Netns == "" {
+		parameterString = []string{"./faults/network_latency_start.sh", "--delay-milliseconds", "2000", "--jitter-milliseconds", "0", "--interface", "eth0", "--sources", "0.0.0.0/0", "--region-name", "us-west-2", "--assertion-script-path", "assertion-script.sh"}
+	} else {
+		netNsArg = "--net=" + taskMetadata.Netns
+		parameterString = []string{netNsArg, "./faults/network_latency_start.sh", "--delay-milliseconds", "2000", "--jitter-milliseconds", "0", "--interface", "eth0", "--sources", "0.0.0.0/0", "--region-name", "us-west-2", "--assertion-script-path", "assertion-script.sh"}
+	}
+
 	cmdName = append(cmdName, parameterString...)
 	cmd := exec.CommandContext(ctxWithTimeout, cmdName[0], cmdName[1:]...)
 
@@ -734,13 +741,20 @@ func startLatencyFault(taskMetadata state.TaskResponse) (string, error) {
 }
 
 func stopLatencyFault(taskMetadata state.TaskResponse) (string, error) {
+	var netNsArg string
+	var parameterString []string
 	ctx := context.Background()
 	ctxWithTimeout, cancel := context.WithDeadline(ctx, time.Now().Add(time.Second*5))
 	defer cancel()
 
 	cmdName := []string{"nsenter"}
-	netNsArg := "--net=" + taskMetadata.Netns
-	parameterString := []string{netNsArg, "./faults/network_latency_stop.sh", "--interface", "eth0"}
+	if taskMetadata.Netns == "" {
+		parameterString = []string{"./faults/network_latency_stop.sh", "--interface", "eth0"}
+	} else {
+		netNsArg = "--net=" + taskMetadata.Netns
+		parameterString = []string{netNsArg, "./faults/network_latency_stop.sh", "--interface", "eth0"}
+	}
+
 	cmdName = append(cmdName, parameterString...)
 	cmd := exec.CommandContext(ctxWithTimeout, cmdName[0], cmdName[1:]...)
 
@@ -895,13 +909,20 @@ func startPacketLossFault(taskMetadata state.TaskResponse) (string, error) {
 }
 
 func stopPacketLossFault(taskMetadata state.TaskResponse) (string, error) {
+	var netNsArg string
+	var parameterString []string
 	ctx := context.Background()
 	ctxWithTimeout, cancel := context.WithDeadline(ctx, time.Now().Add(time.Second*5))
 	defer cancel()
 
 	cmdName := []string{"nsenter"}
-	netNsArg := "--net=" + taskMetadata.Netns
-	parameterString := []string{netNsArg, "./faults/network_packet_loss_stop.sh", "--interface", "eth0"}
+	if taskMetadata.Netns == "" {
+		parameterString = []string{"./faults/network_packet_loss_stop.sh", "--interface", "eth0"}
+	} else {
+		netNsArg = "--net=" + taskMetadata.Netns
+		parameterString = []string{netNsArg, "./faults/network_packet_loss_stop.sh", "--interface", "eth0"}
+	}
+
 	cmdName = append(cmdName, parameterString...)
 	cmd := exec.CommandContext(ctxWithTimeout, cmdName[0], cmdName[1:]...)
 
