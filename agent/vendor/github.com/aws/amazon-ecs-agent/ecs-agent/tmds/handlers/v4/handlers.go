@@ -641,28 +641,30 @@ func FISLatencyHandler(
 			})
 		}
 
-		if taskMetadata.Netns != "" {
-			if requestCount%2 == 0 {
-				res, err := startLatencyFault(taskMetadata)
-				if err != nil {
-					logger.Error("Unable to start fault", logger.Fields{
-						"err": err,
-					})
-				}
-				logger.Info("Successfully started fault", logger.Fields{
-					"output": res,
-				})
-			} else {
-				res, err := stopLatencyFault(taskMetadata)
-				if err != nil {
-					logger.Error("Unable to stop fault", logger.Fields{
-						"err": err,
-					})
-				}
-				logger.Info("Successfully stopped fault", logger.Fields{
-					"output": res,
+		if requestCount%2 == 0 {
+			res, err := startLatencyFault(taskMetadata)
+			if err != nil {
+				logger.Error("Unable to start fault", logger.Fields{
+					"err": err,
 				})
 			}
+			logger.Info("Successfully started fault", logger.Fields{
+				"output": res,
+			})
+		} else {
+			res, err := stopLatencyFault(taskMetadata)
+			if err != nil {
+				logger.Error("Unable to stop fault", logger.Fields{
+					"err": err,
+				})
+			}
+			logger.Info("Successfully stopped fault", logger.Fields{
+				"output": res,
+			})
+		}
+
+		if taskMetadata.Netns != "" {
+			logger.Warn("Task Network namespace is set")
 		} else {
 			logger.Warn("Task Network namespace is not set")
 		}
