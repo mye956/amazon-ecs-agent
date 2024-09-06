@@ -19,7 +19,13 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
+	"runtime"
+
+	// "runtime"
+	"strconv"
+	"strings"
 	"sync"
 
 	"github.com/aws/amazon-ecs-agent/ecs-agent/api/ecs/model/ecs"
@@ -30,6 +36,8 @@ import (
 	"github.com/aws/amazon-ecs-agent/ecs-agent/tmds/handlers/utils"
 	v4 "github.com/aws/amazon-ecs-agent/ecs-agent/tmds/handlers/v4"
 	state "github.com/aws/amazon-ecs-agent/ecs-agent/tmds/handlers/v4/state"
+	"github.com/aws/amazon-ecs-agent/ecs-agent/utils/iptableswrapper"
+	"github.com/aws/amazon-ecs-agent/ecs-agent/utils/netnswrapper"
 
 	"github.com/gorilla/mux"
 )
@@ -46,16 +54,20 @@ type FaultHandler struct {
 	// mutexMap is used to avoid multiple clients to manipulate same resource at same
 	// time. The 'key' is the the network namespace path and 'value' is the RWMutex.
 	// Using concurrent map here because the handler is shared by all requests.
-	mutexMap       sync.Map
-	AgentState     state.AgentState
-	MetricsFactory metrics.EntryFactory
+	mutexMap        sync.Map
+	AgentState      state.AgentState
+	MetricsFactory  metrics.EntryFactory
+	netNsWrapper    netnswrapper.NetNsWrapper
+	iptablesWrapper iptableswrapper.IPTables
 }
 
 func New(agentState state.AgentState, mf metrics.EntryFactory) *FaultHandler {
 	return &FaultHandler{
-		AgentState:     agentState,
-		MetricsFactory: mf,
-		mutexMap:       sync.Map{},
+		AgentState:      agentState,
+		MetricsFactory:  mf,
+		mutexMap:        sync.Map{},
+		netNsWrapper:    netnswrapper.New(),
+		iptablesWrapper: iptableswrapper.NewWrapper(),
 	}
 }
 
@@ -203,9 +215,31 @@ func (h *FaultHandler) CheckNetworkBlackHolePort() func(http.ResponseWriter, *ht
 		rwMu.RLock()
 		defer rwMu.RUnlock()
 
+		var responseBody types.NetworkFaultInjectionResponse
+		chainName := fmt.Sprintf("%s%s%s", *request.TrafficType, *request.Protocol, strconv.FormatUint(uint64(*request.Port), 10))
+		// status, err := h.checkStatusNetworkBlackholePort(request, chainName, taskMetadata.TaskNetworkConfig.NetworkNamespaces[0].Path)
+		status, err := h.setNs(request, chainName, taskMetadata.TaskNetworkConfig.NetworkNamespaces[0].Path)
+		if err != nil {
+			errResponse := fmt.Sprintf("%v", err)
+			utils.WriteJSONResponse(
+				w,
+				http.StatusInternalServerError,
+				types.NewNetworkFaultInjectionErrorResponse(errResponse),
+				requestType,
+			)
+		}
+
+		if status {
+			responseBody = types.NewNetworkFaultInjectionSuccessResponse("running")
+		} else {
+			responseBody = types.NewNetworkFaultInjectionSuccessResponse("not-running")
+		}
+
 		// TODO: Check status of current fault injection
 		// TODO: Return the correct status state
-		responseBody := types.NewNetworkFaultInjectionSuccessResponse("running")
+
+		// responseBody := types.NewNetworkFaultInjectionSuccessResponse("running")
+
 		logger.Info("Successfully checked status for fault", logger.Fields{
 			field.RequestType: requestType,
 			field.Request:     request.ToString(),
@@ -691,4 +725,142 @@ func validateTaskNetworkConfig(taskNetworkConfig *state.TaskNetworkConfig) error
 	}
 
 	return nil
+}
+
+func (h *FaultHandler) setNs(request types.NetworkBlackholePortRequest, chain, netNs string) (bool, error) {
+	runtime.LockOSThread()
+	defer runtime.UnlockOSThread()
+	origns, err := h.netNsWrapper.Get()
+	if err != nil {
+		return false, err
+	}
+	defer h.netNsWrapper.CloseHandle(&origns)
+
+	if netNs != "host" {
+		logger.Info("[DEBUG] Trying to switch network namespace", logger.Fields{
+			"netns": netNs,
+		})
+		nsHandle, err := h.netNsWrapper.GetFromPath(netNs)
+		if err != nil {
+			return false, err
+		}
+
+		err = h.netNsWrapper.Set(nsHandle)
+		if err != nil {
+			return false, err
+		}
+		logger.Info("[DEBUG] Switched network namespace", logger.Fields{
+			"netns": netNs,
+		})
+		status, err := h.checkStatusNetworkBlackholePort(request, chain, netNs)
+		logger.Info("[DEBUG] IN TASK NETNS Checking fault is running", logger.Fields{
+			"status": status,
+			"err":    err,
+		})
+
+		h.netNsWrapper.CloseHandle(&nsHandle)
+	}
+
+	err = h.netNsWrapper.Set(origns)
+	if err != nil {
+		return false, err
+	}
+	logger.Info("[DEBUG] Back in host network namespace", logger.Fields{
+		"netns": netNs,
+	})
+	return h.checkStatusNetworkBlackholePort(request, chain, netNs)
+}
+
+func (h *FaultHandler) checkStatusNetworkBlackholePort(request types.NetworkBlackholePortRequest, chain, netNs string) (bool, error) {
+	// runtime.LockOSThread()
+	// defer runtime.UnlockOSThread()
+
+	// origns, err := h.netNsWrapper.Get()
+	// if err != nil {
+	// 	return false, err
+	// }
+	// defer h.netNsWrapper.CloseHandle(&origns)
+	// if netNs != "host" {
+	// 	logger.Info("[DEBUG] Trying to switch network namespace", logger.Fields{
+	// 		"netns": netNs,
+	// 	})
+	// 	nsHandle, err := h.netNsWrapper.GetFromPath(netNs)
+	// 	if err != nil {
+	// 		return false, err
+	// 	}
+
+	// 	err = h.netNsWrapper.Set(nsHandle)
+	// 	if err != nil {
+	// 		return false, err
+	// 	}
+	// 	logger.Info("[DEBUG] Switched network namespace", logger.Fields{
+	// 		"netns": netNs,
+	// 	})
+	// 	ifaces, err := net.Interfaces()
+	// 	if err != nil {
+	// 		return false, err
+	// 	}
+	// 	for _, iface := range ifaces {
+	// 		logger.Info("[DEBUG] Obtained task network interface", logger.Fields{
+	// 			"interfaces": iface.Name,
+	// 		})
+	// 	}
+
+	// 	// defer h.netNsWrapper.CloseHandle(&nsHandle)
+	// }
+
+	exist, err := h.iptablesWrapper.Exists(chain, *request.Protocol, *request.Port)
+	logger.Info("[DEBUG] Checked status of running black hole port", logger.Fields{
+		"exists":    exist,
+		"error":     err,
+		"chainName": chain,
+		"netNs":     netNs,
+		"port":      *request.Port,
+		"protocol":  *request.Protocol,
+	})
+
+	chains, err := h.iptablesWrapper.ListChains()
+	if err != nil {
+		logger.Error("[ERROR] Unable to list chains", logger.Fields{
+			"err": err,
+		})
+	}
+	logger.Info("Obtained chains", logger.Fields{
+		"chains": strings.Join(chains, " "),
+	})
+
+	ifaces, err := net.Interfaces()
+	if err != nil {
+		return false, err
+	}
+	for _, iface := range ifaces {
+		logger.Info("[DEBUG] Obtained task network interface", logger.Fields{
+			"interfaces": iface.Name,
+		})
+	}
+	// h.netNsWrapper.CloseHandle(&nsHandle)
+	// netns.Set(origns)
+
+	// exist2, err := h.iptablesWrapper.Exists(chain, *request.Protocol, *request.Port)
+	// logger.Info("[DEBUG] NOW SHOULD BE IN HOST NETNS Checked status of running black hole port", logger.Fields{
+	// 	"exists":    exist,
+	// 	"error":     err,
+	// 	"chainName": chain,
+	// 	"netNs":     netNs,
+	// 	"port":      *request.Port,
+	// 	"protocol":  *request.Protocol,
+	// })
+
+	// chains, err = h.iptablesWrapper.ListChains()
+	// if err != nil {
+	// 	logger.Error("[ERROR] Unable to list chains", logger.Fields{
+	// 		"err": err,
+	// 	})
+	// }
+	// logger.Info("[DEBUG]NOW SHOULD BE IN HOST NETNS Obtained chains", logger.Fields{
+	// 	"chains":       strings.Join(chains, " "),
+	// 	"faultRunning": exist2,
+	// })
+
+	return exist, err
 }

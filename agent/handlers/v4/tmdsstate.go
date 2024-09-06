@@ -155,7 +155,8 @@ func (s *TMDSAgentState) getTaskMetadata(v3EndpointID string, includeTags bool) 
 			NewPulledContainerResponse(dockerContainer, task.GetPrimaryENI()))
 	}
 
-	taskResponse.FaultInjectionEnabled = task.IsFaultInjectionEnabled()
+	// taskResponse.FaultInjectionEnabled = task.IsFaultInjectionEnabled()
+	taskResponse.FaultInjectionEnabled = true
 	var taskNetworkConfig *tmdsv4.TaskNetworkConfig
 	if task.IsNetworkModeHost() {
 		// For host most, we don't really need the network namespace in order to do anything within the host instance network namespace

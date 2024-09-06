@@ -11,6 +11,7 @@ require (
 	github.com/container-storage-interface/spec v1.8.0
 	github.com/containernetworking/cni v1.1.2
 	github.com/containernetworking/plugins v1.4.1
+	github.com/coreos/go-iptables v0.7.0
 	github.com/didip/tollbooth v4.0.2+incompatible
 	github.com/docker/docker v24.0.9+incompatible
 	github.com/golang/mock v1.6.0
@@ -24,6 +25,7 @@ require (
 	github.com/prometheus/common v0.26.0
 	github.com/stretchr/testify v1.8.4
 	github.com/vishvananda/netlink v1.2.1-beta.2
+	github.com/vishvananda/netns v0.0.4
 	go.etcd.io/bbolt v1.3.9
 	golang.org/x/exp v0.0.0-20231006140011-7918f672742d
 	golang.org/x/net v0.23.0
@@ -57,7 +59,6 @@ require (
 	github.com/patrickmn/go-cache v2.1.0+incompatible // indirect
 	github.com/pmezard/go-difflib v1.0.0 // indirect
 	github.com/sirupsen/logrus v1.9.3 // indirect
-	github.com/vishvananda/netns v0.0.4 // indirect
 	go.opencensus.io v0.24.0 // indirect
 	golang.org/x/mod v0.14.0 // indirect
 	golang.org/x/text v0.14.0 // indirect
