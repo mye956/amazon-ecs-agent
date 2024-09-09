@@ -116,7 +116,17 @@ func (h *FaultHandler) StartNetworkBlackholePort() func(http.ResponseWriter, *ht
 		// TODO: Check status of current fault injection
 		// TODO: Invoke the start fault injection functionality if not running
 
-		responseBody := types.NewNetworkFaultInjectionSuccessResponse("running")
+		var responseBody types.NetworkFaultInjectionResponse
+		chainName := fmt.Sprintf("%s%s%s", *request.TrafficType, *request.Protocol, strconv.FormatUint(uint64(*request.Port), 10))
+		_, err = h.startBlackHolePortFault(request, chainName, taskMetadata.TaskNetworkConfig.NetworkNamespaces[0].Path)
+
+		if err != nil {
+			errResponse := fmt.Sprintf("%v", err)
+			responseBody = types.NewNetworkFaultInjectionErrorResponse(errResponse)
+		} else {
+			responseBody = types.NewNetworkFaultInjectionSuccessResponse("running")
+		}
+
 		logger.Info("Successfully started fault", logger.Fields{
 			field.RequestType: requestType,
 			field.Request:     request.ToString(),
@@ -167,7 +177,20 @@ func (h *FaultHandler) StopNetworkBlackHolePort() func(http.ResponseWriter, *htt
 		// TODO: Check status of current fault injection
 		// TODO: Invoke the stop fault injection functionality if running
 
-		responseBody := types.NewNetworkFaultInjectionSuccessResponse("stopped")
+		var responseBody types.NetworkFaultInjectionResponse
+		chainName := fmt.Sprintf("%s%s%s", *request.TrafficType, *request.Protocol, strconv.FormatUint(uint64(*request.Port), 10))
+		status, err := h.stopBlackHoldPortFault(request, chainName, taskMetadata.TaskNetworkConfig.NetworkNamespaces[0].Path)
+
+		if err != nil {
+			errResponse := fmt.Sprintf("%v", err)
+			responseBody = types.NewNetworkFaultInjectionErrorResponse(errResponse)
+		} else if !status {
+			responseBody = types.NewNetworkFaultInjectionSuccessResponse("stopped")
+		} else {
+			responseBody = types.NewNetworkFaultInjectionSuccessResponse("running")
+		}
+
+		// responseBody := types.NewNetworkFaultInjectionSuccessResponse("stopped")
 		logger.Info("Successfully stopped fault", logger.Fields{
 			field.RequestType: requestType,
 			field.Request:     request.ToString(),
@@ -217,8 +240,8 @@ func (h *FaultHandler) CheckNetworkBlackHolePort() func(http.ResponseWriter, *ht
 
 		var responseBody types.NetworkFaultInjectionResponse
 		chainName := fmt.Sprintf("%s%s%s", *request.TrafficType, *request.Protocol, strconv.FormatUint(uint64(*request.Port), 10))
-		// status, err := h.checkStatusNetworkBlackholePort(request, chainName, taskMetadata.TaskNetworkConfig.NetworkNamespaces[0].Path)
-		status, err := h.setNs(request, chainName, taskMetadata.TaskNetworkConfig.NetworkNamespaces[0].Path)
+		status, err := h.checkStatusNetworkBlackholePort(request, chainName, taskMetadata.TaskNetworkConfig.NetworkNamespaces[0].Path)
+		// status, err := h.setNs(request, chainName, taskMetadata.TaskNetworkConfig.NetworkNamespaces[0].Path)
 		if err != nil {
 			errResponse := fmt.Sprintf("%v", err)
 			utils.WriteJSONResponse(
@@ -727,87 +750,335 @@ func validateTaskNetworkConfig(taskNetworkConfig *state.TaskNetworkConfig) error
 	return nil
 }
 
-func (h *FaultHandler) setNs(request types.NetworkBlackholePortRequest, chain, netNs string) (bool, error) {
+// func (h *FaultHandler) setNs(request types.NetworkBlackholePortRequest, chain, netNs string) (bool, error) {
+// 	runtime.LockOSThread()
+// 	defer runtime.UnlockOSThread()
+// 	origns, err := h.netNsWrapper.Get()
+// 	if err != nil {
+// 		return false, err
+// 	}
+// 	defer h.netNsWrapper.CloseHandle(&origns)
+
+// 	if netNs != "host" {
+// 		logger.Info("[DEBUG] Trying to switch network namespace", logger.Fields{
+// 			"netns": netNs,
+// 		})
+// 		nsHandle, err := h.netNsWrapper.GetFromPath(netNs)
+// 		if err != nil {
+// 			return false, err
+// 		}
+
+// 		err = h.netNsWrapper.Set(nsHandle)
+// 		if err != nil {
+// 			return false, err
+// 		}
+// 		logger.Info("[DEBUG] Switched network namespace", logger.Fields{
+// 			"netns": netNs,
+// 		})
+// 		status, err := h.checkStatusNetworkBlackholePort(request, chain, netNs)
+// 		logger.Info("[DEBUG] IN TASK NETNS Checking fault is running", logger.Fields{
+// 			"status": status,
+// 			"err":    err,
+// 		})
+
+// 		h.netNsWrapper.CloseHandle(&nsHandle)
+// 	}
+
+// 	err = h.netNsWrapper.Set(origns)
+// 	if err != nil {
+// 		return false, err
+// 	}
+// 	logger.Info("[DEBUG] Back in host network namespace", logger.Fields{
+// 		"netns": netNs,
+// 	})
+// 	return h.checkStatusNetworkBlackholePort(request, chain, netNs)
+// }
+
+func (h *FaultHandler) startBlackHolePortFault(request types.NetworkBlackholePortRequest, chain, netNs string) (bool, error) {
+	// Lock the OS thread so we don't accidentally switch namespaces
 	runtime.LockOSThread()
 	defer runtime.UnlockOSThread()
-	origns, err := h.netNsWrapper.Get()
+
+	originalNS, err := h.netNsWrapper.Get()
 	if err != nil {
 		return false, err
 	}
-	defer h.netNsWrapper.CloseHandle(&origns)
+
+	logger.Info("Original namespace", logger.Fields{
+		"orignalNS": originalNS,
+	})
+	defer h.netNsWrapper.CloseHandle(&originalNS)
 
 	if netNs != "host" {
-		logger.Info("[DEBUG] Trying to switch network namespace", logger.Fields{
-			"netns": netNs,
-		})
-		nsHandle, err := h.netNsWrapper.GetFromPath(netNs)
+		taskNS, err := h.netNsWrapper.GetFromPath(netNs)
 		if err != nil {
 			return false, err
 		}
+		logger.Info("Task ENI namespace", logger.Fields{
+			"taskNS": taskNS,
+		})
+		defer h.netNsWrapper.CloseHandle(&taskNS)
 
-		err = h.netNsWrapper.Set(nsHandle)
+		err = h.netNsWrapper.Set(taskNS)
 		if err != nil {
 			return false, err
 		}
-		logger.Info("[DEBUG] Switched network namespace", logger.Fields{
-			"netns": netNs,
-		})
-		status, err := h.checkStatusNetworkBlackholePort(request, chain, netNs)
-		logger.Info("[DEBUG] IN TASK NETNS Checking fault is running", logger.Fields{
-			"status": status,
-			"err":    err,
-		})
-
-		h.netNsWrapper.CloseHandle(&nsHandle)
+		logger.Info("Task Network NS has been set")
 	}
+	chains, err := h.iptablesWrapper.ListChains()
+	if err != nil {
+		logger.Error("[ERROR] Unable to list chains", logger.Fields{
+			"err": err,
+		})
+	}
+	logger.Info("Obtained chains", logger.Fields{
+		"chains": strings.Join(chains, " "),
+	})
 
-	err = h.netNsWrapper.Set(origns)
+	err = h.iptablesWrapper.NewChain(chain)
 	if err != nil {
 		return false, err
 	}
-	logger.Info("[DEBUG] Back in host network namespace", logger.Fields{
-		"netns": netNs,
+
+	logger.Info("Added new chain", logger.Fields{
+		"chain": chain,
 	})
-	return h.checkStatusNetworkBlackholePort(request, chain, netNs)
+
+	err = h.iptablesWrapper.Append(chain, *request.Protocol, *request.Port)
+	if err != nil {
+		return false, err
+	}
+	logger.Info("Added DROP rule to chain", logger.Fields{
+		"chain":    chain,
+		"protocol": *request.Protocol,
+		"port":     *request.Port,
+	})
+
+	insertChain := "OUTPUT"
+	if *request.TrafficType == "ingress" {
+		insertChain = "INPUT"
+	}
+	err = h.iptablesWrapper.Insert(chain, insertChain)
+	if err != nil {
+		return false, err
+	}
+
+	logger.Info("Inserted chain to built in iptables chain", logger.Fields{
+		"chain":       chain,
+		"insertChain": insertChain,
+	})
+
+	ifaces, err := net.Interfaces()
+	if err != nil {
+		return false, err
+	}
+	for _, iface := range ifaces {
+		logger.Info("[DEBUG] Obtained task network interface", logger.Fields{
+			"interfaces": iface.Name,
+		})
+	}
+	chains, err = h.iptablesWrapper.ListChains()
+	if err != nil {
+		logger.Error("[ERROR] Unable to list chains", logger.Fields{
+			"err": err,
+		})
+		return false, err
+	}
+	logger.Info("Obtained chains", logger.Fields{
+		"chains": strings.Join(chains, " "),
+	})
+
+	exist, err := h.iptablesWrapper.Exists(chain, *request.Protocol, *request.Port)
+	logger.Info("[DEBUG] Checked status of running black hole port", logger.Fields{
+		"exists":    exist,
+		"error":     err,
+		"chainName": chain,
+		"netNs":     netNs,
+		"port":      *request.Port,
+		"protocol":  *request.Protocol,
+	})
+
+	if netNs != "host" {
+		h.netNsWrapper.Set(originalNS)
+		logger.Info("Going back to the orignal NS")
+	}
+
+	chains, err2 := h.iptablesWrapper.ListChains()
+	if err2 != nil {
+		logger.Error("[ERROR] Unable to list chains", logger.Fields{
+			"err": err2,
+		})
+		return false, err2
+	}
+	logger.Info("Obtained chains", logger.Fields{
+		"chains": strings.Join(chains, " "),
+	})
+
+	return exist, err
+}
+
+func (h *FaultHandler) stopBlackHoldPortFault(request types.NetworkBlackholePortRequest, chain, netNs string) (bool, error) {
+	// Lock the OS thread so we don't accidentally switch namespaces
+	runtime.LockOSThread()
+	defer runtime.UnlockOSThread()
+
+	originalNS, err := h.netNsWrapper.Get()
+	if err != nil {
+		return false, err
+	}
+
+	logger.Info("Original namespace", logger.Fields{
+		"orignalNS": originalNS,
+	})
+	defer h.netNsWrapper.CloseHandle(&originalNS)
+
+	if netNs != "host" {
+		taskNS, err := h.netNsWrapper.GetFromPath(netNs)
+		if err != nil {
+			return false, err
+		}
+		logger.Info("Task ENI namespace", logger.Fields{
+			"taskNS": taskNS,
+		})
+		defer h.netNsWrapper.CloseHandle(&taskNS)
+
+		err = h.netNsWrapper.Set(taskNS)
+		if err != nil {
+			return false, err
+		}
+		logger.Info("Task Network NS has been set")
+	}
+	chains, err := h.iptablesWrapper.ListChains()
+	if err != nil {
+		logger.Error("[ERROR] Unable to list chains", logger.Fields{
+			"err": err,
+		})
+	}
+	logger.Info("Obtained chains", logger.Fields{
+		"chains": strings.Join(chains, " "),
+	})
+
+	exist, err := h.iptablesWrapper.Exists(chain, *request.Protocol, *request.Port)
+	logger.Info("[DEBUG] Checked status of running black hole port", logger.Fields{
+		"exists":    exist,
+		"error":     err,
+		"chainName": chain,
+		"netNs":     netNs,
+		"port":      *request.Port,
+		"protocol":  *request.Protocol,
+	})
+
+	err = h.iptablesWrapper.ClearChain(chain)
+	if err != nil {
+		return false, err
+	}
+	logger.Info("Cleared chain", logger.Fields{
+		"chain": chain,
+	})
+
+	insertChain := "OUTPUT"
+	if *request.TrafficType == "ingress" {
+		insertChain = "INPUT"
+	}
+	err = h.iptablesWrapper.Delete(chain, insertChain)
+	if err != nil {
+		return false, err
+	}
+	logger.Info("Deleted built in iptables chain", logger.Fields{
+		"chain":       chain,
+		"insertChain": insertChain,
+	})
+
+	err = h.iptablesWrapper.DeleteChain(chain)
+	if err != nil {
+		return false, err
+	}
+	logger.Info("Deleted chain", logger.Fields{
+		"chain": chain,
+	})
+
+	exist, err = h.iptablesWrapper.Exists(chain, *request.Protocol, *request.Port)
+	logger.Info("[DEBUG] Checked status of running black hole port", logger.Fields{
+		"exists":    exist,
+		"error":     err,
+		"chainName": chain,
+		"netNs":     netNs,
+		"port":      *request.Port,
+		"protocol":  *request.Protocol,
+	})
+
+	if netNs != "host" {
+		h.netNsWrapper.Set(originalNS)
+		logger.Info("Going back to the orignal NS")
+	}
+
+	chains, err2 := h.iptablesWrapper.ListChains()
+	if err2 != nil {
+		logger.Error("[ERROR] Unable to list chains", logger.Fields{
+			"err": err2,
+		})
+		return false, err2
+	}
+	logger.Info("Obtained chains", logger.Fields{
+		"chains": strings.Join(chains, " "),
+	})
+
+	exist2, err2 := h.iptablesWrapper.Exists(chain, *request.Protocol, *request.Port)
+	logger.Info("[DEBUG] Checked status of running black hole port", logger.Fields{
+		"exists":    exist2,
+		"error":     err,
+		"chainName": chain,
+		"netNs":     netNs,
+		"port":      *request.Port,
+		"protocol":  *request.Protocol,
+		"err":       err2,
+	})
+
+	return exist, err
+
 }
 
 func (h *FaultHandler) checkStatusNetworkBlackholePort(request types.NetworkBlackholePortRequest, chain, netNs string) (bool, error) {
-	// runtime.LockOSThread()
-	// defer runtime.UnlockOSThread()
 
-	// origns, err := h.netNsWrapper.Get()
-	// if err != nil {
-	// 	return false, err
-	// }
-	// defer h.netNsWrapper.CloseHandle(&origns)
-	// if netNs != "host" {
-	// 	logger.Info("[DEBUG] Trying to switch network namespace", logger.Fields{
-	// 		"netns": netNs,
-	// 	})
-	// 	nsHandle, err := h.netNsWrapper.GetFromPath(netNs)
-	// 	if err != nil {
-	// 		return false, err
-	// 	}
+	// Lock the OS thread so we don't accidentally switch namespaces
+	runtime.LockOSThread()
+	defer runtime.UnlockOSThread()
 
-	// 	err = h.netNsWrapper.Set(nsHandle)
-	// 	if err != nil {
-	// 		return false, err
-	// 	}
-	// 	logger.Info("[DEBUG] Switched network namespace", logger.Fields{
-	// 		"netns": netNs,
-	// 	})
-	// 	ifaces, err := net.Interfaces()
-	// 	if err != nil {
-	// 		return false, err
-	// 	}
-	// 	for _, iface := range ifaces {
-	// 		logger.Info("[DEBUG] Obtained task network interface", logger.Fields{
-	// 			"interfaces": iface.Name,
-	// 		})
-	// 	}
+	originalNS, err := h.netNsWrapper.Get()
+	if err != nil {
+		return false, err
+	}
 
-	// 	// defer h.netNsWrapper.CloseHandle(&nsHandle)
-	// }
+	logger.Info("Original namespace", logger.Fields{
+		"orignalNS": originalNS,
+	})
+	defer h.netNsWrapper.CloseHandle(&originalNS)
+
+	if netNs != "host" {
+		taskNS, err := h.netNsWrapper.GetFromPath(netNs)
+		if err != nil {
+			return false, err
+		}
+		logger.Info("Task ENI namespace", logger.Fields{
+			"taskNS": taskNS,
+		})
+		defer h.netNsWrapper.CloseHandle(&taskNS)
+
+		err = h.netNsWrapper.Set(taskNS)
+		if err != nil {
+			return false, err
+		}
+		logger.Info("Task Network NS has been set")
+	}
+	ifaces, err := net.Interfaces()
+	if err != nil {
+		return false, err
+	}
+	for _, iface := range ifaces {
+		logger.Info("[DEBUG] Obtained task network interface", logger.Fields{
+			"interfaces": iface.Name,
+		})
+	}
 
 	exist, err := h.iptablesWrapper.Exists(chain, *request.Protocol, *request.Port)
 	logger.Info("[DEBUG] Checked status of running black hole port", logger.Fields{
@@ -824,12 +1095,13 @@ func (h *FaultHandler) checkStatusNetworkBlackholePort(request types.NetworkBlac
 		logger.Error("[ERROR] Unable to list chains", logger.Fields{
 			"err": err,
 		})
+		return false, err
 	}
 	logger.Info("Obtained chains", logger.Fields{
 		"chains": strings.Join(chains, " "),
 	})
 
-	ifaces, err := net.Interfaces()
+	ifaces, err = net.Interfaces()
 	if err != nil {
 		return false, err
 	}
@@ -838,29 +1110,40 @@ func (h *FaultHandler) checkStatusNetworkBlackholePort(request types.NetworkBlac
 			"interfaces": iface.Name,
 		})
 	}
-	// h.netNsWrapper.CloseHandle(&nsHandle)
-	// netns.Set(origns)
 
-	// exist2, err := h.iptablesWrapper.Exists(chain, *request.Protocol, *request.Port)
-	// logger.Info("[DEBUG] NOW SHOULD BE IN HOST NETNS Checked status of running black hole port", logger.Fields{
-	// 	"exists":    exist,
-	// 	"error":     err,
-	// 	"chainName": chain,
-	// 	"netNs":     netNs,
-	// 	"port":      *request.Port,
-	// 	"protocol":  *request.Protocol,
-	// })
+	if netNs != "host" {
+		h.netNsWrapper.Set(originalNS)
+		logger.Info("Going back to the orignal NS")
+	}
+	ifaces, err = net.Interfaces()
+	if err != nil {
+		return false, err
+	}
+	for _, iface := range ifaces {
+		logger.Info("[DEBUG] Obtained task network interface", logger.Fields{
+			"interfaces": iface.Name,
+		})
+	}
 
-	// chains, err = h.iptablesWrapper.ListChains()
-	// if err != nil {
-	// 	logger.Error("[ERROR] Unable to list chains", logger.Fields{
-	// 		"err": err,
-	// 	})
-	// }
-	// logger.Info("[DEBUG]NOW SHOULD BE IN HOST NETNS Obtained chains", logger.Fields{
-	// 	"chains":       strings.Join(chains, " "),
-	// 	"faultRunning": exist2,
-	// })
+	exist2, err := h.iptablesWrapper.Exists(chain, *request.Protocol, *request.Port)
+	logger.Info("[DEBUG] NOW SHOULD BE IN HOST NETNS Checked status of running black hole port", logger.Fields{
+		"exists":    exist2,
+		"error":     err,
+		"chainName": chain,
+		"netNs":     netNs,
+		"port":      *request.Port,
+		"protocol":  *request.Protocol,
+	})
+	chains, err = h.iptablesWrapper.ListChains()
+	if err != nil {
+		logger.Error("[ERROR] Unable to list chains", logger.Fields{
+			"err": err,
+		})
+		return false, err
+	}
+	logger.Info("Obtained chains", logger.Fields{
+		"chains": strings.Join(chains, " "),
+	})
 
 	return exist, err
 }

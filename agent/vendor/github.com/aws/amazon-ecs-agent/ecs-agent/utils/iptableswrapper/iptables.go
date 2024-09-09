@@ -14,7 +14,7 @@ const (
 type IPTables interface {
 	NewChain(chain string) error
 	Append(chain, protocol string, port uint16) error
-	Insert(trafficType, chain, insertChain string) error
+	Insert(chain, insertChain string) error
 	ChainExists(chain string) (bool, error)
 	Exists(chain, protocol string, port uint16) (bool, error)
 	ClearChain(chain string) error
@@ -44,13 +44,23 @@ func (ipt *IPTablesWrapper) NewChain(chain string) error {
 
 // Wrapper function for Append()
 func (ipt *IPTablesWrapper) Append(chain, protocol string, port uint16) error {
-	// ruleSpec := []string{"-p", protocol, "--dport", strconv.FormatUint(uint64(port), 10)}
-	return nil
+	iptable, err := newIPTables()
+	if err != nil {
+		return err
+	}
+	parameterList := []string{"-p", protocol, "--dport", strconv.FormatUint(uint64(port), 10), "-j", "DROP"}
+	return iptable.Append(defaultTable, chain, parameterList...)
 }
 
 // Wrapper function for Insert()
-func (ipt *IPTablesWrapper) Insert(trafficType, chain, insertChain string) error {
-	return nil
+func (ipt *IPTablesWrapper) Insert(chain, insertChain string) error {
+	iptable, err := newIPTables()
+	if err != nil {
+		return err
+	}
+	parameterList := []string{"-j", chain}
+
+	return iptable.Insert(defaultTable, insertChain, 1, parameterList...)
 }
 
 func (ipt *IPTablesWrapper) ChainExists(chain string) (bool, error) {
@@ -67,15 +77,30 @@ func (ipt *IPTablesWrapper) Exists(chain, protocol string, port uint16) (bool, e
 }
 
 func (ipt *IPTablesWrapper) ClearChain(chain string) error {
-	return nil
+	iptable, err := newIPTables()
+	if err != nil {
+		return err
+	}
+	return iptable.ClearChain(defaultTable, chain)
 }
 
-func (ipt *IPTablesWrapper) Delete(trafficType, chain string) error {
-	return nil
+func (ipt *IPTablesWrapper) Delete(chain, insertChain string) error {
+	iptable, err := newIPTables()
+	if err != nil {
+		return err
+	}
+	parameterList := []string{"-j", chain}
+
+	return iptable.Delete(defaultTable, insertChain, parameterList...)
 }
 
 func (ipt *IPTablesWrapper) DeleteChain(chain string) error {
-	return nil
+	iptable, err := newIPTables()
+	if err != nil {
+		return err
+	}
+
+	return iptable.DeleteChain(defaultTable, chain)
 }
 
 func (ipt *IPTablesWrapper) ListChains() ([]string, error) {

@@ -162,6 +162,7 @@ func (s *TMDSAgentState) getTaskMetadata(v3EndpointID string, includeTags bool) 
 		// For host most, we don't really need the network namespace in order to do anything within the host instance network namespace
 		// and so we will set this to an arbitrary value such as "host".
 		// TODO: Will need to find/obtain the interface name of the default network interface on the host instance
+		task.SetDefaultIfname("eth0")
 		taskNetworkConfig = tmdsv4.NewTaskNetworkConfig(task.GetNetworkMode(), defaultHostNetworkNamespace, task.GetDefaultIfname())
 	} else {
 		taskNetworkConfig = tmdsv4.NewTaskNetworkConfig(task.GetNetworkMode(), task.GetNetworkNamespace(), task.GetDefaultIfname())
