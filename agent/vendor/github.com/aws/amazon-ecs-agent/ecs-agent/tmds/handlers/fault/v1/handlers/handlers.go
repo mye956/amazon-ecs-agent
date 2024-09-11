@@ -21,6 +21,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"os/exec"
 	"runtime"
 
 	// "runtime"
@@ -825,6 +826,26 @@ func (h *FaultHandler) startBlackHolePortFault(request types.NetworkBlackholePor
 		}
 		logger.Info("Task Network NS has been set")
 	}
+
+	cmd := exec.Command("iptables", "-nL")
+	stdErr := &bytes.Buffer{}
+	stdOut := &bytes.Buffer{}
+	cmd.Stderr = stdErr
+	cmd.Stdout = stdOut
+	err = cmd.Run()
+	if err != nil {
+		logger.Info("Unable to directly call iptables", logger.Fields{
+			"stdErr": stdErr.String(),
+			"stdOut": stdOut.String(),
+			"err":    err,
+		})
+	}
+
+	logger.Info("Successfully called iptables via os exec before starting fault", logger.Fields{
+		"stdErr": stdErr.String(),
+		"stdOut": stdOut.String(),
+	})
+
 	chains, err := h.iptablesWrapper.ListChains()
 	if err != nil {
 		logger.Error("[ERROR] Unable to list chains", logger.Fields{
@@ -896,6 +917,25 @@ func (h *FaultHandler) startBlackHolePortFault(request types.NetworkBlackholePor
 		"netNs":     netNs,
 		"port":      *request.Port,
 		"protocol":  *request.Protocol,
+	})
+
+	cmd = exec.Command("iptables", "-nL")
+	stdErr = &bytes.Buffer{}
+	stdOut = &bytes.Buffer{}
+	cmd.Stderr = stdErr
+	cmd.Stdout = stdOut
+	errCmd := cmd.Run()
+	if errCmd != nil {
+		logger.Info("Unable to directly call iptables", logger.Fields{
+			"stdErr": stdErr.String(),
+			"stdOut": stdOut.String(),
+			"err":    errCmd,
+		})
+	}
+
+	logger.Info("Successfully called iptables via os exec before starting fault", logger.Fields{
+		"stdErr": stdErr.String(),
+		"stdOut": stdOut.String(),
 	})
 
 	if netNs != "host" {
@@ -1147,3 +1187,5 @@ func (h *FaultHandler) checkStatusNetworkBlackholePort(request types.NetworkBlac
 
 	return exist, err
 }
+
+// func (h *FaultHandler) checkStatusNetworkBlackholePort2(requet types.NetworkBlackholePortRequest, chain, netNs string)
