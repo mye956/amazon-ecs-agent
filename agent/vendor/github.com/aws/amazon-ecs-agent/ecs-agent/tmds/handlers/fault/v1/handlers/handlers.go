@@ -15,6 +15,7 @@ package handlers
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -23,6 +24,7 @@ import (
 	"net/http"
 	"os/exec"
 	"runtime"
+	"time"
 
 	// "runtime"
 	"strconv"
@@ -49,6 +51,10 @@ const (
 	checkStatusFaultRequestType = "check status %s"
 	invalidNetworkModeError     = "%s mode is not supported. Please use either host or awsvpc mode."
 	faultInjectionEnabledError  = "fault injection is not enabled for task: %s"
+)
+
+var (
+	nsenterCommandString = "nsenter --net=%s"
 )
 
 type FaultHandler struct {
@@ -119,7 +125,8 @@ func (h *FaultHandler) StartNetworkBlackholePort() func(http.ResponseWriter, *ht
 
 		var responseBody types.NetworkFaultInjectionResponse
 		chainName := fmt.Sprintf("%s%s%s", *request.TrafficType, *request.Protocol, strconv.FormatUint(uint64(*request.Port), 10))
-		_, err = h.startBlackHolePortFault(request, chainName, taskMetadata.TaskNetworkConfig.NetworkNamespaces[0].Path)
+		// _, err = h.startBlackHolePortFault(request, chainName, taskMetadata.TaskNetworkConfig.NetworkNamespaces[0].Path)
+		_, err = h.startBlackHolePortFault2(request, chainName, taskMetadata.TaskNetworkConfig.NetworkNamespaces[0].Path)
 
 		if err != nil {
 			errResponse := fmt.Sprintf("%v", err)
@@ -180,7 +187,8 @@ func (h *FaultHandler) StopNetworkBlackHolePort() func(http.ResponseWriter, *htt
 
 		var responseBody types.NetworkFaultInjectionResponse
 		chainName := fmt.Sprintf("%s%s%s", *request.TrafficType, *request.Protocol, strconv.FormatUint(uint64(*request.Port), 10))
-		status, err := h.stopBlackHoldPortFault(request, chainName, taskMetadata.TaskNetworkConfig.NetworkNamespaces[0].Path)
+		// status, err := h.stopBlackHoldPortFault(request, chainName, taskMetadata.TaskNetworkConfig.NetworkNamespaces[0].Path)
+		status, err := h.stopBlackHoldPortFault2(request, chainName, taskMetadata.TaskNetworkConfig.NetworkNamespaces[0].Path)
 
 		if err != nil {
 			errResponse := fmt.Sprintf("%v", err)
@@ -241,8 +249,9 @@ func (h *FaultHandler) CheckNetworkBlackHolePort() func(http.ResponseWriter, *ht
 
 		var responseBody types.NetworkFaultInjectionResponse
 		chainName := fmt.Sprintf("%s%s%s", *request.TrafficType, *request.Protocol, strconv.FormatUint(uint64(*request.Port), 10))
-		status, err := h.checkStatusNetworkBlackholePort(request, chainName, taskMetadata.TaskNetworkConfig.NetworkNamespaces[0].Path)
+		// status, err := h.checkStatusNetworkBlackholePort(request, chainName, taskMetadata.TaskNetworkConfig.NetworkNamespaces[0].Path)
 		// status, err := h.setNs(request, chainName, taskMetadata.TaskNetworkConfig.NetworkNamespaces[0].Path)
+		status, err := h.checkStatusNetworkBlackholePort2(request, chainName, taskMetadata.TaskNetworkConfig.NetworkNamespaces[0].Path)
 		if err != nil {
 			errResponse := fmt.Sprintf("%v", err)
 			utils.WriteJSONResponse(
@@ -1188,4 +1197,326 @@ func (h *FaultHandler) checkStatusNetworkBlackholePort(request types.NetworkBlac
 	return exist, err
 }
 
-// func (h *FaultHandler) checkStatusNetworkBlackholePort2(requet types.NetworkBlackholePortRequest, chain, netNs string)
+func (h *FaultHandler) startBlackHolePortFault2(request types.NetworkBlackholePortRequest, chain, netNs string) (bool, error) {
+	ctx := context.Background()
+	ctxWithTimeout, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+
+	nsenterCmd := ""
+	if netNs != "host" {
+		nsenterCmd = fmt.Sprintf(nsenterCommandString, netNs)
+	}
+
+	cmdList := []string{"iptables", "-N", chain}
+	if nsenterCmd != "" {
+		cmdList = append(strings.Split(nsenterCmd, " "), cmdList...)
+	}
+
+	cmd := exec.CommandContext(ctxWithTimeout, cmdList[0], cmdList[1:]...)
+	stdErr := &bytes.Buffer{}
+	stdOut := &bytes.Buffer{}
+	cmd.Stderr = stdErr
+	cmd.Stdout = stdOut
+
+	err := cmd.Run()
+
+	if err != nil {
+		logger.Error("Unable to run command", logger.Fields{
+			"netns":   netNs,
+			"command": strings.Join(cmdList, " "),
+			"stdErr":  stdErr.String(),
+			"stdOut":  stdOut.String(),
+			"err":     err,
+		})
+		return false, err
+	}
+
+	logger.Info("Successfully created new chain", logger.Fields{
+		"netns":   netNs,
+		"command": strings.Join(cmdList, " "),
+		"stdErr":  stdErr.String(),
+		"stdOut":  stdOut.String(),
+		"chain":   chain,
+	})
+
+	cmdList = []string{"iptables", "-A", chain, "-p", *request.Protocol, "--dport", strconv.FormatUint(uint64(*request.Port), 10), "-j", "DROP"}
+	if nsenterCmd != "" {
+		cmdList = append(strings.Split(nsenterCmd, " "), cmdList...)
+	}
+	cmd = exec.CommandContext(ctxWithTimeout, cmdList[0], cmdList[1:]...)
+	stdErr = &bytes.Buffer{}
+	stdOut = &bytes.Buffer{}
+	cmd.Stderr = stdErr
+	cmd.Stdout = stdOut
+
+	err = cmd.Run()
+
+	if err != nil {
+		logger.Error("Unable to run command", logger.Fields{
+			"netns":   netNs,
+			"command": strings.Join(cmdList, " "),
+			"stdErr":  stdErr.String(),
+			"stdOut":  stdOut.String(),
+			"err":     err,
+		})
+		return false, err
+	}
+
+	logger.Info("Successfully added new rule to chain", logger.Fields{
+		"netns":   netNs,
+		"command": strings.Join(cmdList, " "),
+		"stdErr":  stdErr.String(),
+		"stdOut":  stdOut.String(),
+	})
+
+	insertChain := "INPUT"
+	if *request.TrafficType == "egress" {
+		insertChain = "OUTPUT"
+	}
+
+	cmdList = []string{"iptables", "-I", insertChain, "-j", chain}
+	if nsenterCmd != "" {
+		cmdList = append(strings.Split(nsenterCmd, " "), cmdList...)
+	}
+	cmd = exec.CommandContext(ctxWithTimeout, cmdList[0], cmdList[1:]...)
+	stdErr = &bytes.Buffer{}
+	stdOut = &bytes.Buffer{}
+	cmd.Stderr = stdErr
+	cmd.Stdout = stdOut
+
+	err = cmd.Run()
+
+	if err != nil {
+		logger.Error("Unable to run command", logger.Fields{
+			"netns":   netNs,
+			"command": strings.Join(cmdList, " "),
+			"stdErr":  stdErr.String(),
+			"stdOut":  stdOut.String(),
+			"err":     err,
+		})
+		return false, err
+	}
+	logger.Info("Successfully inserted chain to built in iptables chain", logger.Fields{
+		"netns":       netNs,
+		"command":     strings.Join(cmdList, " "),
+		"stdErr":      stdErr.String(),
+		"stdOut":      stdOut.String(),
+		"insertChain": insertChain,
+	})
+
+	cmdList = []string{"iptables", "-C", chain, "-p", *request.Protocol, "--dport", strconv.FormatUint(uint64(*request.Port), 10), "-j", "DROP"}
+	if nsenterCmd != "" {
+		cmdList = append(strings.Split(nsenterCmd, " "), cmdList...)
+	}
+	cmd = exec.CommandContext(ctxWithTimeout, cmdList[0], cmdList[1:]...)
+	// cmd = exec.CommandContext(ctxWithTimeout, "/bin/sh", "-c", strings.Join(cmdList, " "))
+	stdErr = &bytes.Buffer{}
+	stdOut = &bytes.Buffer{}
+	cmd.Stderr = stdErr
+	cmd.Stdout = stdOut
+
+	err = cmd.Run()
+	if err != nil {
+		logger.Error("Unable to run command", logger.Fields{
+			"netns":   netNs,
+			"command": strings.Join(cmdList, " "),
+			"stdErr":  stdErr.String(),
+			"stdOut":  stdOut.String(),
+			"err":     err,
+		})
+		return false, err
+	}
+
+	logger.Info("Successfully ran the command", logger.Fields{
+		"netns":   netNs,
+		"command": strings.Join(cmdList, " "),
+		"stdErr":  stdErr.String(),
+		"stdOut":  stdOut.String(),
+		"err":     err,
+	})
+
+	return true, nil
+}
+
+func (h *FaultHandler) stopBlackHoldPortFault2(request types.NetworkBlackholePortRequest, chain, netNs string) (bool, error) {
+	ctx := context.Background()
+	ctxWithTimeout, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+
+	nsenterCmd := ""
+	if netNs != "host" {
+		nsenterCmd = fmt.Sprintf(nsenterCommandString, netNs)
+	}
+
+	cmdList := []string{"iptables", "-F", chain}
+	if nsenterCmd != "" {
+		cmdList = append(strings.Split(nsenterCmd, " "), cmdList...)
+	}
+
+	cmd := exec.CommandContext(ctxWithTimeout, cmdList[0], cmdList[1:]...)
+	stdErr := &bytes.Buffer{}
+	stdOut := &bytes.Buffer{}
+	cmd.Stderr = stdErr
+	cmd.Stdout = stdOut
+
+	err := cmd.Run()
+
+	if err != nil {
+		logger.Error("Unable to run command", logger.Fields{
+			"netns":   netNs,
+			"command": strings.Join(cmdList, " "),
+			"stdErr":  stdErr.String(),
+			"stdOut":  stdOut.String(),
+			"err":     err,
+		})
+		return false, err
+	}
+	logger.Info("Successfully cleared chain", logger.Fields{
+		"netns":   netNs,
+		"command": strings.Join(cmdList, " "),
+		"stdErr":  stdErr.String(),
+		"stdOut":  stdOut.String(),
+		"chain":   chain,
+	})
+
+	insertChain := "INPUT"
+	if *request.TrafficType == "egress" {
+		insertChain = "OUTPUT"
+	}
+
+	cmdList = []string{"iptables", "-D", insertChain, "-j", chain}
+	if nsenterCmd != "" {
+		cmdList = append(strings.Split(nsenterCmd, " "), cmdList...)
+	}
+	cmd = exec.CommandContext(ctxWithTimeout, cmdList[0], cmdList[1:]...)
+	stdErr = &bytes.Buffer{}
+	stdOut = &bytes.Buffer{}
+	cmd.Stderr = stdErr
+	cmd.Stdout = stdOut
+
+	err = cmd.Run()
+
+	if err != nil {
+		logger.Error("Unable to run command", logger.Fields{
+			"netns":   netNs,
+			"command": strings.Join(cmdList, " "),
+			"stdErr":  stdErr.String(),
+			"stdOut":  stdOut.String(),
+			"err":     err,
+		})
+		return false, err
+	}
+	logger.Info("Successfully deleted chain from builtin iptables chain", logger.Fields{
+		"netns":       netNs,
+		"command":     strings.Join(cmdList, " "),
+		"stdErr":      stdErr.String(),
+		"stdOut":      stdOut.String(),
+		"insertChain": insertChain,
+		"chain":       chain,
+	})
+
+	cmdList = []string{"iptables", "-X", chain}
+	if nsenterCmd != "" {
+		cmdList = append(strings.Split(nsenterCmd, " "), cmdList...)
+	}
+	cmd = exec.CommandContext(ctxWithTimeout, cmdList[0], cmdList[1:]...)
+	stdErr = &bytes.Buffer{}
+	stdOut = &bytes.Buffer{}
+	cmd.Stderr = stdErr
+	cmd.Stdout = stdOut
+
+	err = cmd.Run()
+
+	if err != nil {
+		logger.Error("Unable to run command", logger.Fields{
+			"netns":   netNs,
+			"command": strings.Join(cmdList, " "),
+			"stdErr":  stdErr.String(),
+			"stdOut":  stdOut.String(),
+			"err":     err,
+		})
+		return false, err
+	}
+	logger.Info("Successfully deleted chain", logger.Fields{
+		"netns":       netNs,
+		"command":     strings.Join(cmdList, " "),
+		"stdErr":      stdErr.String(),
+		"stdOut":      stdOut.String(),
+		"insertChain": insertChain,
+		"chain":       chain,
+	})
+
+	cmdList = []string{"iptables", "-C", chain, "-p", *request.Protocol, "--dport", strconv.FormatUint(uint64(*request.Port), 10), "-j", "DROP"}
+	if nsenterCmd != "" {
+		cmdList = append(strings.Split(nsenterCmd, " "), cmdList...)
+	}
+	cmd = exec.CommandContext(ctxWithTimeout, cmdList[0], cmdList[1:]...)
+	// cmd = exec.CommandContext(ctxWithTimeout, "/bin/sh", "-c", strings.Join(cmdList, " "))
+	stdErr = &bytes.Buffer{}
+	stdOut = &bytes.Buffer{}
+	cmd.Stderr = stdErr
+	cmd.Stdout = stdOut
+
+	err = cmd.Run()
+	if err != nil {
+		logger.Error("Unable to run command", logger.Fields{
+			"netns":   netNs,
+			"command": strings.Join(cmdList, " "),
+			"stdErr":  stdErr.String(),
+			"stdOut":  stdOut.String(),
+			"err":     err,
+		})
+		return false, err
+	} else if strings.HasPrefix(stdErr.String(), "iptables: Bad rule (does a matching rule exist in that chain?).") {
+		return true, nil
+	} else {
+		logger.Error("Black hole port is still running", logger.Fields{
+			"netns":   netNs,
+			"command": strings.Join(cmdList, " "),
+			"stdErr":  stdErr.String(),
+			"stdOut":  stdOut.String(),
+			"err":     err,
+		})
+		return false, nil
+	}
+}
+
+func (h *FaultHandler) checkStatusNetworkBlackholePort2(request types.NetworkBlackholePortRequest, chain, netNs string) (bool, error) {
+	ctx := context.Background()
+	ctxWithTimeout, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	cmdList := []string{"iptables", "-C", chain, "-p", *request.Protocol, "--dport", strconv.FormatUint(uint64(*request.Port), 10), "-j", "DROP"}
+
+	if netNs != "host" {
+		cmdList = append(strings.Split(fmt.Sprintf(nsenterCommandString, netNs), " "), cmdList...)
+	}
+
+	cmd := exec.CommandContext(ctxWithTimeout, cmdList[0], cmdList[1:]...)
+
+	stdErr := &bytes.Buffer{}
+	stdOut := &bytes.Buffer{}
+	cmd.Stderr = stdErr
+	cmd.Stdout = stdOut
+
+	err := cmd.Run()
+
+	if err != nil {
+		logger.Error("Unable to run command", logger.Fields{
+			"netns":   netNs,
+			"command": strings.Join(cmdList, " "),
+			"stdErr":  stdErr.String(),
+			"stdOut":  stdOut.String(),
+			"err":     err,
+		})
+		return false, err
+	}
+
+	logger.Info("Successfully ran the command", logger.Fields{
+		"netns":   netNs,
+		"command": strings.Join(cmdList, " "),
+		"stdErr":  stdErr.String(),
+		"stdOut":  stdOut.String(),
+		"err":     err,
+	})
+	return true, nil
+}

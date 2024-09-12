@@ -51,6 +51,8 @@ type Cmd interface {
 	AppendExtraFiles(...*os.File)
 	Args() []string
 	SetIOStreams(io.Reader, io.Writer, io.Writer)
+	Output() ([]byte, error)
+	CombinedOutput() ([]byte, error)
 }
 
 type cmdWrapper struct {
