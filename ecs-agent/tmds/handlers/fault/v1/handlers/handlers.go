@@ -51,8 +51,11 @@ const (
 )
 
 var (
-	iptablesChainExistCmd = "iptables -C %s -p %s --dport %s -j DROP"
-	nsenterCommandString  = "nsenter --net=%s"
+	iptablesChainExistCmd      = "iptables -C %s -p %s --dport %s -j DROP"
+	iptablesClearChainCmd      = "iptables -F %s"
+	iptablesDeleteFromTableCmd = "iptables -D %s -j %s"
+	iptablesDeleteChain        = "iptables -X %s"
+	nsenterCommandString       = "nsenter --net=%s"
 )
 
 type FaultHandler struct {
@@ -167,22 +170,102 @@ func (h *FaultHandler) StopNetworkBlackHolePort() func(http.ResponseWriter, *htt
 		rwMu.Lock()
 		defer rwMu.Unlock()
 
+		ctx := context.Background()
+		ctxWithTimeout, cancel := context.WithTimeout(ctx, requestTimeoutDuration)
+		defer cancel()
+
+		var responseBody types.NetworkFaultInjectionResponse
+		var statusCode int
+		port := strconv.FormatUint(uint64(aws.Uint16Value(request.Port)), 10)
+		chainName := fmt.Sprintf("%s-%s-%s", aws.StringValue(request.TrafficType), aws.StringValue(request.Protocol), port)
+
+		insertTable := "INPUT"
+		if aws.StringValue(request.TrafficType) == "egress" {
+			insertTable = "OUTPUT"
+		}
+
+		_, cmdOutput, cmdErr := h.stopNetworkBlackHolePort(ctxWithTimeout, aws.StringValue(request.Protocol), port, chainName,
+			taskMetadata.TaskNetworkConfig.NetworkMode, taskMetadata.TaskNetworkConfig.NetworkNamespaces[0].Path, insertTable)
+		if err := ctx.Err(); err == context.DeadlineExceeded {
+			logger.Error("Request timed out", logger.Fields{
+				field.RequestType: requestType,
+				field.Request:     request.ToString(),
+				field.Error:       err,
+			})
+			statusCode = http.StatusInternalServerError
+			responseBody = types.NewNetworkFaultInjectionErrorResponse(fmt.Sprintf(requestTimedOutError, requestType))
+		} else if cmdErr != nil {
+			statusCode = http.StatusInternalServerError
+			responseBody = types.NewNetworkFaultInjectionErrorResponse(cmdOutput)
+		} else {
+			statusCode = http.StatusOK
+			responseBody := types.NewNetworkFaultInjectionSuccessResponse("stopped")
+			logger.Info("Successfully stopped fault", logger.Fields{
+				field.RequestType: requestType,
+				field.Request:     request.ToString(),
+				field.Response:    responseBody.ToString(),
+			})
+		}
 		// TODO: Check status of current fault injection
 		// TODO: Invoke the stop fault injection functionality if running
 
-		responseBody := types.NewNetworkFaultInjectionSuccessResponse("stopped")
-		logger.Info("Successfully stopped fault", logger.Fields{
-			field.RequestType: requestType,
-			field.Request:     request.ToString(),
-			field.Response:    responseBody.ToString(),
-		})
 		utils.WriteJSONResponse(
 			w,
-			http.StatusOK,
+			statusCode,
 			responseBody,
 			requestType,
 		)
 	}
+}
+
+func (h *FaultHandler) stopNetworkBlackHolePort(ctx context.Context, protocol, port, chain, networkMode, netNs, insertTable string) (bool, string, error) {
+	running, cmdOutput, err := h.checkNetworkBlackHolePort(ctx, protocol, port, chain, networkMode, netNs)
+	if err != nil {
+		return false, cmdOutput, err
+	}
+	if running {
+		nsenterPrefix := ""
+
+		if networkMode == ecs.NetworkModeAwsvpc {
+			nsenterPrefix = fmt.Sprintf(nsenterCommandString, netNs)
+		}
+
+		clearChainCmdString := nsenterPrefix + fmt.Sprintf(iptablesClearChainCmd, chain)
+		cmdOutput, err := h.runExecCommand(ctx, strings.Split(clearChainCmdString, " "))
+		if err != nil {
+			return false, string(cmdOutput), err
+		}
+		logger.Info("Successfully cleared chain", logger.Fields{
+			"netns":   netNs,
+			"command": clearChainCmdString,
+			"output":  string(cmdOutput),
+		})
+
+		deleteFromTableCmdString := nsenterPrefix + fmt.Sprint(iptablesDeleteFromTableCmd, insertTable, chain)
+		cmdOutput, err = h.runExecCommand(ctx, strings.Split(deleteFromTableCmdString, " "))
+		if err != nil {
+			return false, string(cmdOutput), err
+		}
+		logger.Info("Successfully deleted chain from iptables", logger.Fields{
+			"netns":   netNs,
+			"command": deleteFromTableCmdString,
+			"output":  string(cmdOutput),
+		})
+
+		deleteChainCmdString := nsenterPrefix + fmt.Sprintf(iptablesDeleteChain, chain)
+		cmdOutput, err = h.runExecCommand(ctx, strings.Split(deleteFromTableCmdString, " "))
+		if err != nil {
+			return false, string(cmdOutput), err
+		}
+
+		logger.Info("Successfully deleted chain", logger.Fields{
+			"netns":   netNs,
+			"command": deleteChainCmdString,
+			"output":  string(cmdOutput),
+		})
+	}
+
+	return true, "", nil
 }
 
 // CheckNetworkBlackHolePort will return the request handler function for checking the status of a network blackhole port fault
