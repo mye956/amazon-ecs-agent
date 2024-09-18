@@ -54,7 +54,7 @@ var (
 	iptablesChainExistCmd      = "iptables -C %s -p %s --dport %s -j DROP"
 	iptablesClearChainCmd      = "iptables -F %s"
 	iptablesDeleteFromTableCmd = "iptables -D %s -j %s"
-	iptablesDeleteChain        = "iptables -X %s"
+	iptablesDeleteChainCmd     = "iptables -X %s"
 	nsenterCommandString       = "nsenter --net=%s"
 )
 
@@ -241,9 +241,16 @@ func (h *FaultHandler) stopNetworkBlackHolePort(ctx context.Context, protocol, p
 			"output":  string(cmdOutput),
 		})
 
-		deleteFromTableCmdString := nsenterPrefix + fmt.Sprint(iptablesDeleteFromTableCmd, insertTable, chain)
+		deleteFromTableCmdString := nsenterPrefix + fmt.Sprintf(iptablesDeleteFromTableCmd, insertTable, chain)
 		cmdOutput, err = h.runExecCommand(ctx, strings.Split(deleteFromTableCmdString, " "))
 		if err != nil {
+			logger.Error("Unable to delete chain from iptables", logger.Fields{
+				"netns":       netNs,
+				"command":     deleteFromTableCmdString,
+				"output":      string(cmdOutput),
+				"insertTable": insertTable,
+				"error":       err,
+			})
 			return false, string(cmdOutput), err
 		}
 		logger.Info("Successfully deleted chain from iptables", logger.Fields{
@@ -252,9 +259,16 @@ func (h *FaultHandler) stopNetworkBlackHolePort(ctx context.Context, protocol, p
 			"output":  string(cmdOutput),
 		})
 
-		deleteChainCmdString := nsenterPrefix + fmt.Sprintf(iptablesDeleteChain, chain)
-		cmdOutput, err = h.runExecCommand(ctx, strings.Split(deleteFromTableCmdString, " "))
+		deleteChainCmdString := nsenterPrefix + fmt.Sprintf(iptablesDeleteChainCmd, chain)
+		cmdOutput, err = h.runExecCommand(ctx, strings.Split(deleteChainCmdString, " "))
 		if err != nil {
+			logger.Error("Unable to delete chain", logger.Fields{
+				"netns":       netNs,
+				"command":     deleteChainCmdString,
+				"output":      string(cmdOutput),
+				"insertTable": insertTable,
+				"error":       err,
+			})
 			return false, string(cmdOutput), err
 		}
 
