@@ -93,7 +93,7 @@ func NewECSClient(
 		credentialsProvider: credentialsProvider,
 		configAccessor:      configAccessor,
 		ec2metadata:         ec2MetadataClient,
-		httpClient:          httpclient.New(RoundtripTimeout, configAccessor.AcceptInsecureCert(), agentVer, configAccessor.OSType()),
+		httpClient:          &http.Client{Timeout: RoundtripTimeout},
 		pollEndpointCache:   async.NewTTLCache(&async.TTL{Duration: defaultPollEndpointCacheTTL}),
 	}
 
@@ -105,8 +105,12 @@ func NewECSClient(
 	ecsConfig := newECSConfig(credentialsProvider, configAccessor, client.httpClient, client.isFIPSDetected)
 	s, err := session.NewSession(&ecsConfig)
 	if err != nil {
+		logger.Info("TESTING in ECS CLIENT Package. Unable to create session in here")
 		return nil, err
 	}
+
+	logger.Info("Replacing the default transport with new ECS Roundtripper object")
+	client.httpClient.Transport = httpclient.NewECSRoundTripper(configAccessor.AcceptInsecureCert(), agentVer, configAccessor.OSType())
 
 	if client.standardClient == nil {
 		client.standardClient = ecsmodel.New(s)

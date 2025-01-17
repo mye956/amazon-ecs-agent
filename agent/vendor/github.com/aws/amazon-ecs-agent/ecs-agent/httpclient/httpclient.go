@@ -99,3 +99,24 @@ type OverridableTransport interface {
 func (client *ecsRoundTripper) SetTransport(transport http.RoundTripper) {
 	client.transport = transport
 }
+
+func NewECSRoundTripper(insecureSkipVerify bool, agentVersion string, osType string) *ecsRoundTripper {
+	transport := &http.Transport{
+		Proxy: httpproxy.Proxy,
+		DialContext: (&net.Dialer{
+			Timeout:   DefaultDialTimeout,
+			KeepAlive: DefaultDialKeepalive,
+		}).DialContext,
+		TLSHandshakeTimeout: DefaultTLSHandshakeTimeout,
+	}
+	transport.TLSClientConfig = &tls.Config{}
+	cipher.WithSupportedCipherSuites(transport.TLSClientConfig)
+	transport.TLSClientConfig.InsecureSkipVerify = insecureSkipVerify
+
+	return &ecsRoundTripper{
+		insecureSkipVerify: insecureSkipVerify,
+		agentVersion:       agentVersion,
+		osType:             osType,
+		transport:          transport,
+	}
+}
