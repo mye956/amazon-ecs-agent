@@ -32,6 +32,17 @@ endif
 
 export GO111MODULE=auto
 
+ARCH:=$(shell uname -m)
+AGENT_VERSION=$(shell cat ./VERSION)
+ifeq (${ARCH},x86_64)
+	EBS_CSI_DRIVER_TAR=ebs-csi-driver-v${AGENT_VERSION}.tar
+else ifeq (${ARCH},aarch64)
+	EBS_CSI_DRIVER_TAR=ecs-agent-arm64-v${AGENT_VERSION}.tar
+# osx M1 instances
+else ifeq (${ARCH},arm64)
+	EBS_CSI_DRIVER_TAR=ecs-agent-arm64-v${AGENT_VERSION}.tar
+endif
+
 all: docker
 
 # Dynamic go build; useful in that it does not have -a so it won't recompile
@@ -315,6 +326,11 @@ EBS_CSI_DRIVER_DIR=./ecs-agent/daemonimages/csidriver
 ebs-csi-driver:
 	$(MAKE) -C $(EBS_CSI_DRIVER_DIR) $(MFLAGS) bin/ebs-csi-driver
 
+
+ebs-csi-driver-tar:
+	$(MAKE) -C $(EBS_CSI_DRIVER_DIR) $(MFLAGS) tarfiles/ebs-csi-driver.tar
+	cp ecs-agent/daemonimages/csidriver/tarfiles/ebs-csi-driver.tar ${EBS_CSI_DRIVER_TAR}
+
 # Starts EBS CSI Driver as a background process.
 # The driver uses /tmp/ebs-csi-driver.sock as the socket file.
 start-ebs-csi-driver: ebs-csi-driver
@@ -406,7 +422,7 @@ amazon-linux-sources.tgz:
 	cp packaging/amazon-linux-ami-integrated/amazon-ecs-volume-plugin.conf amazon-ecs-volume-plugin.conf
 	cp packaging/amazon-linux-ami-integrated/amazon-ecs-volume-plugin.service amazon-ecs-volume-plugin.service
 	cp packaging/amazon-linux-ami-integrated/amazon-ecs-volume-plugin.socket amazon-ecs-volume-plugin.socket
-	tar -czf ./sources.tgz ecs-init scripts misc agent amazon-ecs-cni-plugins amazon-vpc-cni-plugins agent-container Makefile VERSION RELEASE_COMMIT
+	tar -czf ./sources.tgz ecs-init scripts misc agent amazon-ecs-cni-plugins amazon-vpc-cni-plugins agent-container Makefile VERSION RELEASE_COMMIT ebs-csi-driver-v${AGENT_VERSION}.tar ecs-agent-arm64-v${AGENT_VERSION}.tar
 
 .amazon-linux-rpm-integrated-done: amazon-linux-sources.tgz
 	test -e SOURCES || ln -s . SOURCES
@@ -417,7 +433,7 @@ amazon-linux-sources.tgz:
 amazon-linux-rpm-integrated: .amazon-linux-rpm-integrated-done
 
 # Make target for Amazon Linux Codebuild jobs
-.amazon-linux-rpm-codebuild-done: get-cni-sources
+.amazon-linux-rpm-codebuild-done: get-cni-sources ebs-csi-driver-tar
 	./scripts/update-version.sh
 	cp packaging/amazon-linux-ami-integrated/ecs-agent.spec ecs-agent.spec
 	cp packaging/amazon-linux-ami-integrated/ecs.conf ecs.conf
@@ -425,7 +441,7 @@ amazon-linux-rpm-integrated: .amazon-linux-rpm-integrated-done
 	cp packaging/amazon-linux-ami-integrated/amazon-ecs-volume-plugin.conf amazon-ecs-volume-plugin.conf
 	cp packaging/amazon-linux-ami-integrated/amazon-ecs-volume-plugin.service amazon-ecs-volume-plugin.service
 	cp packaging/amazon-linux-ami-integrated/amazon-ecs-volume-plugin.socket amazon-ecs-volume-plugin.socket
-	tar -czf ./sources.tgz ecs-init scripts misc agent amazon-ecs-cni-plugins amazon-vpc-cni-plugins agent-container Makefile VERSION GO_VERSION
+	tar -czf ./sources.tgz ecs-init scripts misc agent amazon-ecs-cni-plugins amazon-vpc-cni-plugins agent-container Makefile VERSION GO_VERSION ${EBS_CSI_DRIVER_TAR}
 	test -e SOURCES || ln -s . SOURCES
 	rpmbuild --define "%_topdir $(PWD)" -bb ecs-agent.spec
 	find RPMS/ -type f -exec cp {} . \;
@@ -513,6 +529,7 @@ clean:
 	-rm -f .generic-rpm-integrated-done
 	-rm -f amazon-ecs-volume-plugin
 	-rm -rf $(EBS_CSI_DRIVER_DIR)/bin
+	-rm -rf ${EBS_CSI_DRIVER_TAR}
 	-rm -rf /tmp/private-test-registry-htpasswd # private registry credentials cleanup
 
 clean-all: clean
