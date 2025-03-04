@@ -37,10 +37,10 @@ AGENT_VERSION=$(shell cat ./VERSION)
 ifeq (${ARCH},x86_64)
 	EBS_CSI_DRIVER_TAR=ebs-csi-driver-v${AGENT_VERSION}.tar
 else ifeq (${ARCH},aarch64)
-	EBS_CSI_DRIVER_TAR=ecs-agent-arm64-v${AGENT_VERSION}.tar
+	EBS_CSI_DRIVER_TAR=ebs-csi-driver-arm64-v${AGENT_VERSION}.tar
 # osx M1 instances
 else ifeq (${ARCH},arm64)
-	EBS_CSI_DRIVER_TAR=ecs-agent-arm64-v${AGENT_VERSION}.tar
+	EBS_CSI_DRIVER_TAR=ebs-csi-driver-arm64-v${AGENT_VERSION}.tar
 endif
 
 all: docker
@@ -329,7 +329,8 @@ ebs-csi-driver:
 
 ebs-csi-driver-tar:
 	$(MAKE) -C $(EBS_CSI_DRIVER_DIR) $(MFLAGS) tarfiles/ebs-csi-driver.tar
-	cp ecs-agent/daemonimages/csidriver/tarfiles/ebs-csi-driver.tar ${EBS_CSI_DRIVER_TAR}
+	cp ecs-agent/daemonimages/csidriver/tarfiles/ebs-csi-driver.tar ebs-csi-driver-v${AGENT_VERSION}.tar
+	cp ecs-agent/daemonimages/csidriver/tarfiles/ebs-csi-driver.tar ebs-csi-driver-arm64-v${AGENT_VERSION}.tar
 
 # Starts EBS CSI Driver as a background process.
 # The driver uses /tmp/ebs-csi-driver.sock as the socket file.
@@ -529,7 +530,8 @@ clean:
 	-rm -f .generic-rpm-integrated-done
 	-rm -f amazon-ecs-volume-plugin
 	-rm -rf $(EBS_CSI_DRIVER_DIR)/bin
-	-rm -rf ${EBS_CSI_DRIVER_TAR}
+	-rm -f ebs-csi-driver-v${AGENT_VERSION}.tar
+	-rm -f ebs-csi-driver-arm64-v${AGENT_VERSION}.tar
 	-rm -rf /tmp/private-test-registry-htpasswd # private registry credentials cleanup
 
 clean-all: clean
