@@ -39,15 +39,8 @@ Source2:        ecs.service
 Source3:        amazon-ecs-volume-plugin.service
 Source4:        amazon-ecs-volume-plugin.socket
 Source5:        amazon-ecs-volume-plugin.conf
-
-%ifarch aarch64
-%global arch_tag -arm64
-Source6: ebs-csi-driver-arm64-v%{version}.tar
-%else
-%global arch_tag %{nil}
-Source6: ebs-csi-driver-v%{version}.tar
-%endif
-
+Source6:        ebs-csi-driver-arm64-v%{version}.tar
+Source7:        ebs-csi-driver-v%{version}.tar
 
 BuildRequires:  golang >= 1.22.0
 %if %{with systemd}
@@ -182,7 +175,11 @@ touch %{buildroot}%{_sysconfdir}/ecs/ecs.config
 touch %{buildroot}%{_sysconfdir}/ecs/ecs.config.json
 
 mkdir -p %{buildroot}%{ebs_csi_driver_dir}
+%ifarch aarch64
 install -m %{no_exec_perm} -D %{SOURCE6} %{buildroot}%{ebs_csi_driver_dir}/ebs-csi-driver.tar
+%else
+install -m %{no_exec_perm} -D %{SOURCE7} %{buildroot}%{ebs_csi_driver_dir}/ebs-csi-driver.tar
+%endif
 
 # Configure ecs-init to reload the bundled ECS container agent image.
 mkdir -p %{buildroot}%{_cachedir}/ecs
