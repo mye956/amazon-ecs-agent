@@ -123,6 +123,7 @@ func (*s3ClientCreator) NewS3ManagerClient(bucket, region string, creds credenti
 		return nil, err
 	}
 	client := s3.NewFromConfig(cfg)
+	client.Options().EndpointOptions.GetUseFIPSEndpoint()
 	bucketRegion, err := getRegionFromBucket(client, bucket)
 	if err != nil {
 		return nil, err
