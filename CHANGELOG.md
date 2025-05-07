@@ -200,6 +200,8 @@
 * Bugfix - Windows numCPU returning incorrectly for values above 64 [#4067](https://github.com/aws/amazon-ecs-agent/pull/4067)
 * Bugfix - fsx windows fileserver SSM arn parsing was incorrect [#4058](https://github.com/aws/amazon-ecs-agent/pull/4058)
 
+## test
+
 ## 1.79.2
 * Enhancement - Set device names while building task network config [#4026](https://github.com/aws/amazon-ecs-agent/pull/4026)
 * Enhancement - Record and emit the timestamp that the last connection was established [#4035](https://github.com/aws/amazon-ecs-agent/pull/4035)
