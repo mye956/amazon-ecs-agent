@@ -111,10 +111,16 @@ func (route *NetfilterRoute) Create() error {
 	}
 
 	if !allowOffhostIntrospection() {
-		err = route.modifyNetfilterEntry(iptablesTableFilter, iptablesInsert, getBlockIntrospectionOffhostAccessInputChainArgs, true)
+		// err = route.modifyNetfilterEntry(iptablesTableFilter, iptablesInsert, getBlockIntrospectionOffhostAccessInputChainArgs, true)
+		// if err != nil {
+		// 	log.Errorf("Error adding input chain entry to block offhost introspection access: %v", err)
+		// }
+
+		err = route.modifyNetfilterEntry(iptablesTableFilter, iptablesAppend, blockOffhostIntrospectionArgs, true)
 		if err != nil {
 			log.Errorf("Error adding input chain entry to block offhost introspection access: %v", err)
 		}
+
 	}
 
 	return route.modifyNetfilterEntry(iptablesTableNat, iptablesAppend, getOutputChainArgs, false)
@@ -137,7 +143,12 @@ func (route *NetfilterRoute) Remove() error {
 		}
 	}
 
-	introspectionInputError = route.modifyNetfilterEntry(iptablesTableFilter, iptablesDelete, getBlockIntrospectionOffhostAccessInputChainArgs, true)
+	// introspectionInputError = route.modifyNetfilterEntry(iptablesTableFilter, iptablesDelete, getBlockIntrospectionOffhostAccessInputChainArgs, true)
+	// if introspectionInputError != nil {
+	// 	introspectionInputError = fmt.Errorf("error removing input chain entry: %v", introspectionInputError)
+	// }
+
+	introspectionInputError = route.modifyNetfilterEntry(iptablesTableFilter, iptablesDelete, blockOffhostIntrospectionArgs, true)
 	if introspectionInputError != nil {
 		introspectionInputError = fmt.Errorf("error removing input chain entry: %v", introspectionInputError)
 	}
@@ -350,4 +361,10 @@ func allowOffhostIntrospection() bool {
 		return false
 	}
 	return b
+}
+
+func blockOffhostIntrospectionArgs() []string {
+	return []string{
+		"INPUT", "-p", "tcp", "--dport", agentIntrospectionServerPort, "!", "-i", "lo", "-j", "DROP",
+	}
 }
