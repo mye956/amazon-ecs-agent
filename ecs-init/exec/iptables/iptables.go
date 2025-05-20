@@ -111,9 +111,16 @@ func (route *NetfilterRoute) Create() error {
 	}
 
 	if !allowOffhostIntrospection() {
-		err = route.modifyNetfilterEntry(iptablesTableFilter, iptablesInsert, getBlockIntrospectionOffhostAccessInputChainArgs, true)
+		// First, add a rule to allow connections from the host network namespace (localhost)
+		err = route.modifyNetfilterEntry(iptablesTableFilter, iptablesInsert, getBlockIntrospectionExceptHostNamespaceInputChainArgs, true)
 		if err != nil {
-			log.Errorf("Error adding input chain entry to block offhost introspection access: %v", err)
+			log.Errorf("Error adding input chain entry to allow host namespace introspection access: %v", err)
+		}
+
+		// Then, add a rule to block all other connections to the introspection port
+		err = route.modifyNetfilterEntry(iptablesTableFilter, iptablesInsert, getBlockAllIntrospectionInputChainArgs, true)
+		if err != nil {
+			log.Errorf("Error adding input chain entry to block all other introspection access: %v", err)
 		}
 	}
 
@@ -137,6 +144,19 @@ func (route *NetfilterRoute) Remove() error {
 		}
 	}
 
+	// Remove the rule that allows connections from the host network namespace
+	hostNamespaceError := route.modifyNetfilterEntry(iptablesTableFilter, iptablesDelete, getBlockIntrospectionExceptHostNamespaceInputChainArgs, true)
+	if hostNamespaceError != nil {
+		hostNamespaceError = fmt.Errorf("error removing host namespace allow rule: %v", hostNamespaceError)
+	}
+
+	// Remove the rule that blocks all other connections to the introspection port
+	blockAllError := route.modifyNetfilterEntry(iptablesTableFilter, iptablesDelete, getBlockAllIntrospectionInputChainArgs, true)
+	if blockAllError != nil {
+		blockAllError = fmt.Errorf("error removing block all rule: %v", blockAllError)
+	}
+
+	// Remove the original rule for backward compatibility
 	introspectionInputError = route.modifyNetfilterEntry(iptablesTableFilter, iptablesDelete, getBlockIntrospectionOffhostAccessInputChainArgs, true)
 	if introspectionInputError != nil {
 		introspectionInputError = fmt.Errorf("error removing input chain entry: %v", introspectionInputError)
@@ -148,7 +168,7 @@ func (route *NetfilterRoute) Remove() error {
 		outputErr = fmt.Errorf("error removing output chain entry: %v", outputErr)
 	}
 
-	return combinedError(preroutingErr, localhostInputError, introspectionInputError, outputErr)
+	return combinedError(preroutingErr, localhostInputError, hostNamespaceError, blockAllError, introspectionInputError, outputErr)
 }
 
 func combinedError(errs ...error) error {
@@ -229,6 +249,29 @@ func getBlockIntrospectionOffhostAccessInputChainArgs() []string {
 		"INPUT",
 		"-p", "tcp",
 		"-i", defaultOffhostIntrospectionInterface,
+		"--dport", agentIntrospectionServerPort,
+		"-j", "DROP",
+	}
+}
+
+// getBlockIntrospectionExceptHostNamespaceInputChainArgs returns iptables arguments to block all connections
+// to the agent introspection server port except those coming from the host network namespace (localhost)
+func getBlockIntrospectionExceptHostNamespaceInputChainArgs() []string {
+	return []string{
+		"INPUT",
+		"-p", "tcp",
+		"--dport", agentIntrospectionServerPort,
+		"-s", localhostNetwork,
+		"-j", "ACCEPT",
+	}
+}
+
+// getBlockAllIntrospectionInputChainArgs returns iptables arguments to block all remaining connections
+// to the agent introspection server port after the host namespace rule has been applied
+func getBlockAllIntrospectionInputChainArgs() []string {
+	return []string{
+		"INPUT",
+		"-p", "tcp",
 		"--dport", agentIntrospectionServerPort,
 		"-j", "DROP",
 	}
