@@ -24,7 +24,6 @@ import (
 	"unicode"
 
 	"github.com/aws/amazon-ecs-agent/ecs-init/exec"
-	nlWrapper "github.com/aws/amazon-ecs-agent/ecs-init/utils/netlinkwrapper"
 
 	log "github.com/cihub/seelog"
 	"github.com/pkg/errors"
@@ -65,13 +64,13 @@ const (
 
 var (
 	defaultOffhostIntrospectionInterface = ""
+	defaultLoopbackInterface             = ""
 )
 
 // NetfilterRoute implements the engine.credentialsProxyRoute interface by
 // running the external 'iptables' command
 type NetfilterRoute struct {
 	cmdExec exec.Exec
-	netlink nlWrapper.NetLink
 }
 
 // getNetfilterChainArgsFunc defines a function pointer type that returns
@@ -94,10 +93,14 @@ func NewNetfilterRoute(cmdExec exec.Exec) (*NetfilterRoute, error) {
 		// might affect some customer with a special routing setup that's previously working.
 		defaultOffhostIntrospectionInterface = fallbackOffhostIntrospectionInterface
 	}
+	defaultLoopbackInterface, err = getLoopbackInterfaceName()
+	if err != nil {
+		log.Warnf("Error resolving loopback network interface, will use lo as fallback: %+v", err)
+		defaultLoopbackInterface = "lo"
+	}
 
 	return &NetfilterRoute{
 		cmdExec: cmdExec,
-		netlink: nlWrapper.New(),
 	}, nil
 }
 
@@ -120,7 +123,7 @@ func (route *NetfilterRoute) Create() error {
 		// if err != nil {
 		// 	log.Errorf("Error adding input chain entry to block offhost introspection access: %v", err)
 		// }
-		getLoopbackInterfaceName(route.netlink)
+		getLoopbackInterfaceName()
 
 		err = route.modifyNetfilterEntry(iptablesTableFilter, iptablesAppend, blockOffhostIntrospectionArgs, true)
 		if err != nil {
@@ -372,25 +375,24 @@ func allowOffhostIntrospection() bool {
 
 func blockOffhostIntrospectionArgs() []string {
 	return []string{
-		"INPUT", "-p", "tcp", "--dport", agentIntrospectionServerPort, "!", "-i", "lo", "-j", "DROP",
+		"INPUT", "-p", "tcp", "--dport", agentIntrospectionServerPort, "!", "-i", defaultLoopbackInterface, "-j", "DROP",
 	}
 }
 
-func getLoopbackInterfaceName(nl nlWrapper.NetLink) (string, error) {
-	var loopbackName string
-	links, err := nl.LinkList()
+func getLoopbackInterfaceName() (string, error) {
+	interfaces, err := net.Interfaces()
 	if err != nil {
 		return "", err
 	}
-	for _, link := range links {
 
-		isLoopback := link.Attrs().Flags&net.FlagLoopback != 0
-		log.Infof("Interface name %s of type %s and with flags %s. Is it a loopback? %t", link.Attrs().Name, link.Type(), link.Attrs().Flags.String(), isLoopback)
+	for _, iface := range interfaces {
+		isLoopback := iface.Flags&net.FlagLoopback != 0
+		log.Infof("Checking if interface: %s is a loopback. is it? %t", iface.Name, isLoopback)
 		if isLoopback {
-			log.Infof("Interface with name %s is a loopback interface", link.Attrs().Name, isLoopback)
-			break
+			log.Infof("Interface: %s is a loopback interface", iface.Name)
+			return iface.Name, nil
 		}
-
 	}
-	return loopbackName, nil
+
+	return "", errors.New("unable to find loopback interface")
 }
