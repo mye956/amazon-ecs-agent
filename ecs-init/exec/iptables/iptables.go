@@ -17,12 +17,15 @@ import (
 	"bufio"
 	"fmt"
 	"io"
+	"net"
 	"os"
 	"strconv"
 	"strings"
 	"unicode"
 
 	"github.com/aws/amazon-ecs-agent/ecs-init/exec"
+	nlWrapper "github.com/aws/amazon-ecs-agent/ecs-init/utils/netlinkwrapper"
+
 	log "github.com/cihub/seelog"
 	"github.com/pkg/errors"
 )
@@ -68,6 +71,7 @@ var (
 // running the external 'iptables' command
 type NetfilterRoute struct {
 	cmdExec exec.Exec
+	netlink nlWrapper.NetLink
 }
 
 // getNetfilterChainArgsFunc defines a function pointer type that returns
@@ -93,6 +97,7 @@ func NewNetfilterRoute(cmdExec exec.Exec) (*NetfilterRoute, error) {
 
 	return &NetfilterRoute{
 		cmdExec: cmdExec,
+		netlink: nlWrapper.New(),
 	}, nil
 }
 
@@ -115,6 +120,7 @@ func (route *NetfilterRoute) Create() error {
 		// if err != nil {
 		// 	log.Errorf("Error adding input chain entry to block offhost introspection access: %v", err)
 		// }
+		getLoopbackInterfaceName(route.netlink)
 
 		err = route.modifyNetfilterEntry(iptablesTableFilter, iptablesAppend, blockOffhostIntrospectionArgs, true)
 		if err != nil {
@@ -192,6 +198,7 @@ func (route *NetfilterRoute) modifyNetfilterEntry(table string, action iptablesA
 
 	// Checking if we need to apply the netfilter table action for IPv6 as well.
 	if useIp6tables {
+		log.Infof("Ip6tables is available. Blocking offhost access. Command arguments %s", strings.Join(args, ", "))
 		_, err = route.cmdExec.LookPath(ip6tablesExecutable)
 		if err != nil {
 			log.Warnf("%s unable to be found on the host. Assuming IPv6 isn't available on the host and will not apply %s.", ip6tablesExecutable, getActionName(action))
@@ -367,4 +374,23 @@ func blockOffhostIntrospectionArgs() []string {
 	return []string{
 		"INPUT", "-p", "tcp", "--dport", agentIntrospectionServerPort, "!", "-i", "lo", "-j", "DROP",
 	}
+}
+
+func getLoopbackInterfaceName(nl nlWrapper.NetLink) (string, error) {
+	var loopbackName string
+	links, err := nl.LinkList()
+	if err != nil {
+		return "", err
+	}
+	for _, link := range links {
+
+		isLoopback := link.Attrs().Flags&net.FlagLoopback != 0
+		log.Infof("Interface name %s of type %s and with flags %s. Is it a loopback? %t", link.Attrs().Name, link.Type(), link.Attrs().Flags.String(), isLoopback)
+		if isLoopback {
+			log.Infof("Interface with name %s is a loopback interface", link.Attrs().Name, isLoopback)
+			break
+		}
+
+	}
+	return loopbackName, nil
 }
