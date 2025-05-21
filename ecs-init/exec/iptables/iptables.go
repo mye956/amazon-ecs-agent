@@ -123,11 +123,17 @@ func (route *NetfilterRoute) Create() error {
 		// if err != nil {
 		// 	log.Errorf("Error adding input chain entry to block offhost introspection access: %v", err)
 		// }
-		getLoopbackInterfaceName()
+
+		err = route.modifyNetfilterEntry(iptablesTableFilter, iptablesAppend, allowIntrospectionAccessForDocker0Args, true)
+		if err != nil {
+			log.Errorf("Error adding input chain entry to block offhost introspection access: %v", err)
+			return err
+		}
 
 		err = route.modifyNetfilterEntry(iptablesTableFilter, iptablesAppend, blockOffhostIntrospectionArgs, true)
 		if err != nil {
 			log.Errorf("Error adding input chain entry to block offhost introspection access: %v", err)
+			return err
 		}
 
 	}
@@ -144,7 +150,7 @@ func (route *NetfilterRoute) Remove() error {
 		preroutingErr = fmt.Errorf("error removing prerouting chain entry: %v", preroutingErr)
 	}
 
-	var localhostInputError, introspectionInputError error
+	var localhostInputError, allowDocker0IntrospectionInputError, introspectionInputError error
 	if !skipLocalhostTrafficFilter() {
 		localhostInputError = route.modifyNetfilterEntry(iptablesTableFilter, iptablesDelete, getLocalhostTrafficFilterInputChainArgs, false)
 		if localhostInputError != nil {
@@ -157,6 +163,11 @@ func (route *NetfilterRoute) Remove() error {
 	// 	introspectionInputError = fmt.Errorf("error removing input chain entry: %v", introspectionInputError)
 	// }
 
+	allowDocker0IntrospectionInputError = route.modifyNetfilterEntry(iptablesTableFilter, iptablesDelete, allowIntrospectionAccessForDocker0Args, true)
+	if allowDocker0IntrospectionInputError != nil {
+		allowDocker0IntrospectionInputError = fmt.Errorf("error removing input chain entry: %v", allowDocker0IntrospectionInputError)
+	}
+
 	introspectionInputError = route.modifyNetfilterEntry(iptablesTableFilter, iptablesDelete, blockOffhostIntrospectionArgs, true)
 	if introspectionInputError != nil {
 		introspectionInputError = fmt.Errorf("error removing input chain entry: %v", introspectionInputError)
@@ -168,7 +179,7 @@ func (route *NetfilterRoute) Remove() error {
 		outputErr = fmt.Errorf("error removing output chain entry: %v", outputErr)
 	}
 
-	return combinedError(preroutingErr, localhostInputError, introspectionInputError, outputErr)
+	return combinedError(preroutingErr, localhostInputError, allowDocker0IntrospectionInputError, introspectionInputError, outputErr)
 }
 
 func combinedError(errs ...error) error {
@@ -371,6 +382,12 @@ func allowOffhostIntrospection() bool {
 		return false
 	}
 	return b
+}
+
+func allowIntrospectionAccessForDocker0Args() []string {
+	return []string{
+		"INPUT", "-p", "tcp", "--dport", agentIntrospectionServerPort, "-i", "docker0", "-j", "ACCEPT",
+	}
 }
 
 func blockOffhostIntrospectionArgs() []string {
