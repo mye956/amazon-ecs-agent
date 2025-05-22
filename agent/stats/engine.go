@@ -914,6 +914,10 @@ func (engine *DockerStatsEngine) taskContainerMetricsUnsafe(taskArn string) ([]*
 								field.Error:     err,
 							})
 						} else {
+							logger.Info("Container network stats", logger.Fields{
+								"networkRxBytes": networkStatsSet.RxBytesPerSecond,
+								"networkTxBytes": networkStatsSet.TxBytesPerSecond,
+							})
 							containerMetric.NetworkStatsSet = networkStatsSet
 						}
 					}
@@ -925,6 +929,7 @@ func (engine *DockerStatsEngine) taskContainerMetricsUnsafe(taskArn string) ([]*
 					// do not add network stats for pause container
 					if dockerContainer.Container.Type != apicontainer.ContainerCNIPause {
 						networkStats, err := taskStatsMap.StatsQueue.GetNetworkStatsSet()
+
 						if err != nil && age > gracePeriod {
 							logger.Warn("Error getting network stats for container", logger.Fields{
 								field.TaskARN:   taskArn,
@@ -932,6 +937,10 @@ func (engine *DockerStatsEngine) taskContainerMetricsUnsafe(taskArn string) ([]*
 								field.Error:     err,
 							})
 						} else {
+							logger.Info("Container network stats for awsvpc", logger.Fields{
+								"networkRxBytes": networkStats.RxBytesPerSecond,
+								"networkTxBytes": networkStats.TxBytesPerSecond,
+							})
 							containerMetric.NetworkStatsSet = networkStats
 						}
 					}
@@ -1010,6 +1019,11 @@ func (engine *DockerStatsEngine) ContainerDockerStats(taskARN string, containerI
 			taskARN)
 	}
 
+	logger.Info("Container network stats", logger.Fields{
+		"networkRxBytes": containerNetworkRateStats.RxBytesPerSecond,
+		"networkTxBytes": containerNetworkRateStats.TxBytesPerSecond,
+	})
+
 	if task.IsNetworkModeAWSVPC() {
 		taskStats, ok := taskToTaskStats[taskARN]
 		if ok {
@@ -1017,6 +1031,10 @@ func (engine *DockerStatsEngine) ContainerDockerStats(taskARN string, containerI
 				containerStats.Networks = taskStats.StatsQueue.GetLastStat().Networks
 			}
 			containerNetworkRateStats = taskStats.StatsQueue.GetLastNetworkStatPerSec()
+			logger.Info("AWSVPC Container network stats", logger.Fields{
+				"networkRxBytes": containerNetworkRateStats.RxBytesPerSecond,
+				"networkTxBytes": containerNetworkRateStats.TxBytesPerSecond,
+			})
 		} else {
 			logger.Warn("Network stats not found for container", logger.Fields{
 				field.TaskID:    task.GetID(),
