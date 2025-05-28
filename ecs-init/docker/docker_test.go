@@ -28,6 +28,10 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
+const (
+	testDockerBridgeInterfaceName = "docker0"
+)
+
 func TestIsAgentImageLoadedListFailure(t *testing.T) {
 	mockCtrl := gomock.NewController(t)
 	defer mockCtrl.Finish()
@@ -212,6 +216,57 @@ func TestStartAgentNoEnvFile(t *testing.T) {
 	if err != nil {
 		t.Error("Error should not be returned")
 	}
+}
+
+func TestFindDefaultBridgeNetworkInterfaceName(t *testing.T) {
+
+	testCases := []struct {
+		name                              string
+		expectedError                     error
+		expectedDockerBridgeInterfaceName string
+		mockExpectations                  func(mockDocker *Mockdockerclient)
+	}{
+		{
+			name:                              "success",
+			expectedError:                     nil,
+			expectedDockerBridgeInterfaceName: testDockerBridgeInterfaceName,
+			mockExpectations: func(mockDocker *Mockdockerclient) {
+				mockDocker.EXPECT().FilteredListNetworks(gomock.Any()).Return(append(make([]godocker.Network, 0), godocker.Network{
+					Options: map[string]string{
+						dockerDefaultBridgeInterfaceOption: "true",
+						dockerInterfaceNameOption:          testDockerBridgeInterfaceName,
+					},
+				}), nil)
+			},
+		},
+		{
+			name:                              "error",
+			expectedError:                     fmt.Errorf("error unable to find docker bridge interface"),
+			expectedDockerBridgeInterfaceName: "",
+			mockExpectations: func(mockDocker *Mockdockerclient) {
+				mockDocker.EXPECT().FilteredListNetworks(gomock.Any()).Return(nil, fmt.Errorf("error unable to find docker bridge interface"))
+			},
+		},
+	}
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			mockCtrl := gomock.NewController(t)
+			defer mockCtrl.Finish()
+
+			mockDocker := NewMockdockerclient(mockCtrl)
+
+			tc.mockExpectations(mockDocker)
+
+			client := &client{
+				docker: mockDocker,
+			}
+			dockerBridgeInterfaceName, err := client.FindDefaultBridgeNetworkInterfaceName()
+
+			assert.Equal(t, tc.expectedError, err)
+			assert.Equal(t, tc.expectedDockerBridgeInterfaceName, dockerBridgeInterfaceName)
+		})
+	}
+
 }
 
 func validateCommonCreateContainerOptions(

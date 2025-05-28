@@ -129,8 +129,10 @@ const (
 
 	// modinfo is used to display information about a Linux kernel module. This is used by the ECS agent for the
 	// fault inject functionality. Ref: https://man7.org/linux/man-pages/man8/modinfo.8.html
-	modInfoSbinDir    = "/sbin/modinfo"
-	modInfoUsrSbinDir = "/usr/sbin/modinfo"
+	modInfoSbinDir                     = "/sbin/modinfo"
+	modInfoUsrSbinDir                  = "/usr/sbin/modinfo"
+	dockerDefaultBridgeInterfaceOption = "com.docker.network.bridge.default_bridge"
+	dockerInterfaceNameOption          = "com.docker.network.bridge.name"
 )
 
 // Do NOT include "CAP_" in capability string
@@ -649,10 +651,10 @@ func (c *client) FindDefaultBridgeNetworkInterfaceName() (string, error) {
 	}
 
 	for _, network := range networks {
-		val, ok := network.Options["com.docker.network.bridge.default_bridge"]
+		val, ok := network.Options[dockerDefaultBridgeInterfaceOption]
 		if ok {
 			if val == "true" {
-				interfaceName, ok := network.Options["com.docker.network.bridge.name"]
+				interfaceName, ok := network.Options[dockerInterfaceNameOption]
 				if ok {
 					return interfaceName, nil
 				}
