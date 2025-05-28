@@ -16,6 +16,7 @@ package docker
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"io"
 	"os"
 	"os/exec"
@@ -637,6 +638,28 @@ func (c *client) StopAgent() error {
 		return nil
 	}
 	return err
+}
+
+func (c *client) FindDefaultBridgeNetworkInterfaceName() (string, error) {
+	networks, err := c.docker.FilteredListNetworks(godocker.NetworkFilterOpts{
+		"driver": map[string]bool{"bridge": true},
+	})
+	if err != nil {
+		return "", err
+	}
+
+	for _, network := range networks {
+		val, ok := network.Options["com.docker.network.bridge.default_bridge"]
+		if ok {
+			if val == "true" {
+				interfaceName, ok := network.Options["com.docker.network.bridge.name"]
+				if ok {
+					return interfaceName, nil
+				}
+			}
+		}
+	}
+	return "", fmt.Errorf("unable to find any docker bridge networks")
 }
 
 // isDomainJoined is used to validate if container instance is part of a valid active directory.
