@@ -31,7 +31,6 @@ import (
 	"github.com/aws/amazon-ecs-agent/ecs-agent/wsclient"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
-	awscreds "github.com/aws/aws-sdk-go/aws/credentials"
 	"github.com/cihub/seelog"
 	"github.com/pborman/uuid"
 )
@@ -555,19 +554,7 @@ func signRequestFunc(url, region string, credentialsCache *aws.CredentialsCache)
 			return nil, err
 		}
 
-		// hack to get v2 creds into v1 object.
-		// TODO: Can be removed once TCS adds support for AWS SDK v2 Credentials
-		credentialsProvider, err := credentialsCache.Retrieve(context.TODO())
-		if err != nil || !credentialsProvider.HasKeys() {
-			logger.Error("Error getting valid credentials", logger.Fields{
-				field.Error: err,
-			})
-			return nil, err
-		}
-		creds := awscreds.NewStaticCredentials(credentialsProvider.AccessKeyID, credentialsProvider.SecretAccessKey, credentialsProvider.SessionToken)
-
-		// TODO: Modify this to use SignHTTPRequest() when TCS adds support for AWS SDK v2 Credentials
-		err = utils.SignHTTPRequestV1(request, region, "ecs", creds, reqBody)
+		err = utils.SignHTTPRequest(request, region, "ecs", credentialsCache, reqBody)
 		if err != nil {
 			return nil, err
 		}
