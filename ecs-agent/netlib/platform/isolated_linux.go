@@ -18,6 +18,7 @@ import (
 	"fmt"
 	"net"
 	"path/filepath"
+	"time"
 
 	"github.com/aws/amazon-ecs-agent/ecs-agent/logger"
 	netlibdata "github.com/aws/amazon-ecs-agent/ecs-agent/netlib/data"
@@ -136,8 +137,44 @@ func (il *isolatedLinux) configureBranchENI(ctx context.Context, netNSPath strin
 	return err
 }
 
+var (
+	// gatewayNeighborResolveTimeout bounds how long we wait for the task-netns
+	// kernel to ARP-resolve the VPC gateway's MAC. It is set to match the
+	// kernel's own worst-case resolution horizon for a new neighbor:
+	// mcast_solicit (default 3) x retrans_time_ms (default 1000ms) = ~3s
+	// (see man 7 arp, /proc/sys/net/ipv4/neigh/<iface>/).
+	gatewayNeighborResolveTimeout = 3 * time.Second
+	// gatewayNeighborResolveInterval is the poll/probe interval while waiting.
+	gatewayNeighborResolveInterval = 100 * time.Millisecond
+)
+
+// gatewayProbePort is an arbitrary UDP port used only to nudge the kernel into
+// ARP-resolving the gateway; nothing is expected to listen there.
+const gatewayProbePort = "9"
+
+// gatewayProbeFn prompts the kernel to resolve gwIP by emitting a single
+// throwaway datagram from the current network namespace. It is a package var
+// so unit tests can stub it. Errors are intentionally ignored: the datagram
+// exists only to trigger ARP; the ARP reply (not the datagram's delivery) is
+// what populates the neighbor table.
+var gatewayProbeFn = func(gwIP net.IP) {
+	conn, err := net.DialTimeout("udp", net.JoinHostPort(gwIP.String(), gatewayProbePort), gatewayNeighborResolveInterval)
+	if err != nil {
+		return
+	}
+	_, _ = conn.Write([]byte{0})
+	_ = conn.Close()
+}
+
 // addGatewayNeighbor installs a permanent ARP entry and /32 link-scope route
 // for the gateway in the task netns.
+//
+// The gateway MAC is resolved from *inside* the task netns, where the task ENI
+// (carrying the task's own VPC IP) has L2 reachability to the gateway. On ECS
+// managed instances the host instance's subnet may or may not match the task's
+// subnet; when it differs, the host root netns ARP cache does not contain the
+// task's gateway. Resolving in the task netns works in both cases, regardless
+// of the host's subnet.
 func (il *isolatedLinux) addGatewayNeighbor(netNSPath string, eni *networkinterface.NetworkInterface) error {
 	// IPv6-only interfaces have no IPv4 gateway to pre-resolve, even when the
 	// payload carries a subnet gateway IPv4 address. The guest resolves the
@@ -157,16 +194,8 @@ func (il *isolatedLinux) addGatewayNeighbor(netNSPath string, eni *networkinterf
 		return fmt.Errorf("failed to parse gateway IP: %s", gwIPStr)
 	}
 
-	// The gateway MAC must be resolved from the host before entering the task
-	// netns, because the ENI has already been moved out of the host namespace.
-	gwMAC, err := il.resolveHostNeighbor(gwIP)
-	if err != nil {
-		return errors.Wrap(err, "gateway MAC not in host neighbor cache")
-	}
-
 	logger.Info("Installing gateway neighbor in task netns", map[string]interface{}{
 		"GatewayIP":  gwIP.String(),
-		"GatewayMAC": gwMAC.String(),
 		"NetNSPath":  netNSPath,
 		"DeviceName": eni.DeviceName,
 	})
@@ -175,6 +204,11 @@ func (il *isolatedLinux) addGatewayNeighbor(netNSPath string, eni *networkinterf
 		link, linkErr := il.common.netlink.LinkByName(eni.DeviceName)
 		if linkErr != nil {
 			return errors.Wrapf(linkErr, "failed to find device %s in task netns", eni.DeviceName)
+		}
+
+		gwMAC, err := il.resolveGatewayNeighbor(link, gwIP)
+		if err != nil {
+			return errors.Wrap(err, "gateway MAC not resolvable in task netns")
 		}
 
 		neigh := &netlink.Neigh{
@@ -205,21 +239,51 @@ func (il *isolatedLinux) addGatewayNeighbor(netNSPath string, eni *networkinterf
 	})
 }
 
-// resolveHostNeighbor looks up the MAC address for the given IP in the host's
-// neighbor (ARP) table. Returns an error if no entry is found.
-func (il *isolatedLinux) resolveHostNeighbor(ip net.IP) (net.HardwareAddr, error) {
-	neighbors, err := il.common.netlink.NeighList(0, netlink.FAMILY_V4)
+// resolveGatewayNeighbor resolves the gateway's MAC from within the current
+// (task) network namespace. It polls the interface's neighbor table, nudging
+// the kernel to ARP the gateway between polls, until an entry with a resolved
+// MAC appears or the timeout elapses. It must be called inside the task netns
+// (e.g. from within ExecInNSPath).
+func (il *isolatedLinux) resolveGatewayNeighbor(link netlink.Link, gwIP net.IP) (net.HardwareAddr, error) {
+	linkIndex := link.Attrs().Index
+	deadline := time.Now().Add(gatewayNeighborResolveTimeout)
+
+	for {
+		mac, err := il.lookupNeighbor(linkIndex, gwIP)
+		if err != nil {
+			return nil, err
+		}
+		if mac != nil {
+			return mac, nil
+		}
+
+		if time.Now().After(deadline) {
+			break
+		}
+
+		// Nudge the kernel to resolve the gateway, then wait before re-checking.
+		gatewayProbeFn(gwIP)
+		time.Sleep(gatewayNeighborResolveInterval)
+	}
+
+	return nil, fmt.Errorf("no neighbor entry for %s in task netns after %s", gwIP, gatewayNeighborResolveTimeout)
+}
+
+// lookupNeighbor returns the resolved MAC for ip on the given interface, or nil
+// if there is no usable (resolved, non-failed) entry yet.
+func (il *isolatedLinux) lookupNeighbor(linkIndex int, ip net.IP) (net.HardwareAddr, error) {
+	neighbors, err := il.common.netlink.NeighList(linkIndex, netlink.FAMILY_V4)
 	if err != nil {
-		return nil, errors.Wrap(err, "failed to list host neighbors")
+		return nil, errors.Wrap(err, "failed to list neighbors")
 	}
 
 	for _, n := range neighbors {
-		if n.IP.Equal(ip) && len(n.HardwareAddr) > 0 {
+		if n.IP.Equal(ip) && len(n.HardwareAddr) > 0 && n.State != netlink.NUD_FAILED {
 			return n.HardwareAddr, nil
 		}
 	}
 
-	return nil, fmt.Errorf("no neighbor entry for %s in host ARP table", ip)
+	return nil, nil
 }
 
 // CreateDNSConfig creates the task DNS config files and backfills the
