@@ -1146,7 +1146,7 @@ func (agent *ecsAgent) startACSSession(
 		IsDocker:           true,
 	}
 
-	payloadMessageHandler := agentacs.NewPayloadMessageHandler(taskEngine, client, agent.dataClient, taskHandler,
+	payloadMessageHandler := agentacs.NewPayloadMessageHandler(agent.ctx, taskEngine, client, agent.dataClient, taskHandler,
 		credentialsManager, agent.latestSeqNumberTaskManifest)
 	credsMetadataSetter := agentacs.NewCredentialsMetadataSetter(taskEngine, agent.getConfig().InstanceIPCompatibility)
 	eniHandler := agentacs.NewENIHandler(state, agent.dataClient)

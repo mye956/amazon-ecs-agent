@@ -75,6 +75,9 @@ type Client interface {
 
 	// SaveTask saves the data of a task.
 	SaveTask(*task.Task) error
+	// SaveTasks saves the data of multiple tasks in a single transaction, so a
+	// multi-task ACS payload incurs one fsync rather than one per task.
+	SaveTasks([]*task.Task) error
 	// DeleteTask deletes the data of a task.
 	DeleteTask(string) error
 	// GetTasks gets the data of all the tasks.

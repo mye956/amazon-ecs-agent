@@ -21,6 +21,7 @@ import (
 	"reflect"
 	"sync"
 	"testing"
+	"time"
 
 	apitask "github.com/aws/amazon-ecs-agent/agent/api/task"
 	"github.com/aws/amazon-ecs-agent/agent/data"
@@ -80,10 +81,11 @@ func setup(t *testing.T, acsResponseSender wsclient.RespondFunc) *testHelper {
 	ecsClient := mock_ecs.NewMockECSClient(ctrl)
 	dataClient := data.NewNoopClient()
 	credentialsManager := credentials.NewManager()
-	ctx := context.Background()
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
 	taskHandler := eventhandler.NewTaskHandler(ctx, data.NewNoopClient(), nil, nil)
 	latestSeqNumberTaskManifest := int64(10)
-	payloadMsgHandler := NewPayloadMessageHandler(taskEngine, ecsClient, dataClient, taskHandler, credentialsManager,
+	payloadMsgHandler := NewPayloadMessageHandler(ctx, taskEngine, ecsClient, dataClient, taskHandler, credentialsManager,
 		&latestSeqNumberTaskManifest)
 	payloadResponder := acssession.NewPayloadResponder(payloadMsgHandler, acsResponseSender)
 
@@ -170,10 +172,13 @@ func TestHandlePayloadMessageSaveDataError(t *testing.T) {
 	tester.payloadMessageHandler.dataClient = dataClient
 	defer tester.ctrl.Finish()
 
-	// Save added task in the addedTask variable.
+	// Save added task in the addedTask variable. Processing happens on the
+	// writer goroutine, so signal when AddTask is called to synchronize.
+	addTaskCalled := make(chan struct{})
 	var addedTask *apitask.Task
 	tester.mockTaskEngine.EXPECT().AddTask(gomock.Any()).Do(func(task *apitask.Task) {
 		addedTask = task
+		close(addTaskCalled)
 	}).Times(1)
 
 	// Check if handleSingleMessage returns an error when we get error saving task data.
@@ -186,7 +191,11 @@ func TestHandlePayloadMessageSaveDataError(t *testing.T) {
 		},
 	}
 	handlePayloadMessage(testPayloadMessage)
-	assert.False(t, ackSent,
+
+	// Wait for the writer goroutine to add the task, then allow the (failed)
+	// persistence and the no-ACK decision to complete.
+	<-addTaskCalled
+	assert.Eventually(t, func() bool { return !ackSent }, time.Second, 10*time.Millisecond,
 		"Expected no ACK of payload message when adding a task from statemanager results in error")
 
 	// We expect task to be added to the engine even though it couldn't be saved.

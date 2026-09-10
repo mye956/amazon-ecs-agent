@@ -37,6 +37,35 @@ func (c *client) SaveTask(task *apitask.Task) error {
 	})
 }
 
+// SaveTasks saves multiple tasks within a single transaction. bbolt commits
+// (and fsyncs) once per transaction, so persisting an N-task payload this way
+// costs one fsync instead of N. The write is all-or-nothing: if any task fails
+// to serialize, the transaction rolls back and none are persisted, so the
+// caller can decline to ACK and let ACS redeliver the whole payload.
+//
+// DB.Batch (rather than Update) is used so these commits coalesce with the
+// concurrent per-task writes issued by task manager goroutines. The closure may
+// be retried by bbolt and is idempotent because PutObject writes by key.
+func (c *client) SaveTasks(tasks []*apitask.Task) error {
+	ids := make([]string, len(tasks))
+	for i, task := range tasks {
+		id, err := utils.GetTaskID(task.Arn)
+		if err != nil {
+			return errors.Wrap(err, "failed to generate database id")
+		}
+		ids[i] = id
+	}
+	return c.DB.Batch(func(tx *bolt.Tx) error {
+		b := tx.Bucket([]byte(tasksBucketName))
+		for i, task := range tasks {
+			if err := c.Accessor.PutObject(b, ids[i], task); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+}
+
 // DeleteTask deletes a task from the task bucket.
 func (c *client) DeleteTask(id string) error {
 	return c.DB.Batch(func(tx *bolt.Tx) error {

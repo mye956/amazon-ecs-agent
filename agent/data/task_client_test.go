@@ -58,6 +58,44 @@ func TestSaveTaskInvalidID(t *testing.T) {
 	assert.Error(t, testClient.SaveTask(testTask))
 }
 
+func TestSaveTasks(t *testing.T) {
+	testClient := newTestClient(t)
+
+	tasks := []*apitask.Task{
+		{Arn: testTaskArn1},
+		{Arn: testTaskArn2},
+	}
+	require.NoError(t, testClient.SaveTasks(tasks))
+
+	res, err := testClient.GetTasks()
+	require.NoError(t, err)
+	assert.Len(t, res, 2)
+}
+
+func TestSaveTasksEmpty(t *testing.T) {
+	testClient := newTestClient(t)
+
+	require.NoError(t, testClient.SaveTasks(nil))
+	res, err := testClient.GetTasks()
+	require.NoError(t, err)
+	assert.Len(t, res, 0)
+}
+
+func TestSaveTasksInvalidIDRollsBack(t *testing.T) {
+	testClient := newTestClient(t)
+
+	// A single invalid ARN fails the whole batch; no task is persisted.
+	tasks := []*apitask.Task{
+		{Arn: testTaskArn1},
+		{Arn: "invalid-arn"},
+	}
+	assert.Error(t, testClient.SaveTasks(tasks))
+
+	res, err := testClient.GetTasks()
+	require.NoError(t, err)
+	assert.Len(t, res, 0)
+}
+
 func TestHasNonTerminalTasks(t *testing.T) {
 	tests := []struct {
 		name     string

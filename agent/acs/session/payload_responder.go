@@ -14,6 +14,7 @@
 package session
 
 import (
+	"context"
 	"fmt"
 
 	"github.com/aws/amazon-ecs-agent/agent/api"
@@ -40,6 +41,19 @@ import (
 // and returns the boolean comparison result.
 type skipAddTaskComparatorFunc func(apitaskstatus.TaskStatus) bool
 
+// payloadMessageQueueBufferSize bounds the number of payload messages that may be
+// buffered between the ACS read goroutine and the persistence writer goroutine.
+// A bounded buffer caps memory use; when it fills, enqueue blocks the read
+// goroutine (see ProcessMessage).
+const payloadMessageQueueBufferSize = 100
+
+// payloadMessageRequest is a unit of work handed from the ACS read goroutine to
+// the persistence writer goroutine.
+type payloadMessageRequest struct {
+	message *ecsacs.PayloadMessage
+	ackFunc func(*ecsacs.AckRequest, []*ecsacs.IAMRoleCredentialsAckRequest)
+}
+
 // payloadMessageHandler implements PayloadMessageHandler interface defined in ecs-agent module.
 type payloadMessageHandler struct {
 	taskEngine                  engine.TaskEngine
@@ -48,29 +62,43 @@ type payloadMessageHandler struct {
 	taskHandler                 *eventhandler.TaskHandler
 	credentialsManager          credentials.Manager
 	latestSeqNumberTaskManifest *int64
+	// payloadQueue decouples task conversion, engine insertion, and the boltdb
+	// commit from the ACS read goroutine. A single writer goroutine drains it,
+	// so the read loop keeps draining the websocket even when a payload's
+	// persistence is slow (e.g. an fsync stalled by a contended disk).
+	payloadQueue chan *payloadMessageRequest
 }
 
-// NewPayloadMessageHandler creates a new payloadMessageHandler.
-func NewPayloadMessageHandler(taskEngine engine.TaskEngine,
+// NewPayloadMessageHandler creates a new payloadMessageHandler and starts the
+// single writer goroutine that processes and persists payloads off the ACS read
+// goroutine. The writer runs until ctx is cancelled.
+func NewPayloadMessageHandler(ctx context.Context,
+	taskEngine engine.TaskEngine,
 	ecsClient ecs.ECSClient,
 	dataClient data.Client,
 	taskHandler *eventhandler.TaskHandler,
 	credentialsManager credentials.Manager,
 	latestSeqNumberTaskManifest *int64) *payloadMessageHandler {
-	return &payloadMessageHandler{
+	pmHandler := &payloadMessageHandler{
 		taskEngine:                  taskEngine,
 		ecsClient:                   ecsClient,
 		dataClient:                  dataClient,
 		taskHandler:                 taskHandler,
 		credentialsManager:          credentialsManager,
 		latestSeqNumberTaskManifest: latestSeqNumberTaskManifest,
+		payloadQueue:                make(chan *payloadMessageRequest, payloadMessageQueueBufferSize),
 	}
+	go pmHandler.startProcessingPayloads(ctx)
+	return pmHandler
 }
 
+// ProcessMessage runs on the ACS read goroutine. It performs only cheap,
+// in-memory bookkeeping (the sequence number high-water mark, kept here so it
+// stays serialized with the task manifest responder) and then hands the payload
+// to the writer goroutine. It intentionally does no disk I/O so the read loop is
+// never blocked draining the websocket.
 func (pmHandler *payloadMessageHandler) ProcessMessage(message *ecsacs.PayloadMessage,
 	ackFunc func(*ecsacs.AckRequest, []*ecsacs.IAMRoleCredentialsAckRequest)) error {
-
-	credentialsAcks, allTasksHandled := pmHandler.addPayloadTasks(message)
 
 	// Update latestSeqNumberTaskManifest for it to get updated in state file.
 	if pmHandler.latestSeqNumberTaskManifest != nil && message.SeqNum != nil &&
@@ -78,18 +106,49 @@ func (pmHandler *payloadMessageHandler) ProcessMessage(message *ecsacs.PayloadMe
 		*pmHandler.latestSeqNumberTaskManifest = *message.SeqNum
 	}
 
+	// Hand off to the writer goroutine. The buffered channel absorbs bursts; if
+	// it fills, this blocks the read goroutine until the writer drains one entry.
+	// Ordering is preserved because a single writer consumes the channel FIFO.
+	pmHandler.payloadQueue <- &payloadMessageRequest{message: message, ackFunc: ackFunc}
+
+	return nil
+}
+
+// startProcessingPayloads is the single writer goroutine. Consuming the queue
+// FIFO with one goroutine preserves payload ordering and keeps a single writer
+// of task state, matching the previous synchronous behavior.
+func (pmHandler *payloadMessageHandler) startProcessingPayloads(ctx context.Context) {
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case req := <-pmHandler.payloadQueue:
+			pmHandler.handlePayloadMessage(req)
+		}
+	}
+}
+
+// handlePayloadMessage processes a single payload: it converts, inserts, and
+// persists the tasks, then ACKs only if every task was handled. Persisting
+// before ACKing preserves the durability contract; a not-fully-handled payload
+// is left unACKed so ACS redelivers it.
+func (pmHandler *payloadMessageHandler) handlePayloadMessage(req *payloadMessageRequest) {
+	message := req.message
+	credentialsAcks, allTasksHandled := pmHandler.addPayloadTasks(message)
+
 	if !allTasksHandled {
-		return errors.Errorf("did not handle all tasks")
+		logger.Critical("Unable to handle all tasks in payload message; not ACKing so ACS redelivers", logger.Fields{
+			loggerfield.MessageID: aws.ToString(message.MessageId),
+		})
+		return
 	}
 
 	// Send ACKs - do it in async such that it does not block handling more tasks.
-	go ackFunc(&ecsacs.AckRequest{
+	go req.ackFunc(&ecsacs.AckRequest{
 		Cluster:           message.ClusterArn,
 		ContainerInstance: message.ContainerInstanceArn,
 		MessageId:         message.MessageId,
 	}, credentialsAcks)
-
-	return nil
 }
 
 // addPayloadTasks does validation on each task and, for all valid ones, adds
@@ -277,6 +336,10 @@ func (pmHandler *payloadMessageHandler) addTasks(payload *ecsacs.PayloadMessage,
 	skipAddTask skipAddTaskComparatorFunc) ([]*ecsacs.IAMRoleCredentialsAckRequest, bool) {
 	allTasksOK := true
 	var credentialsAcks []*ecsacs.IAMRoleCredentialsAckRequest
+	// tasksToSave accumulates new (desired RUNNING) tasks so they can be
+	// persisted in a single transaction after the loop, incurring one fsync for
+	// the whole payload rather than one per task.
+	var tasksToSave []*apitask.Task
 	for _, task := range tasks {
 		if skipAddTask(task.GetDesiredStatus()) {
 			continue
@@ -286,14 +349,7 @@ func (pmHandler *payloadMessageHandler) addTasks(payload *ecsacs.PayloadMessage,
 		// to manage). When its desired status is STOPPED, the task is already in the DB and the desired status change
 		// will be saved by task manager.
 		if task.GetDesiredStatus() == apitaskstatus.TaskRunning {
-			err := pmHandler.dataClient.SaveTask(task)
-			if err != nil {
-				logger.Error("Failed to save data for task", logger.Fields{
-					loggerfield.TaskARN: task.Arn,
-					loggerfield.Error:   err,
-				})
-				allTasksOK = false
-			}
+			tasksToSave = append(tasksToSave, task)
 		}
 
 		ackCredentials := func(id string, description string) {
@@ -322,6 +378,19 @@ func (pmHandler *payloadMessageHandler) addTasks(payload *ecsacs.PayloadMessage,
 			ackCredentials(taskExecutionCredentialsID, "task execution role")
 		}
 	}
+
+	// Persist all new tasks in one transaction (one fsync for the payload). On
+	// failure none are persisted; allTasksOK is cleared so the payload is not
+	// ACKed and ACS redelivers it.
+	if len(tasksToSave) > 0 {
+		if err := pmHandler.dataClient.SaveTasks(tasksToSave); err != nil {
+			logger.Error("Failed to save data for tasks", logger.Fields{
+				loggerfield.Error: err,
+			})
+			allTasksOK = false
+		}
+	}
+
 	return credentialsAcks, allTasksOK
 }
 

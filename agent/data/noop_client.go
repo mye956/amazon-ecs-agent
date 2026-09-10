@@ -49,6 +49,10 @@ func (c *noopClient) SaveTask(*task.Task) error {
 	return nil
 }
 
+func (c *noopClient) SaveTasks([]*task.Task) error {
+	return nil
+}
+
 func (c *noopClient) DeleteTask(string) error {
 	return nil
 }
